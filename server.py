@@ -16,6 +16,7 @@ from database import DBHandler, resource_path
 from bot_register import RegistrationBot
 from bot_select import BankSelectionBot
 from bot_status import StatusBot
+from captcha_service import CaptchaService, load_captcha_resources
 
 app = FastAPI()
 
@@ -36,6 +37,7 @@ app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 DBHandler.init_db()
 ACTIVE_BOTS = {}
 MAIN_LOOP: Optional[asyncio.AbstractEventLoop] = None
+CAPTCHA_SERVICE: Optional[CaptchaService] = None
 
 def require_api_key(x_api_key: Optional[str] = Header(None, alias="X-API-KEY")):
     expected_key = os.getenv("MAHANBOT_API_KEY")
@@ -48,8 +50,10 @@ def require_api_key(x_api_key: Optional[str] = Header(None, alias="X-API-KEY")):
 @app.on_event("startup")
 async def startup_event():
     """پاکسازی وضعیت‌های گیر کرده هنگام شروع برنامه"""
-    global MAIN_LOOP
+    global MAIN_LOOP, CAPTCHA_SERVICE
     MAIN_LOOP = asyncio.get_running_loop()
+    model, ocr_firewall = load_captcha_resources()
+    CAPTCHA_SERVICE = CaptchaService(model=model, ocr_firewall=ocr_firewall)
     try:
         async with aiosqlite.connect(resource_path('cbi_ultimate.db')) as conn:
             await conn.execute(
@@ -121,28 +125,34 @@ def force_stop_bot(nid):
         except:
             pass
 
+def get_captcha_service():
+    global CAPTCHA_SERVICE
+    if CAPTCHA_SERVICE is None:
+        CAPTCHA_SERVICE = CaptchaService()
+    return CAPTCHA_SERVICE
+
 # --- Threads ---
-def run_register_thread(nid, settings, stop_event):
+def run_register_thread(nid, settings, stop_event, captcha_service):
     try:
-        bot = RegistrationBot(nid, settings, log_callback=log_callback)
+        bot = RegistrationBot(nid, settings, log_callback=log_callback, captcha_service=captcha_service)
         bot.run(stop_event)
     except Exception as e: log_callback(nid, f"خطا: {e}", "error")
     finally:
         ACTIVE_BOTS.pop(nid, None) # استفاده از pop برای جلوگیری از خطا
         log_callback(nid, "ربات متوقف شد", "stopped")
 
-def run_select_thread(nid, settings, loan_type, stop_event):
+def run_select_thread(nid, settings, loan_type, stop_event, captcha_service):
     try:
-        bot = BankSelectionBot(nid, settings, log_callback=log_callback)
+        bot = BankSelectionBot(nid, settings, log_callback=log_callback, captcha_service=captcha_service)
         bot.run(stop_event, loan_type)
     except Exception as e: log_callback(nid, f"خطا: {e}", "error")
     finally:
         ACTIVE_BOTS.pop(nid, None)
         log_callback(nid, "ربات متوقف شد", "stopped")
 
-def run_status_thread(nid, settings, stop_event):
+def run_status_thread(nid, settings, stop_event, captcha_service):
     try:
-        bot = StatusBot(nid, settings, log_callback=log_callback)
+        bot = StatusBot(nid, settings, log_callback=log_callback, captcha_service=captcha_service)
         bot.run(stop_event)
     except Exception as e:
         log_callback(nid, f"خطای وضعیت: {e}", "error")
@@ -207,7 +217,8 @@ def start_reg(nid: str, _: bool = Depends(require_api_key)):
     settings = DBHandler.get_config()
     stop_event = threading.Event()
     ACTIVE_BOTS[nid] = stop_event
-    threading.Thread(target=run_register_thread, args=(nid, settings, stop_event), daemon=True).start()
+    captcha_service = get_captcha_service()
+    threading.Thread(target=run_register_thread, args=(nid, settings, stop_event, captcha_service), daemon=True).start()
     return {"status": "started"}
 
 @app.post("/bot/start-select")
@@ -218,7 +229,8 @@ def start_sel(req: BankSelectRequest, _: bool = Depends(require_api_key)):
     settings = DBHandler.get_config()
     stop_event = threading.Event()
     ACTIVE_BOTS[nid] = stop_event
-    threading.Thread(target=run_select_thread, args=(nid, settings, req.loan_type, stop_event), daemon=True).start()
+    captcha_service = get_captcha_service()
+    threading.Thread(target=run_select_thread, args=(nid, settings, req.loan_type, stop_event, captcha_service), daemon=True).start()
     return {"status": "started"}
 
 @app.post("/bot/stop/{nid}")
@@ -249,7 +261,8 @@ def action_view_status(nid: str, _: bool = Depends(require_api_key)):
     stop_event = threading.Event()
     ACTIVE_BOTS[nid] = stop_event
     
-    t = threading.Thread(target=run_status_thread, args=(nid, settings, stop_event), daemon=True)
+    captcha_service = get_captcha_service()
+    t = threading.Thread(target=run_status_thread, args=(nid, settings, stop_event, captcha_service), daemon=True)
     t.start()
     
     return {"status": "started", "message": "استعلام وضعیت آغاز شد"}

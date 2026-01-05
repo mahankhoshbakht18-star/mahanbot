@@ -8,13 +8,13 @@ from captcha_service import CaptchaService
 
 
 class StatusBot:
-    def __init__(self, nid, settings, log_callback=None):
+    def __init__(self, nid, settings, log_callback=None, captcha_service=None):
         self.nid = nid
         self.settings = settings
         self.log = log_callback
 
         self.user_data = self._load_user_data()
-        self.captcha_service = CaptchaService()
+        self.captcha_service = captcha_service or CaptchaService()
 
         # جلوگیری از خروجی تکراری
         self.saved_receipt = False

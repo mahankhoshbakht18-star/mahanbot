@@ -14,11 +14,11 @@ USER_AGENTS = [
 ]
 
 class BotCore:
-    def __init__(self, nid, settings, log_callback=None):
+    def __init__(self, nid, settings, log_callback=None, captcha_service=None):
         self.nid = nid
         self.settings = settings
         self.log_callback = log_callback
-        self.captcha_service = CaptchaService()
+        self.captcha_service = captcha_service or CaptchaService()
         self.user_data = self._load_user_data()
         self.retry_limit = int(self.settings.get('retry_count', 1000))
         self.api_base_url = "https://python-ke7tg2.chbk.dev"
