@@ -46,34 +46,41 @@ class CRNN(nn.Module):
         x = self.fc(x)
         return x.permute(1, 0, 2)
 
+# ================= بارگذاری منابع کپچا =================
+_CACHED_MODEL = None
+_CACHED_OCR_FIREWALL = None
+
+
+def load_captcha_resources():
+    global _CACHED_MODEL, _CACHED_OCR_FIREWALL
+    if _CACHED_MODEL is None:
+        print("🧠 در حال راه‌اندازی سرویس کپچا...")
+        if os.path.exists(MODEL_PATH):
+            try:
+                _CACHED_MODEL = CRNN(num_chars=len(CHARS)).to(device)
+                _CACHED_MODEL.load_state_dict(torch.load(MODEL_PATH, map_location=device))
+                _CACHED_MODEL.eval()
+                print(f"✅ مدل هوشمند بارگذاری شد: {MODEL_PATH}")
+            except Exception as e:
+                print(f"❌ خطا در لود مدل هوشمند: {e}")
+                _CACHED_MODEL = None
+        else:
+            print(f"⚠️ هشدار: فایل مدل پیدا نشد ({MODEL_PATH}).")
+
+    if _CACHED_OCR_FIREWALL is None:
+        # فایروال کپچای متفاوتی دارد، پس فعلا با همین روش قدیمی حلش میکنیم
+        _CACHED_OCR_FIREWALL = ddddocr.DdddOcr(show_ad=False, beta=True)
+
+    return _CACHED_MODEL, _CACHED_OCR_FIREWALL
+
+
 # ================= کلاس سرویس کپچا =================
 class CaptchaService:
-    _instance = None
-    _model = None       # مدل هوشمند خودمان
-    _ocr_firewall = None # برای کپچای فایروال (هنوز از ddddocr استفاده میکنیم چون نوعش فرق دارد)
-
-    def __new__(cls):
-        if cls._instance is None:
-            print("🧠 در حال راه‌اندازی سرویس کپچا...")
-            cls._instance = super(CaptchaService, cls).__new__(cls)
-            
-            # 1. لود کردن مدل هوشمند (Main Captcha)
-            if os.path.exists(MODEL_PATH):
-                try:
-                    cls._model = CRNN(num_chars=len(CHARS)).to(device)
-                    cls._model.load_state_dict(torch.load(MODEL_PATH, map_location=device))
-                    cls._model.eval()
-                    print(f"✅ مدل هوشمند بارگذاری شد: {MODEL_PATH}")
-                except Exception as e:
-                    print(f"❌ خطا در لود مدل هوشمند: {e}")
-            else:
-                print(f"⚠️ هشدار: فایل مدل پیدا نشد ({MODEL_PATH}).")
-
-            # 2. لود کردن حل‌کننده فایروال (ddddocr)
-            # فایروال کپچای متفاوتی دارد، پس فعلا با همین روش قدیمی حلش میکنیم
-            cls._ocr_firewall = ddddocr.DdddOcr(show_ad=False, beta=True)
-            
-        return cls._instance
+    def __init__(self, model=None, ocr_firewall=None):
+        if model is None or ocr_firewall is None:
+            model, ocr_firewall = load_captcha_resources()
+        self._model = model
+        self._ocr_firewall = ocr_firewall
 
     def solve(self, image_bytes, mode='general'):
         """
