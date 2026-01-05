@@ -1,10 +1,10 @@
 import threading
 import os
 import json
-import sqlite3
 import time
 import asyncio
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+import aiosqlite
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Depends, Header, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
@@ -21,7 +21,7 @@ app = FastAPI()
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=["*"],  # TODO: Restrict origins here when you know the allowed domains.
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -35,16 +35,27 @@ app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
 DBHandler.init_db()
 ACTIVE_BOTS = {}
+MAIN_LOOP: Optional[asyncio.AbstractEventLoop] = None
+
+def require_api_key(x_api_key: Optional[str] = Header(None, alias="X-API-KEY")):
+    expected_key = os.getenv("MAHANBOT_API_KEY")
+    if not expected_key:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="API key not configured")
+    if x_api_key != expected_key:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid API key")
+    return True
 
 @app.on_event("startup")
-def startup_event():
+async def startup_event():
     """پاکسازی وضعیت‌های گیر کرده هنگام شروع برنامه"""
+    global MAIN_LOOP
+    MAIN_LOOP = asyncio.get_running_loop()
     try:
-        conn = sqlite3.connect(resource_path('cbi_ultimate.db'))
-        c = conn.cursor()
-        c.execute("UPDATE applicants SET status='Stopped' WHERE status IN ('Running', 'Selecting', 'Registering', 'Waiting SMS')")
-        conn.commit()
-        conn.close()
+        async with aiosqlite.connect(resource_path('cbi_ultimate.db')) as conn:
+            await conn.execute(
+                "UPDATE applicants SET status='Stopped' WHERE status IN ('Running', 'Selecting', 'Registering', 'Waiting SMS')"
+            )
+            await conn.commit()
     except Exception as e:
         print(f"Error checking DB on startup: {e}")
 
@@ -84,11 +95,17 @@ def log_callback(nid, message, level="info"):
     DBHandler.update_status(nid, level.title(), message)
     payload = json.dumps({"type": "log", "nid": nid, "message": message, "level": level, "timestamp": time.strftime("%H:%M:%S")})
     try:
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        loop.run_until_complete(manager.broadcast(payload))
-        loop.close()
-    except: pass
+        if MAIN_LOOP and MAIN_LOOP.is_running():
+            try:
+                running_loop = asyncio.get_running_loop()
+            except RuntimeError:
+                running_loop = None
+            if running_loop and running_loop is MAIN_LOOP:
+                asyncio.create_task(manager.broadcast(payload))
+            else:
+                asyncio.run_coroutine_threadsafe(manager.broadcast(payload), MAIN_LOOP)
+    except:
+        pass
 
 def force_stop_bot(nid):
     """اگر رباتی با این کد ملی فعال است، آن را متوقف کن تا جدید اجرا شود"""
@@ -149,28 +166,30 @@ def get_applicants():
     return apps
 
 @app.post("/applicants")
-def save_applicant(req: ApplicantModel):
+async def save_applicant(req: ApplicantModel):
     try:
-        conn = sqlite3.connect(resource_path('cbi_ultimate.db'))
-        c = conn.cursor()
         d_str = json.dumps(req.data)
-        if req.id:
-            c.execute("UPDATE applicants SET full_name=?, national_id=?, data=? WHERE id=?", (req.full_name, req.national_id, d_str, req.id))
-        else:
-            c.execute("INSERT INTO applicants (full_name, national_id, data) VALUES (?, ?, ?)", (req.full_name, req.national_id, d_str))
-        conn.commit()
-        conn.close()
+        async with aiosqlite.connect(resource_path('cbi_ultimate.db')) as conn:
+            if req.id:
+                await conn.execute(
+                    "UPDATE applicants SET full_name=?, national_id=?, data=? WHERE id=?",
+                    (req.full_name, req.national_id, d_str, req.id),
+                )
+            else:
+                await conn.execute(
+                    "INSERT INTO applicants (full_name, national_id, data) VALUES (?, ?, ?)",
+                    (req.full_name, req.national_id, d_str),
+                )
+            await conn.commit()
         return {"status": "ok"}
     except Exception as e: return {"status": "error", "msg": str(e)}
 
 @app.delete("/applicants/{nid}")
-def delete_applicant(nid: str):
+async def delete_applicant(nid: str, _: bool = Depends(require_api_key)):
     force_stop_bot(nid)
-    conn = sqlite3.connect(resource_path('cbi_ultimate.db'))
-    c = conn.cursor()
-    c.execute("DELETE FROM applicants WHERE national_id=?", (nid,))
-    conn.commit()
-    conn.close()
+    async with aiosqlite.connect(resource_path('cbi_ultimate.db')) as conn:
+        await conn.execute("DELETE FROM applicants WHERE national_id=?", (nid,))
+        await conn.commit()
     return {"status": "deleted"}
 
 @app.post("/receive_sms")
@@ -181,7 +200,7 @@ def rec_sms(req: SMSRequest):
     return {"status": "error"}
 
 @app.post("/bot/start-register/{nid}")
-def start_reg(nid: str):
+def start_reg(nid: str, _: bool = Depends(require_api_key)):
     # توقف اجباری نسخه قبلی اگر وجود دارد
     force_stop_bot(nid)
     
@@ -192,7 +211,7 @@ def start_reg(nid: str):
     return {"status": "started"}
 
 @app.post("/bot/start-select")
-def start_sel(req: BankSelectRequest):
+def start_sel(req: BankSelectRequest, _: bool = Depends(require_api_key)):
     nid = req.nid
     force_stop_bot(nid)
     
@@ -203,7 +222,7 @@ def start_sel(req: BankSelectRequest):
     return {"status": "started"}
 
 @app.post("/bot/stop/{nid}")
-def stop_bot(nid: str):
+def stop_bot(nid: str, _: bool = Depends(require_api_key)):
     if nid in ACTIVE_BOTS:
         ACTIVE_BOTS[nid].set()
         log_callback(nid, "توقف...", "stopping")
@@ -212,7 +231,7 @@ def stop_bot(nid: str):
     return {"status": "stopped"}
 
 @app.post("/bot/action/view-status/{nid}")
-def action_view_status(nid: str):
+def action_view_status(nid: str, _: bool = Depends(require_api_key)):
     # این بخش تغییر کرد: به جای خطا دادن، قبلی را متوقف و جدید را شروع می‌کند
     force_stop_bot(nid)
     
@@ -236,7 +255,7 @@ def action_view_status(nid: str):
     return {"status": "started", "message": "استعلام وضعیت آغاز شد"}
 
 @app.post("/bot/action/delete-request/{nid}")
-def action_delete_request(nid: str):
+def action_delete_request(nid: str, _: bool = Depends(require_api_key)):
     log_callback(nid, "حذف درخواست (هنوز پیاده‌سازی نشده)", "warning")
     return {"status": "ok"}
 
