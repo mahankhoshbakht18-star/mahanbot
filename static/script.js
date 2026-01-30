@@ -1,13 +1,36 @@
 const API_URL = "http://127.0.0.1:8000";
+const WS_URL = `${API_URL.replace("http", "ws")}/ws`;
+const MESSAGES = {
+    saveSuccess: "اطلاعات با موفقیت ذخیره شد.",
+    saveError: "ذخیره اطلاعات با خطا مواجه شد.",
+    otpSent: "پیامک با موفقیت ثبت شد.",
+    otpFailed: "ثبت پیامک ناموفق بود.",
+    startRegister: "ربات ثبت نام در صف اجرا قرار گرفت.",
+    startSelect: "ربات انتخاب بانک در صف اجرا قرار گرفت.",
+    startStatus: "استعلام وضعیت در صف اجرا قرار گرفت.",
+    stopRequested: "درخواست توقف ثبت شد.",
+    missingTracking: "کد رهگیری برای این کاربر ثبت نشده است.",
+    connectionError: "خطا در ارتباط با سرور.",
+    defaultError: "عملیات ناموفق بود.",
+    recoverUnavailable: "بخش بازیابی هنوز فعال نیست.",
+    requiredFields: "نام و کد ملی الزامی است.",
+    selectBank: "لطفا نام بانک را انتخاب کنید.",
+    settingsSaved: "تنظیمات با موفقیت ذخیره شد.",
+};
 let activeBankList = [];
 let selectedNidForBank = null;
 let dashboardInterval = null;
 let editingUserId = null;
 let allUsersData = [];
+let eventsBuffer = [];
+let jobsCache = [];
+let wsConnection = null;
 
 document.addEventListener("DOMContentLoaded", () => {
     switchView('dashboard');
     startClock();
+    initLogFilters();
+    startWebSocket();
     if(document.getElementById('otpInput')){
         document.getElementById('otpInput').addEventListener('keypress', function (e) {
             if (e.key === 'Enter') sendOtp(this.value);
@@ -57,11 +80,74 @@ function parseUserData(userData) {
     catch (e) { return {}; }
 }
 
+function startWebSocket() {
+    if (wsConnection) wsConnection.close();
+    wsConnection = new WebSocket(WS_URL);
+    wsConnection.onmessage = (event) => {
+        try {
+            const payload = JSON.parse(event.data);
+            handleEvent(payload);
+        } catch (e) {
+            console.warn('Invalid event payload', e);
+        }
+    };
+    wsConnection.onclose = () => {
+        setTimeout(startWebSocket, 2000);
+    };
+}
+
+function handleEvent(event) {
+    eventsBuffer.push(event);
+    if (eventsBuffer.length > 300) eventsBuffer.shift();
+    if (event.type === 'job_status') {
+        const updated = jobsCache.find(job => job.job_id === event.job_id);
+        if (updated) {
+            updated.state = event.meta?.state || updated.state;
+        } else if (event.job_id) {
+            jobsCache.push({
+                job_id: event.job_id,
+                bot_name: event.bot || '-',
+                nid: event.nid || '-',
+                applicant_name: event.meta?.applicant_name || '-',
+                state: event.meta?.state || 'QUEUED',
+                created_at: event.ts,
+                started_at: event.meta?.started_at || null,
+                finished_at: event.meta?.finished_at || null,
+                last_error: null,
+            });
+        }
+        renderJobCards(jobsCache);
+    }
+    if (event.type === 'log') {
+        appendLogIfMatch(event);
+    }
+    refreshFilterOptions();
+}
+
+function initLogFilters() {
+    ['logLevelFilter', 'logBotFilter', 'logNidFilter', 'logJobFilter'].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.addEventListener('change', renderFilteredLogs);
+    });
+}
+
+function clearLogs() {
+    eventsBuffer = [];
+    const term = document.getElementById('terminalBox');
+    if (term) term.innerHTML = '<div class="text-muted">> لاگ‌ها پاک شد.</div>';
+}
+
 async function fetchDashboardData() {
     try {
-        const res = await fetch(`${API_URL}/applicants`);
-        const data = await res.json();
-        renderDashboard(data);
+        const [statsRes, jobsRes] = await Promise.all([
+            fetch(`${API_URL}/stats`),
+            fetch(`${API_URL}/jobs`),
+        ]);
+        const stats = await statsRes.json();
+        const jobs = await jobsRes.json();
+        jobsCache = jobs;
+        renderDashboard(stats, jobs);
+        updateJobFilters(jobs);
         if(document.getElementById('connectionStatus')){
             document.getElementById('connectionStatus').className = "badge bg-success";
             document.getElementById('connectionStatus').innerText = "سرور متصل";
@@ -74,62 +160,178 @@ async function fetchDashboardData() {
     }
 }
 
-function renderDashboard(users) {
+function renderDashboard(stats, jobs) {
     const tbody = document.getElementById('activeBotsBody');
     if(!tbody) return;
     tbody.innerHTML = '';
-    let runningCount = 0, successCount = 0, codeCount = 0, runningNid = null;
+    let runningNid = null;
+    const activeJobs = jobs.filter(job => ['QUEUED', 'RUNNING'].includes(job.state));
 
-    users.forEach(user => {
-        let d = parseUserData(user.data);
-        if(d.tracking_code) codeCount++;
-        if(user.status.toLowerCase().includes('success')) successCount++;
-
-        const isActive = ['Running', 'Registering', 'Selecting', 'Waiting SMS'].some(s => user.status.includes(s));
-        if (isActive) {
-            runningCount++;
-            if(user.status.includes('Wait')) runningNid = user.national_id;
-            else if (!runningNid) runningNid = user.national_id;
-
-            const tr = document.createElement('tr');
-            tr.innerHTML = `
-                <td><strong>${user.full_name}</strong><br><small>${user.national_id}</small></td>
-                <td><span class="badge ${getStatusBadge(user.status)}">${translateStatus(user.status)}</span></td>
-                <td><button class="btn btn-sm btn-danger rounded-circle" onclick="stopBot('${user.national_id}')"><i class="fas fa-power-off"></i></button></td>
-            `;
-            tbody.appendChild(tr);
-            logToTerminal(user.national_id, user.last_log);
-        }
+    activeJobs.forEach(job => {
+        if (!runningNid && job.nid) runningNid = job.nid;
+        const tr = document.createElement('tr');
+        tr.innerHTML = `
+            <td><strong>${job.applicant_name || '---'}</strong><br><small>${job.nid}</small></td>
+            <td><span class="badge ${getJobBadge(job.state)}">${translateJobState(job.state)}</span></td>
+            <td><button class="btn btn-sm btn-danger rounded-circle" onclick="stopBot('${job.nid}')"><i class="fas fa-power-off"></i></button></td>
+        `;
+        tbody.appendChild(tr);
     });
 
-    if(runningCount===0) tbody.innerHTML = `<tr><td colspan="3" class="text-muted small py-3">غیرفعال</td></tr>`;
+    if(activeJobs.length===0) tbody.innerHTML = `<tr><td colspan="3" class="text-muted small py-3">غیرفعال</td></tr>`;
     window.currentActiveBotNid = runningNid;
 
-    if(document.getElementById('stat-total')) document.getElementById('stat-total').innerText = users.length;
-    if(document.getElementById('stat-active')) document.getElementById('stat-active').innerText = runningCount;
-    if(document.getElementById('stat-success')) document.getElementById('stat-success').innerText = successCount;
-    if(document.getElementById('stat-codes')) document.getElementById('stat-codes').innerText = codeCount;
+    if(document.getElementById('stat-total')) document.getElementById('stat-total').innerText = stats.applicants || 0;
+    if(document.getElementById('stat-active')) document.getElementById('stat-active').innerText = stats.active_jobs || 0;
+    if(document.getElementById('stat-success')) document.getElementById('stat-success').innerText = stats.success_count || 0;
+    if(document.getElementById('stat-codes')) document.getElementById('stat-codes').innerText = stats.tracking_codes || 0;
+
+    renderJobCards(jobs);
 }
 
-let lastLog = "";
-function logToTerminal(nid, msg) {
-    if (!msg || msg === lastLog) return;
-    lastLog = msg;
+function logToTerminal(event) {
+    if (!event || !event.message) return;
     const term = document.getElementById('terminalBox');
     if(!term) return;
     const div = document.createElement('div');
-    div.innerHTML = `<span style="color:#666">[${new Date().toLocaleTimeString('fa-IR')}]</span> <span style="color:#00e5ff">${nid}</span>: ${msg}`;
+    const level = (event.level || 'INFO').toLowerCase();
+    const levelClass = `log-level-${level}`;
+    const ts = event.ts ? new Date(event.ts).toLocaleTimeString('fa-IR') : new Date().toLocaleTimeString('fa-IR');
+    div.className = levelClass;
+    div.innerHTML = `<span style="color:#666">[${ts}]</span> <span style="color:#00e5ff">${event.nid || '-'}</span> <span>${event.message}</span>`;
     term.appendChild(div);
     term.scrollTop = term.scrollHeight;
+}
+
+function appendLogIfMatch(event) {
+    if (!matchesFilters(event)) return;
+    logToTerminal(event);
+}
+
+function renderFilteredLogs() {
+    const term = document.getElementById('terminalBox');
+    if(!term) return;
+    term.innerHTML = '';
+    eventsBuffer.filter(event => event.type === 'log').forEach(event => {
+        if (matchesFilters(event)) logToTerminal(event);
+    });
+}
+
+function matchesFilters(event) {
+    const level = document.getElementById('logLevelFilter')?.value || '';
+    const bot = document.getElementById('logBotFilter')?.value || '';
+    const nid = document.getElementById('logNidFilter')?.value || '';
+    const job = document.getElementById('logJobFilter')?.value || '';
+
+    if (level && (event.level || '').toUpperCase() !== level) return false;
+    if (bot && event.bot !== bot) return false;
+    if (nid && event.nid !== nid) return false;
+    if (job && event.job_id !== job) return false;
+    return true;
+}
+
+function refreshFilterOptions() {
+    const bots = new Set();
+    const nids = new Set();
+    const jobIds = new Set();
+    eventsBuffer.forEach(event => {
+        if (event.bot) bots.add(event.bot);
+        if (event.nid) nids.add(event.nid);
+        if (event.job_id) jobIds.add(event.job_id);
+    });
+    updateSelectOptions('logBotFilter', bots, 'همه ربات‌ها');
+    updateSelectOptions('logNidFilter', nids, 'همه کدهای ملی');
+    updateSelectOptions('logJobFilter', jobIds, 'همه Jobها');
+}
+
+function updateSelectOptions(selectId, values, placeholder) {
+    const select = document.getElementById(selectId);
+    if (!select) return;
+    const current = select.value;
+    select.innerHTML = `<option value="">${placeholder}</option>`;
+    Array.from(values).sort().forEach(value => {
+        const opt = document.createElement('option');
+        opt.value = value;
+        opt.textContent = value;
+        select.appendChild(opt);
+    });
+    if (current && values.has(current)) select.value = current;
+}
+
+function updateJobFilters(jobs) {
+    const bots = new Set();
+    const nids = new Set();
+    const jobIds = new Set();
+    jobs.forEach(job => {
+        bots.add(job.bot_name);
+        nids.add(job.nid);
+        jobIds.add(job.job_id);
+    });
+    updateSelectOptions('logBotFilter', bots, 'همه ربات‌ها');
+    updateSelectOptions('logNidFilter', nids, 'همه کدهای ملی');
+    updateSelectOptions('logJobFilter', jobIds, 'همه Jobها');
+}
+
+function renderJobCards(jobs) {
+    const container = document.getElementById('jobCards');
+    const summary = document.getElementById('jobSummaryBadge');
+    if (!container) return;
+    container.innerHTML = '';
+    const sorted = [...jobs].sort((a, b) => (b.created_at || '').localeCompare(a.created_at || ''));
+    const activeCount = jobs.filter(job => ['QUEUED', 'RUNNING'].includes(job.state)).length;
+    if (summary) summary.textContent = activeCount ? `${activeCount} وظیفه فعال` : 'بدون وظیفه فعال';
+    sorted.slice(0, 8).forEach(job => {
+        const card = document.createElement('div');
+        const progress = getJobProgress(job.state);
+        card.className = 'job-card';
+        card.innerHTML = `
+            <div class="d-flex justify-content-between align-items-center mb-2">
+                <h6>${job.applicant_name || 'متقاضی ناشناس'}</h6>
+                <span class="job-status-badge job-status-${job.state}">${translateJobState(job.state)}</span>
+            </div>
+            <div class="job-meta">${job.bot_name} • ${job.nid}</div>
+            <div class="job-meta">${job.started_at ? `شروع: ${formatTime(job.started_at)}` : 'در انتظار اجرا'}</div>
+            ${job.last_error ? `<div class="text-danger small mt-2">${job.last_error}</div>` : ''}
+            <div class="job-progress"><span style="width:${progress}%; background:${getProgressColor(job.state)};"></span></div>
+        `;
+        container.appendChild(card);
+    });
+    if (!sorted.length) {
+        container.innerHTML = '<div class="text-muted">هیچ وظیفه‌ای ثبت نشده است.</div>';
+    }
+}
+
+function formatTime(value) {
+    try { return new Date(value).toLocaleTimeString('fa-IR'); } catch { return value; }
+}
+
+function getJobProgress(state) {
+    if (state === 'QUEUED') return 20;
+    if (state === 'RUNNING') return 60;
+    return 100;
+}
+
+function getProgressColor(state) {
+    if (state === 'FAILED') return '#ef4444';
+    if (state === 'CANCELED') return '#94a3b8';
+    if (state === 'SUCCEEDED') return '#22c55e';
+    if (state === 'RUNNING') return '#6366f1';
+    return '#0ea5e9';
 }
 
 async function sendOtp(code) {
     const nid = window.currentActiveBotNid;
     if (!nid) return;
     document.getElementById('otpStatus').innerHTML = '...';
-    await apiCall(`/receive_sms`, 'POST', {nid: nid, code: code});
-    document.getElementById('otpStatus').innerHTML = '<span class="text-success">ارسال شد</span>';
-    document.getElementById('otpInput').value = "";
+    try {
+        await apiCall(`/receive_sms`, 'POST', {nid: nid, code: code});
+        document.getElementById('otpStatus').innerHTML = '<span class="text-success">ارسال شد</span>';
+        document.getElementById('otpInput').value = "";
+        alert(MESSAGES.otpSent);
+    } catch (err) {
+        document.getElementById('otpStatus').innerHTML = '<span class="text-danger">ناموفق</span>';
+        alert(err?.message || MESSAGES.otpFailed);
+    }
 }
 
 async function fetchApplicants(mode) {
@@ -205,22 +407,22 @@ async function actionViewStatus(nid) {
     if(user) {
         let d = parseUserData(user.data);
         if(!d.tracking_code) {
-            alert("خطا: کد رهگیری برای این کاربر ثبت نشده است.");
+            alert(MESSAGES.missingTracking);
             return;
         }
     }
     try {
         const res = await apiCall(`/bot/action/view-status/${nid}`, 'POST');
         if(res.status === 'started') {
-            alert("ربات مشاهده وضعیت شروع شد.");
+            alert(MESSAGES.startStatus);
             switchView('dashboard');
         } else {
-            alert("خطا: " + res.message);
+            alert(res.message || MESSAGES.defaultError);
         }
-    } catch(e) { alert("خطای ارتباط با سرور"); }
+    } catch(e) { alert(e?.message || MESSAGES.connectionError); }
 }
 
-function actionRecover(nid) { alert("بخش بازیابی هنوز فعال نیست"); }
+function actionRecover(nid) { alert(MESSAGES.recoverUnavailable); }
 function actionDeleteReq(nid) { if(confirm("آیا مطمئن هستید؟")) apiCall(`/bot/action/delete-request/${nid}`, 'POST'); }
 
 function editUser(idx) {
@@ -271,7 +473,7 @@ async function submitNewApplicant() {
     const nid = document.getElementById('inpNid').value;
     const name = document.getElementById('inpName').value;
 
-    if(!nid || !name) return alert("نام و کد ملی الزامی است");
+    if(!nid || !name) return alert(MESSAGES.requiredFields);
 
     const formData = {
         mobile: document.getElementById('inpMobile').value,
@@ -298,10 +500,14 @@ async function submitNewApplicant() {
         data: formData
     };
 
-    await apiCall('/applicants', 'POST', payload);
-    alert('اطلاعات با موفقیت ذخیره شد.');
-    if(editingUserId) resetAddForm();
-    switchView('list');
+    try {
+        await apiCall('/applicants', 'POST', payload);
+        alert(MESSAGES.saveSuccess);
+        if(editingUserId) resetAddForm();
+        switchView('list');
+    } catch (err) {
+        alert(err?.message || MESSAGES.saveError);
+    }
 }
 
 function addBankPriority() { 
@@ -312,7 +518,7 @@ function addBankPriority() {
         document.getElementById('inpBankName').value=''; 
         document.getElementById('inpBranch').value=''; 
         renderPriorityList();
-    } else { alert("لطفا نام بانک را انتخاب کنید"); }
+    } else { alert(MESSAGES.selectBank); }
 }
 
 function renderPriorityList() { 
@@ -364,15 +570,77 @@ async function saveSettings() {
         proxy_list: document.getElementById('set_proxylist').value
     };
     
-    await apiCall('/settings', 'POST', payload);
-    alert('تنظیمات با موفقیت ذخیره شد.');
+    try {
+        await apiCall('/settings', 'POST', payload);
+        alert(MESSAGES.settingsSaved);
+    } catch (err) {
+        alert(err?.message || MESSAGES.defaultError);
+    }
 }
 
 // توابع کمکی دیگر
 function translateStatus(s) { if(!s) return 'آماده'; s=s.toLowerCase(); if(s.includes('run')) return 'اجرا'; if(s.includes('wait')) return 'منتظر پیامک'; if(s.includes('succ')) return 'موفق'; if(s.includes('stop')) return 'متوقف'; return s; }
 function getStatusBadge(s) { if(!s) return 'bg-light text-muted'; s=s.toLowerCase(); if(s.includes('succ')) return 'bg-success'; if(s.includes('stop')) return 'bg-danger'; if(s.includes('wait')) return 'bg-warning text-dark'; if(s.includes('run')) return 'bg-primary'; return 'bg-secondary'; }
+function translateJobState(state) {
+    const map = {
+        QUEUED: 'در صف',
+        RUNNING: 'در حال اجرا',
+        SUCCEEDED: 'موفق',
+        FAILED: 'ناموفق',
+        CANCELED: 'لغو شده'
+    };
+    return map[state] || state;
+}
+function getJobBadge(state) {
+    const map = {
+        QUEUED: 'bg-info text-dark',
+        RUNNING: 'bg-primary',
+        SUCCEEDED: 'bg-success',
+        FAILED: 'bg-danger',
+        CANCELED: 'bg-secondary'
+    };
+    return map[state] || 'bg-secondary';
+}
 function openBankModal(nid) { selectedNidForBank = nid; document.getElementById('modalNidDisplay').innerText = nid; new bootstrap.Modal(document.getElementById('bankActionModal')).show(); }
-async function confirmBankStart() { const t = document.querySelector('input[name="loanType"]:checked').value; await apiCall('/bot/start-select', 'POST', {nid: selectedNidForBank, loan_type: t}); bootstrap.Modal.getInstance(document.getElementById('bankActionModal')).hide(); switchView('dashboard'); }
-async function startRegister(nid) { await apiCall(`/bot/start-register/${nid}`, 'POST'); switchView('dashboard'); }
-async function stopBot(nid) { await apiCall(`/bot/stop/${nid}`, 'POST'); setTimeout(fetchDashboardData, 1000); }
-async function apiCall(u, m, b) { return (await fetch(API_URL+u, {method:m, headers:{'Content-Type':'application/json'}, body:JSON.stringify(b)})).json(); }
+async function confirmBankStart() {
+    const t = document.querySelector('input[name="loanType"]:checked').value;
+    try {
+        await apiCall('/bot/start-select', 'POST', {nid: selectedNidForBank, loan_type: t});
+        alert(MESSAGES.startSelect);
+        bootstrap.Modal.getInstance(document.getElementById('bankActionModal')).hide();
+        switchView('dashboard');
+    } catch (err) {
+        alert(err?.message || MESSAGES.defaultError);
+    }
+}
+async function startRegister(nid) {
+    try {
+        await apiCall(`/bot/start-register/${nid}`, 'POST');
+        alert(MESSAGES.startRegister);
+        switchView('dashboard');
+    } catch (err) {
+        alert(err?.message || MESSAGES.defaultError);
+    }
+}
+async function stopBot(nid) {
+    try {
+        await apiCall(`/bot/stop/${nid}`, 'POST');
+        alert(MESSAGES.stopRequested);
+        setTimeout(fetchDashboardData, 1000);
+    } catch (err) {
+        alert(err?.message || MESSAGES.defaultError);
+    }
+}
+async function apiCall(u, m, b) {
+    const res = await fetch(API_URL+u, {
+        method: m,
+        headers: {'Content-Type':'application/json'},
+        body: b ? JSON.stringify(b) : undefined
+    });
+    let payload = {};
+    try { payload = await res.json(); } catch (e) {}
+    if (!res.ok) {
+        throw payload;
+    }
+    return payload;
+}

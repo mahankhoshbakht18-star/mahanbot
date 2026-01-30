@@ -84,9 +84,42 @@
                     </div>
                 </div>
                 <div class="col-lg-7">
-                    <div class="terminal-window h-100 d-flex flex-column">
-                        <div class="terminal-header"><div class="terminal-dots"><div class="dot dot-red"></div><div class="dot dot-yellow"></div><div class="dot dot-green"></div></div><div class="text-white ms-3 small font-monospace opacity-75">root@cbi-turbo:~# logs</div></div>
-                        <div class="card-body overflow-auto p-3" id="terminalBox" style="height: 350px; font-family: 'Consolas', monospace; color: #4af626; font-size: 0.9rem;"><div>> System Initialized...</div><div>> Waiting for commands...</div></div>
+                    <div class="card border-0 shadow-sm mb-3">
+                        <div class="card-header bg-white py-3 border-bottom d-flex justify-content-between align-items-center">
+                            <h6 class="m-0 fw-bold"><i class="fas fa-tasks text-primary me-2"></i>کارت‌های اجرای ربات</h6>
+                            <span class="badge bg-light text-muted" id="jobSummaryBadge">بدون وظیفه فعال</span>
+                        </div>
+                        <div class="card-body">
+                            <div id="jobCards" class="job-cards-grid"></div>
+                        </div>
+                    </div>
+                    <div class="terminal-window d-flex flex-column">
+                        <div class="terminal-header">
+                            <div class="terminal-dots"><div class="dot dot-red"></div><div class="dot dot-yellow"></div><div class="dot dot-green"></div></div>
+                            <div class="text-white ms-3 small font-monospace opacity-75">root@cbi-turbo:~# logs</div>
+                        </div>
+                        <div class="log-filter-bar">
+                            <select id="logLevelFilter" class="form-select form-select-sm">
+                                <option value="">همه سطوح</option>
+                                <option value="DEBUG">دیباگ</option>
+                                <option value="INFO">اطلاعات</option>
+                                <option value="WARN">هشدار</option>
+                                <option value="ERROR">خطا</option>
+                            </select>
+                            <select id="logBotFilter" class="form-select form-select-sm">
+                                <option value="">همه ربات‌ها</option>
+                            </select>
+                            <select id="logNidFilter" class="form-select form-select-sm">
+                                <option value="">همه کدهای ملی</option>
+                            </select>
+                            <select id="logJobFilter" class="form-select form-select-sm">
+                                <option value="">همه Jobها</option>
+                            </select>
+                            <button class="btn btn-outline-light btn-sm" onclick="clearLogs()">پاکسازی لاگ</button>
+                        </div>
+                        <div class="card-body overflow-auto p-3" id="terminalBox" style="height: 320px; font-family: 'Consolas', monospace; color: #4af626; font-size: 0.9rem;">
+                            <div class="text-muted">> سیستم آماده دریافت رویدادها...</div>
+                        </div>
                     </div>
                 </div>
             </div>
