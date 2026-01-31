@@ -4,6 +4,7 @@ import time
 import json
 import asyncio
 import aiosqlite
+import logging
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Depends, Header, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse
@@ -26,6 +27,7 @@ from browser_launcher import (
     merge_browser_profiles,
     normalize_browser_profile,
 )
+from messages_fa import RESPONSES, LOG_MESSAGES, get_message
 
 # ایمپورت ربات‌ها
 from bot_register import RegistrationBot
@@ -34,6 +36,10 @@ from bot_status import StatusBot
 from captcha_service import CaptchaService, load_captcha_resources
 
 app = FastAPI()
+
+logger = logging.getLogger("mahanbot")
+if not logging.getLogger().handlers:
+    logging.basicConfig(level=os.getenv("MAHANBOT_LOG_LEVEL", "INFO"))
 
 app.add_middleware(
     CORSMiddleware,
@@ -57,10 +63,25 @@ JOB_QUEUE: Optional["JobQueue"] = None
 def require_api_key(x_api_key: Optional[str] = Header(None, alias="X-API-KEY")):
     expected_key = os.getenv("MAHANBOT_API_KEY")
     if not expected_key:
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="API key not configured")
+        if not getattr(require_api_key, "_warned", False):
+            logger.warning(get_message("log", "api_key_not_configured", LOG_MESSAGES["api_key_not_configured"]))
+            require_api_key._warned = True
+        return True
     if x_api_key != expected_key:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid API key")
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail=get_message("responses", "api_key_invalid", RESPONSES["api_key_invalid"]),
+        )
     return True
+
+
+@app.middleware("http")
+async def log_unhandled_exceptions(request, call_next):
+    try:
+        return await call_next(request)
+    except Exception:
+        logger.exception("Unhandled exception on %s %s", request.method, request.url.path)
+        raise
 
 @app.on_event("startup")
 async def startup_event():
@@ -90,7 +111,7 @@ class ApplicantModel(BaseModel):
 
 class BankSelectRequest(BaseModel):
     nid: str
-    loan_type: str 
+    loan_type: Optional[str] = None
 
 class SMSRequest(BaseModel):
     nid: str
@@ -335,17 +356,36 @@ def start_job(req: JobStartRequest, _: bool = Depends(require_api_key)):
     if bot_name not in {"register", "select", "status"}:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Unsupported bot name")
     if bot_name == "select" and not req.loan_type:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="loan_type is required for select bot")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=get_message("responses", "loan_type_required", RESPONSES["loan_type_required"]),
+        )
     if bot_name == "status":
         user = DBHandler.get_applicant(req.nid)
         if not user:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="کاربر یافت نشد")
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=get_message("responses", "user_not_found", RESPONSES["user_not_found"]),
+            )
         try:
-            data = json.loads(user['data'])
-        except Exception:
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="داده نامعتبر")
+            raw_data = user["data"]
+            if isinstance(raw_data, str):
+                data = json.loads(raw_data)
+            elif isinstance(raw_data, dict):
+                data = raw_data
+            else:
+                data = {}
+        except Exception as exc:
+            logger.warning("Invalid user data for %s: %s", req.nid, exc)
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=get_message("responses", "invalid_data", RESPONSES["invalid_data"]),
+            )
         if not data.get('tracking_code'):
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="کد رهگیری ندارد")
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=get_message("responses", "tracking_code_missing", RESPONSES["tracking_code_missing"]),
+            )
     payload: Dict[str, Any] = {}
     if req.loan_type:
         payload["loan_type"] = req.loan_type
@@ -502,11 +542,18 @@ def start_reg(nid: str, _: bool = Depends(require_api_key)):
 def start_sel(req: BankSelectRequest, _: bool = Depends(require_api_key)):
     nid = req.nid
     if not JOB_QUEUE:
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Job queue not ready")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=get_message("responses", "job_queue_not_ready", RESPONSES["job_queue_not_ready"]),
+        )
     try:
-        job = JOB_QUEUE.enqueue("select", nid, {"loan_type": req.loan_type})
+        loan_type = req.loan_type or "rbtnNaghdi"
+        job = JOB_QUEUE.enqueue("select", nid, {"loan_type": loan_type})
     except ValueError:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Job already queued or running")
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=get_message("responses", "job_already_running", RESPONSES["job_already_running"]),
+        )
     return {"status": "queued", "job_id": job.id}
 
 @app.post("/bot/stop/{nid}")
@@ -524,21 +571,42 @@ def stop_bot(nid: str, _: bool = Depends(require_api_key)):
 @app.post("/bot/action/view-status/{nid}")
 def action_view_status(nid: str, _: bool = Depends(require_api_key)):
     if not JOB_QUEUE:
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Job queue not ready")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=get_message("responses", "job_queue_not_ready", RESPONSES["job_queue_not_ready"]),
+        )
     user = DBHandler.get_applicant(nid)
-    if not user: return {"status": "error", "message": "کاربر یافت نشد"}
+    if not user:
+        return {"status": "error", "message": get_message("responses", "user_not_found", RESPONSES["user_not_found"])}
     
     try:
-        d = json.loads(user['data'])
-        if not d.get('tracking_code'):
-            return {"status": "error", "message": "کد رهگیری ندارد"}
-    except:
-        return {"status": "error", "message": "داده نامعتبر"}
+        raw_data = user["data"]
+        if isinstance(raw_data, str):
+            data = json.loads(raw_data)
+        elif isinstance(raw_data, dict):
+            data = raw_data
+        else:
+            data = {}
+        if not data.get('tracking_code'):
+            return {
+                "status": "error",
+                "message": get_message("responses", "tracking_code_missing", RESPONSES["tracking_code_missing"]),
+            }
+    except Exception as exc:
+        logger.warning("Invalid user data for %s: %s", nid, exc)
+        return {"status": "error", "message": get_message("responses", "invalid_data", RESPONSES["invalid_data"])}
     try:
         job = JOB_QUEUE.enqueue("status", nid, {})
     except ValueError:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Job already queued or running")
-    return {"status": "queued", "job_id": job.id, "message": "استعلام وضعیت در صف قرار گرفت"}
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=get_message("responses", "job_already_running", RESPONSES["job_already_running"]),
+        )
+    return {
+        "status": "queued",
+        "job_id": job.id,
+        "message": get_message("responses", "status_job_queued", RESPONSES["status_job_queued"]),
+    }
 
 @app.post("/bot/action/delete-request/{nid}")
 def action_delete_request(nid: str, _: bool = Depends(require_api_key)):

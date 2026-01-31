@@ -1,4 +1,6 @@
 const API_URL = "http://127.0.0.1:8000";
+const MESSAGES = window.MESSAGES_FA || {};
+const warnedMessageKeys = new Set();
 let activeBankList = [];
 let selectedNidForBank = null;
 let dashboardInterval = null;
@@ -28,6 +30,26 @@ document.addEventListener("DOMContentLoaded", () => {
         });
     }
 });
+
+function getMessage(path, fallback = '') {
+    const parts = path.split('.');
+    let current = MESSAGES;
+    for (const part of parts) {
+        if (current && Object.prototype.hasOwnProperty.call(current, part)) {
+            current = current[part];
+        } else {
+            if (!warnedMessageKeys.has(path)) {
+                console.warn(`Missing message key: ${path}`);
+                warnedMessageKeys.add(path);
+            }
+            return fallback;
+        }
+    }
+    if (typeof current === 'string') {
+        return current;
+    }
+    return fallback;
+}
 
 function startClock() {
     setInterval(() => {
@@ -81,12 +103,12 @@ async function fetchDashboardData() {
         renderDashboard(data);
         if(document.getElementById('connectionStatus')){
             document.getElementById('connectionStatus').className = "badge bg-success";
-            document.getElementById('connectionStatus').innerText = "سرور متصل";
+            document.getElementById('connectionStatus').innerText = getMessage('connection.connected', 'سرور متصل');
         }
     } catch (err) {
         if(document.getElementById('connectionStatus')){
             document.getElementById('connectionStatus').className = "badge bg-danger";
-            document.getElementById('connectionStatus').innerText = "قطع ارتباط";
+            document.getElementById('connectionStatus').innerText = getMessage('connection.disconnected', 'قطع ارتباط');
         }
     }
 }
@@ -118,7 +140,7 @@ function renderDashboard(users) {
         }
     });
 
-    if(runningCount===0) tbody.innerHTML = `<tr><td colspan="3" class="text-muted small py-3">غیرفعال</td></tr>`;
+    if(runningCount===0) tbody.innerHTML = `<tr><td colspan="3" class="text-muted small py-3">${getMessage('labels.inactive', 'غیرفعال')}</td></tr>`;
     window.currentActiveBotNid = runningNid;
 
     if(document.getElementById('stat-total')) document.getElementById('stat-total').innerText = users.length;
@@ -132,7 +154,7 @@ async function sendOtp(code) {
     if (!nid) return;
     document.getElementById('otpStatus').innerHTML = '...';
     await apiCall(`/receive_sms`, 'POST', {nid: nid, code: code});
-    document.getElementById('otpStatus').innerHTML = '<span class="text-success">ارسال شد</span>';
+    document.getElementById('otpStatus').innerHTML = `<span class="text-success">${getMessage('alerts.otp_sent', 'ارسال شد')}</span>`;
     document.getElementById('otpInput').value = "";
 }
 
@@ -209,19 +231,19 @@ async function actionViewStatus(nid) {
     if(user) {
         let d = parseUserData(user.data);
         if(!d.tracking_code) {
-            alert("خطا: کد رهگیری برای این کاربر ثبت نشده است.");
+            alert(getMessage('alerts.missing_tracking', 'خطا: کد رهگیری برای این کاربر ثبت نشده است.'));
             return;
         }
     }
     try {
         await apiCall(`/jobs/start`, 'POST', {bot_name: 'status', nid: nid});
-        alert("ربات مشاهده وضعیت شروع شد.");
+        alert(getMessage('alerts.status_started', 'ربات مشاهده وضعیت شروع شد.'));
         switchView('dashboard');
-    } catch(e) { alert("خطای ارتباط با سرور"); }
+    } catch(e) { alert(getMessage('alerts.server_error', 'خطای ارتباط با سرور')); }
 }
 
-function actionRecover(nid) { alert("بخش بازیابی هنوز فعال نیست"); }
-function actionDeleteReq(nid) { if(confirm("آیا مطمئن هستید؟")) apiCall(`/bot/action/delete-request/${nid}`, 'POST'); }
+function actionRecover(nid) { alert(getMessage('alerts.recover_unavailable', 'بخش بازیابی هنوز فعال نیست')); }
+function actionDeleteReq(nid) { if(confirm(getMessage('alerts.delete_confirm', 'آیا مطمئن هستید؟'))) apiCall(`/bot/action/delete-request/${nid}`, 'POST'); }
 
 function editUser(idx) {
     const user = allUsersData[idx];
@@ -271,7 +293,7 @@ async function submitNewApplicant() {
     const nid = document.getElementById('inpNid').value;
     const name = document.getElementById('inpName').value;
 
-    if(!nid || !name) return alert("نام و کد ملی الزامی است");
+    if(!nid || !name) return alert(getMessage('alerts.required_name_nid', 'نام و کد ملی الزامی است'));
 
     const formData = {
         mobile: document.getElementById('inpMobile').value,
@@ -299,7 +321,7 @@ async function submitNewApplicant() {
     };
 
     await apiCall('/applicants', 'POST', payload);
-    alert('اطلاعات با موفقیت ذخیره شد.');
+    alert(getMessage('alerts.save_success', 'اطلاعات با موفقیت ذخیره شد.'));
     if(editingUserId) resetAddForm();
     switchView('list');
 }
@@ -312,7 +334,7 @@ function addBankPriority() {
         document.getElementById('inpBankName').value=''; 
         document.getElementById('inpBranch').value=''; 
         renderPriorityList();
-    } else { alert("لطفا نام بانک را انتخاب کنید"); }
+    } else { alert(getMessage('alerts.select_bank_required', 'لطفا نام بانک را انتخاب کنید')); }
 }
 
 function renderPriorityList() { 
@@ -401,9 +423,9 @@ async function saveBrowserProfile() {
         const saved = await res.json();
         browserProfile = saved;
         updateBrowserProfileSummary(saved);
-        alert('تنظیمات مرورگر ذخیره شد.');
+        alert(getMessage('alerts.browser_settings_saved', 'تنظیمات مرورگر ذخیره شد.'));
     } else {
-        alert('خطا در ذخیره تنظیمات مرورگر.');
+        alert(getMessage('alerts.browser_settings_failed', 'خطا در ذخیره تنظیمات مرورگر.'));
     }
 }
 
@@ -420,9 +442,9 @@ function applyBrowserPreset(preset) {
 async function testBrowserLaunch() {
     const res = await fetch(`${API_URL}/browser/test-launch`, {method: 'POST'});
     if(res.ok) {
-        alert('Test launch انجام شد.');
+        alert(getMessage('alerts.test_launch_ok', 'Test launch انجام شد.'));
     } else {
-        alert('Test launch با خطا مواجه شد.');
+        alert(getMessage('alerts.test_launch_failed', 'Test launch با خطا مواجه شد.'));
     }
 }
 
@@ -441,11 +463,20 @@ async function saveSettings() {
     };
     
     await apiCall('/settings', 'POST', payload);
-    alert('تنظیمات با موفقیت ذخیره شد.');
+    alert(getMessage('alerts.settings_saved', 'تنظیمات با موفقیت ذخیره شد.'));
 }
 
 // توابع کمکی دیگر
-function translateStatus(s) { if(!s) return 'آماده'; s=s.toLowerCase(); if(s.includes('run')) return 'اجرا'; if(s.includes('wait')) return 'منتظر پیامک'; if(s.includes('succ')) return 'موفق'; if(s.includes('stop')) return 'متوقف'; return s; }
+function translateStatus(s) {
+    const fallback = getMessage('status.ready', 'آماده');
+    if(!s) return fallback;
+    s = s.toLowerCase();
+    if(s.includes('run')) return getMessage('status.running', 'اجرا');
+    if(s.includes('wait')) return getMessage('status.waiting_sms', 'منتظر پیامک');
+    if(s.includes('succ')) return getMessage('status.success', 'موفق');
+    if(s.includes('stop')) return getMessage('status.stopped', 'متوقف');
+    return s;
+}
 function getStatusBadge(s) { if(!s) return 'bg-light text-muted'; s=s.toLowerCase(); if(s.includes('succ')) return 'bg-success'; if(s.includes('stop')) return 'bg-danger'; if(s.includes('wait')) return 'bg-warning text-dark'; if(s.includes('run')) return 'bg-primary'; return 'bg-secondary'; }
 function openBankModal(nid) {
     selectedNidForBank = nid;
