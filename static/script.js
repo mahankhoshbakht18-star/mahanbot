@@ -1,4 +1,5 @@
 const API_URL = "http://127.0.0.1:8000";
+const MSG = window.MESSAGES_FA || {};
 let activeBankList = [];
 let selectedNidForBank = null;
 let dashboardInterval = null;
@@ -16,6 +17,8 @@ const logFilters = {
 };
 
 document.addEventListener("DOMContentLoaded", () => {
+    applyTranslations();
+    populateSelectOptions();
     switchView('dashboard');
     startClock();
     setupLogFilters();
@@ -26,6 +29,66 @@ document.addEventListener("DOMContentLoaded", () => {
         });
     }
 });
+
+function getMessage(key) {
+    if (!key) return undefined;
+    return key.split('.').reduce((acc, part) => (acc ? acc[part] : undefined), MSG);
+}
+
+function applyTranslations() {
+    if (MSG.title) document.title = MSG.title;
+    document.querySelectorAll('[data-i18n]').forEach((el) => {
+        const value = getMessage(el.dataset.i18n);
+        if (value !== undefined) el.textContent = value;
+    });
+    document.querySelectorAll('[data-i18n-placeholder]').forEach((el) => {
+        const value = getMessage(el.dataset.i18nPlaceholder);
+        if (value !== undefined) el.setAttribute('placeholder', value);
+    });
+}
+
+function populateSelectOptions() {
+    const stateSelect = document.getElementById('inpState');
+    if (stateSelect && MSG.options?.provinces) {
+        stateSelect.innerHTML = '';
+        const placeholder = document.createElement('option');
+        placeholder.value = '';
+        placeholder.textContent = MSG.placeholders?.stateSelect || '';
+        stateSelect.appendChild(placeholder);
+        MSG.options.provinces.forEach((province) => {
+            const option = document.createElement('option');
+            option.value = province;
+            option.textContent = province;
+            stateSelect.appendChild(option);
+        });
+    }
+
+    const bankSelect = document.getElementById('inpBankName');
+    if (bankSelect && MSG.options?.banks) {
+        bankSelect.innerHTML = '';
+        const placeholder = document.createElement('option');
+        placeholder.value = '';
+        placeholder.textContent = MSG.placeholders?.bankSelect || '';
+        bankSelect.appendChild(placeholder);
+        MSG.options.banks.forEach((bank) => {
+            const option = document.createElement('option');
+            option.value = bank;
+            option.textContent = bank;
+            bankSelect.appendChild(option);
+        });
+    }
+
+    const militarySelect = document.getElementById('inpMilitary');
+    if (militarySelect && MSG.options?.militaryStatuses) {
+        militarySelect.innerHTML = '';
+        MSG.options.militaryStatuses.forEach((status) => {
+            const option = document.createElement('option');
+            option.value = status.value;
+            option.textContent = status.label;
+            militarySelect.appendChild(option);
+        });
+    }
+}
 
 function startClock() {
     setInterval(() => {
@@ -76,12 +139,12 @@ async function fetchDashboardData() {
         renderDashboard(data);
         if(document.getElementById('connectionStatus')){
             document.getElementById('connectionStatus').className = "badge bg-success";
-            document.getElementById('connectionStatus').innerText = "سرور متصل";
+            document.getElementById('connectionStatus').innerText = MSG.connection?.connected || "";
         }
     } catch (err) {
         if(document.getElementById('connectionStatus')){
             document.getElementById('connectionStatus').className = "badge bg-danger";
-            document.getElementById('connectionStatus').innerText = "قطع ارتباط";
+            document.getElementById('connectionStatus').innerText = MSG.connection?.disconnected || "";
         }
     }
 }
@@ -113,7 +176,7 @@ function renderDashboard(users) {
         }
     });
 
-    if(runningCount===0) tbody.innerHTML = `<tr><td colspan="3" class="text-muted small py-3">غیرفعال</td></tr>`;
+    if(runningCount===0) tbody.innerHTML = `<tr><td colspan="3" class="text-muted small py-3">${MSG.dashboard?.activeEmpty || ""}</td></tr>`;
     window.currentActiveBotNid = runningNid;
 
     if(document.getElementById('stat-total')) document.getElementById('stat-total').innerText = users.length;
@@ -127,7 +190,7 @@ async function sendOtp(code) {
     if (!nid) return;
     document.getElementById('otpStatus').innerHTML = '...';
     await apiCall(`/receive_sms`, 'POST', {nid: nid, code: code});
-    document.getElementById('otpStatus').innerHTML = '<span class="text-success">ارسال شد</span>';
+    document.getElementById('otpStatus').innerHTML = `<span class="text-success">${MSG.dashboard?.otpSent || ""}</span>`;
     document.getElementById('otpInput').value = "";
 }
 
@@ -138,10 +201,10 @@ async function fetchApplicants(mode) {
         allUsersData = data;
 
         if(mode === 'list') renderMainList(data);
-        else if(mode === 'bank-select') renderSimpleList(data, 'bankSelectListBody', 'openBankModal', 'انتخاب بانک', 'btn-primary');
+        else if(mode === 'bank-select') renderSimpleList(data, 'bankSelectListBody', 'openBankModal', MSG.buttons?.selectBank || '', 'btn-primary');
         else if(mode === 'status') renderStatusList(data);
-        else if(mode === 'recover') renderSimpleList(data, 'recoverListBody', 'actionRecover', 'بازیابی کد', 'btn-warning text-dark');
-        else if(mode === 'delete-req') renderSimpleList(data, 'deleteReqListBody', 'actionDeleteReq', 'حذف درخواست', 'btn-danger');
+        else if(mode === 'recover') renderSimpleList(data, 'recoverListBody', 'actionRecover', MSG.buttons?.recoverCode || '', 'btn-warning text-dark');
+        else if(mode === 'delete-req') renderSimpleList(data, 'deleteReqListBody', 'actionDeleteReq', MSG.buttons?.deleteRequest || '', 'btn-danger');
     } catch(e){console.error(e);}
 }
 
@@ -161,7 +224,7 @@ function renderStatusList(data) {
                 <td class="font-monospace fw-bold text-success">${code}</td>
                 <td>
                     <button class="btn btn-sm btn-info text-white shadow-sm" onclick="actionViewStatus('${user.national_id}')">
-                        <i class="fas fa-search me-1"></i> استعلام
+                        <i class="fas fa-search me-1"></i> ${MSG.buttons?.inquireStatus || ''}
                     </button>
                 </td>
             </tr>
@@ -184,7 +247,7 @@ function renderMainList(data) {
                 <td class="font-monospace">${user.national_id}</td>
                 <td class="font-monospace text-success">${code}</td>
                 <td><span class="badge ${getStatusBadge(user.status)}">${translateStatus(user.status)}</span></td>
-                <td><button class="btn btn-sm btn-outline-success rounded-pill px-3" onclick="startRegister('${user.national_id}')"><i class="fas fa-play me-1"></i>شروع</button></td>
+                <td><button class="btn btn-sm btn-outline-success rounded-pill px-3" onclick="startRegister('${user.national_id}')"><i class="fas fa-play me-1"></i>${MSG.buttons?.start || ''}</button></td>
             </tr>
         `;
     });
@@ -204,29 +267,30 @@ async function actionViewStatus(nid) {
     if(user) {
         let d = parseUserData(user.data);
         if(!d.tracking_code) {
-            alert("خطا: کد رهگیری برای این کاربر ثبت نشده است.");
+            alert(MSG.alerts?.missingTrackingCode || "");
             return;
         }
     }
     try {
         const res = await apiCall(`/bot/action/view-status/${nid}`, 'POST');
         if(res.status === 'started') {
-            alert("ربات مشاهده وضعیت شروع شد.");
+            alert(MSG.alerts?.statusBotStarted || "");
             switchView('dashboard');
         } else {
-            alert("خطا: " + res.message);
+            const prefix = MSG.alerts?.requestFailedPrefix || "";
+            alert(`${prefix} ${res.message}`);
         }
-    } catch(e) { alert("خطای ارتباط با سرور"); }
+    } catch(e) { alert(MSG.alerts?.serverConnectionFailed || ""); }
 }
 
-function actionRecover(nid) { alert("بخش بازیابی هنوز فعال نیست"); }
-function actionDeleteReq(nid) { if(confirm("آیا مطمئن هستید؟")) apiCall(`/bot/action/delete-request/${nid}`, 'POST'); }
+function actionRecover(nid) { alert(MSG.alerts?.recoverNotReady || ""); }
+function actionDeleteReq(nid) { if(confirm(MSG.alerts?.confirmDelete || "")) apiCall(`/bot/action/delete-request/${nid}`, 'POST'); }
 
 function editUser(idx) {
     const user = allUsersData[idx];
     if(!user) return;
     editingUserId = user.id;
-    document.getElementById('formTitle').innerText = `ویرایش: ${user.full_name}`;
+    document.getElementById('formTitle').innerText = `${MSG.addForm?.titleEditPrefix || ""} ${user.full_name}`;
     document.getElementById('btnResetForm').style.display = 'block';
     
     let d = parseUserData(user.data); 
@@ -260,7 +324,7 @@ function editUser(idx) {
 function resetAddForm() {
     editingUserId = null;
     document.getElementById('addForm').reset();
-    document.getElementById('formTitle').innerText = "ثبت متقاضی جدید";
+    document.getElementById('formTitle').innerText = MSG.addForm?.titleNew || "";
     document.getElementById('btnResetForm').style.display = 'none';
     activeBankList = [];
     renderPriorityList();
@@ -270,7 +334,7 @@ async function submitNewApplicant() {
     const nid = document.getElementById('inpNid').value;
     const name = document.getElementById('inpName').value;
 
-    if(!nid || !name) return alert("نام و کد ملی الزامی است");
+    if(!nid || !name) return alert(MSG.alerts?.requiredNameNid || "");
 
     const formData = {
         mobile: document.getElementById('inpMobile').value,
@@ -298,7 +362,7 @@ async function submitNewApplicant() {
     };
 
     await apiCall('/applicants', 'POST', payload);
-    alert('اطلاعات با موفقیت ذخیره شد.');
+    alert(MSG.alerts?.saveSuccess || "");
     if(editingUserId) resetAddForm();
     switchView('list');
 }
@@ -311,7 +375,7 @@ function addBankPriority() {
         document.getElementById('inpBankName').value=''; 
         document.getElementById('inpBranch').value=''; 
         renderPriorityList();
-    } else { alert("لطفا نام بانک را انتخاب کنید"); }
+    } else { alert(MSG.alerts?.selectBankName || ""); }
 }
 
 function renderPriorityList() { 
@@ -364,11 +428,11 @@ async function saveSettings() {
     };
     
     await apiCall('/settings', 'POST', payload);
-    alert('تنظیمات با موفقیت ذخیره شد.');
+    alert(MSG.alerts?.settingsSaved || "");
 }
 
 // توابع کمکی دیگر
-function translateStatus(s) { if(!s) return 'آماده'; s=s.toLowerCase(); if(s.includes('run')) return 'اجرا'; if(s.includes('wait')) return 'منتظر پیامک'; if(s.includes('succ')) return 'موفق'; if(s.includes('stop')) return 'متوقف'; return s; }
+function translateStatus(s) { if(!s) return MSG.statusLabels?.ready || ''; s=s.toLowerCase(); if(s.includes('run')) return MSG.statusLabels?.running || ''; if(s.includes('wait')) return MSG.statusLabels?.waitingSms || ''; if(s.includes('succ')) return MSG.statusLabels?.success || ''; if(s.includes('stop')) return MSG.statusLabels?.stopped || ''; return s; }
 function getStatusBadge(s) { if(!s) return 'bg-light text-muted'; s=s.toLowerCase(); if(s.includes('succ')) return 'bg-success'; if(s.includes('stop')) return 'bg-danger'; if(s.includes('wait')) return 'bg-warning text-dark'; if(s.includes('run')) return 'bg-primary'; return 'bg-secondary'; }
 function openBankModal(nid) { selectedNidForBank = nid; document.getElementById('modalNidDisplay').innerText = nid; new bootstrap.Modal(document.getElementById('bankActionModal')).show(); }
 async function confirmBankStart() { const t = document.querySelector('input[name="loanType"]:checked').value; await apiCall('/bot/start-select', 'POST', {nid: selectedNidForBank, loan_type: t}); bootstrap.Modal.getInstance(document.getElementById('bankActionModal')).hide(); switchView('dashboard'); }
@@ -427,7 +491,7 @@ function renderLogs(clearInitial = false) {
     if (!term) return;
     term.innerHTML = '';
     if (!logEvents.length && clearInitial) {
-        term.innerHTML = '<div class="text-muted">No log events.</div>';
+        term.innerHTML = `<div class="text-muted">${MSG.log?.noEventsAfterClear || ''}</div>`;
         return;
     }
     const filtered = logEvents.filter((event) => {
@@ -443,23 +507,23 @@ function renderLogs(clearInitial = false) {
     });
 
     if (!filtered.length) {
-        term.innerHTML = '<div class="text-muted">رویدادی یافت نشد.</div>';
+        term.innerHTML = `<div class="text-muted">${MSG.log?.noEvents || ''}</div>`;
         return;
     }
 
     filtered.forEach((event) => {
         const div = document.createElement('div');
         const timeText = event.ts ? new Date(event.ts * 1000).toLocaleTimeString('fa-IR') : '';
-        const nidLabel = event.nid ? `<span style="color:#00e5ff">${event.nid}</span>` : '<span style="color:#00e5ff">system</span>';
+        const nidLabel = event.nid ? `<span style="color:#00e5ff">${event.nid}</span>` : `<span style="color:#00e5ff">${MSG.log?.systemLabel || ''}</span>`;
         const jobLabel = event.job_id ? `<span style="color:#9ccc65">#${event.job_id.slice(0, 8)}</span>` : '';
-        const levelLabel = event.level ? `<span style="color:${getLevelColor(event.level)}">[${event.level}]</span>` : '';
-        const typeLabel = `<span style="color:#90a4ae">(${event.type})</span>`;
+        const levelLabel = event.level ? `<span style="color:${getLevelColor(event.level)}">[${getLevelLabel(event.level)}]</span>` : '';
+        const typeLabel = `<span style="color:#90a4ae">(${getTypeLabel(event.type)})</span>`;
 
         let message = '';
         if (event.type === 'log') {
             message = event.message || '';
         } else if (event.type === 'job_status') {
-            message = `status=${event.status || ''}${event.detail ? ` (${event.detail})` : ''}`;
+            message = `${MSG.log?.statusPrefix || ''}${event.status || ''}${event.detail ? ` (${event.detail})` : ''}`;
         } else if (event.type === 'metric') {
             message = `${event.name}: ${event.value}`;
         }
@@ -484,4 +548,13 @@ function getLevelColor(level) {
         'waiting sms': '#ff9800'
     };
     return palette[level.toLowerCase()] || '#cfd8dc';
+}
+
+function getLevelLabel(level) {
+    const key = (level || '').toLowerCase();
+    return MSG.logLevels?.[key] || level || '';
+}
+
+function getTypeLabel(type) {
+    return MSG.logTypes?.[type] || type || '';
 }

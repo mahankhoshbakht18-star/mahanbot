@@ -7,6 +7,7 @@ from playwright.sync_api import sync_playwright
 from database import DBHandler
 from captcha_service import CaptchaService
 from browser_actions import BrowserActions
+from messages_fa import LOG_MESSAGES
 
 USER_AGENTS = [
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
@@ -48,7 +49,7 @@ class BotCore:
             if user:
                 d = json.loads(user['data'])
                 if 'otp_code' in d and d['otp_code']:
-                    self.log(f"✅ استفاده از کد موجود در دیتابیس: {d['otp_code']}", "success")
+                    self.log(LOG_MESSAGES["otp_from_db"].format(code=d["otp_code"]), "success")
                     return str(d['otp_code']).strip()
         except: pass
 
@@ -59,7 +60,7 @@ class BotCore:
                 data = response.json()
                 code = data.get('otp')
                 if code and str(code).strip():
-                    self.log(f"☁️ دریافت کد از سرور آنلاین: {code}", "success")
+                    self.log(LOG_MESSAGES["otp_from_server"].format(code=code), "success")
                     # ذخیره در دیتابیس لوکال برای استفاده‌های بعدی
                     DBHandler.save_otp(self.nid, code)
                     return str(code).strip()
@@ -84,7 +85,7 @@ class BotCore:
     def solve_firewall(self, page):
         try:
             if page.locator("#ans").is_visible():
-                self.log("🛡️ حل فایروال...", "warning", page)
+                self.log(LOG_MESSAGES["firewall_solving"], "warning", page)
                 imgs = page.locator("img[src^='data:image']").all()
                 if imgs:
                     code = self.captcha_service.solve(imgs[0].screenshot(), mode='firewall')

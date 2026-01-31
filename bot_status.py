@@ -4,6 +4,7 @@ import re
 import os
 from playwright.sync_api import sync_playwright, Error as PlaywrightError, TimeoutError as PlaywrightTimeoutError
 from database import DBHandler
+from messages_fa import LOG_MESSAGES
 from captcha_service import CaptchaService
 
 
@@ -100,7 +101,7 @@ class StatusBot:
 
             ans = page.locator("#ans")
             if self.safe_visible(ans):
-                self.log_msg("🛡️ فایروال شناسایی شد. در حال حل...", "warning")
+                self.log_msg(LOG_MESSAGES["firewall_solving"], "warning")
 
                 captcha_box = page.locator("img[src*='base64']").first
                 if not self.safe_visible(captcha_box):
@@ -111,7 +112,7 @@ class StatusBot:
                     solved_code = self.captcha_service.solve(captcha_bytes, mode="firewall")
 
                     if solved_code:
-                        self.log_msg(f"کد فایروال: {solved_code}", "info")
+                        self.log_msg(LOG_MESSAGES["firewall_code"].format(code=solved_code), "info")
                         ans.fill(solved_code)
 
                         # دکمه تایید فایروال
@@ -165,7 +166,7 @@ class StatusBot:
             info_text = ""
             match_state = re.search(r"صف انتظار.*?استان\s*:\s*(\d+)", body_text, re.S)
             if match_state:
-                info_text += f" | نوبت استان: {match_state.group(1)}"
+                info_text += LOG_MESSAGES["status_queue_position"].format(position=match_state.group(1))
 
             # جلوگیری از ذخیره‌ی چندباره
             if self.saved_receipt:
@@ -175,9 +176,9 @@ class StatusBot:
                 file_path = os.path.join(self.save_dir, f"{self.nid}.png")
                 page.screenshot(path=file_path, full_page=True)
                 self.saved_receipt = True
-                self.log_msg(f"📸 رسید وضعیت ذخیره شد: {file_path}", "success")
+                self.log_msg(LOG_MESSAGES["receipt_saved_path"].format(path=file_path), "success")
             except Exception as e:
-                self.log_msg(f"خطا در ذخیره عکس: {e}", "warning")
+                self.log_msg(LOG_MESSAGES["receipt_save_error"].format(error=e), "warning")
 
             return True, info_text
 
@@ -243,7 +244,7 @@ class StatusBot:
                     pass
                 return False
 
-            self.log_msg(f"کپچا حل شد: {solved_code}", "info")
+            self.log_msg(LOG_MESSAGES["captcha_solved"].format(code=solved_code), "info")
             captcha_input.fill(solved_code)
 
             # ⭐ نکته کلیدی:
@@ -277,7 +278,7 @@ class StatusBot:
             if msg_text:
                 if msg_text != self.last_site_msg:
                     self.last_site_msg = msg_text
-                    self.log_msg(f"⚠️ پیام سایت: {msg_text}", "warning")
+                    self.log_msg(LOG_MESSAGES["site_message"].format(message=msg_text), "warning")
 
                 # اگر کد امنیتی اشتباه بود، پاک کن تا دوباره حل شود
                 if "کد امنیتی" in msg_text:
@@ -290,7 +291,7 @@ class StatusBot:
 
             # اگر نه موفقیت نه خطا… یعنی سایت نتیجه را نیاورده → یک retry منطقی
             # این همان جایی است که قبلاً شما Refresh دستی می‌کردید.
-            self.log_msg("⏳ کپچا ارسال شد اما نتیجه نیامد؛ تلاش مجدد بدون Refresh دستی...", "warning")
+            self.log_msg(LOG_MESSAGES["captcha_no_result"], "warning")
 
             # یک بار reload سبک (نه refresh دستی کاربر) برای دریافت نتیجه
             try:
@@ -302,7 +303,7 @@ class StatusBot:
             return False
 
         except Exception as e:
-            self.log_msg(f"submit_form_with_captcha error: {e}", "warning")
+            self.log_msg(LOG_MESSAGES["form_submit_error"].format(error=e), "warning")
             return False
 
     # -----------------------------------------------------------
@@ -312,10 +313,10 @@ class StatusBot:
     def run(self, stop_event):
         tracking_code = self.user_data.get("tracking_code")
         if not tracking_code:
-            self.log_msg("❌ کد رهگیری موجود نیست.", "error")
+            self.log_msg(LOG_MESSAGES["tracking_missing"], "error")
             return
 
-        self.log_msg(f"شروع استعلام برای: {tracking_code}", "info")
+        self.log_msg(LOG_MESSAGES["status_start"].format(code=tracking_code), "info")
 
         browser = None
         context = None
@@ -330,7 +331,7 @@ class StatusBot:
                 )
 
                 page = context.new_page()
-                self.log_msg("باز کردن سایت...", "info")
+                self.log_msg(LOG_MESSAGES["opening_site"], "info")
 
                 # برای اینکه سریع‌تر باشه
                 page.set_default_timeout(15000)
@@ -338,7 +339,7 @@ class StatusBot:
                 while not stop_event.is_set():
                     try:
                         if page.is_closed():
-                            self.log_msg("مرورگر توسط کاربر بسته شد.", "stopped")
+                            self.log_msg(LOG_MESSAGES["browser_closed_by_user"], "stopped")
                             break
 
                         # اگر صفحه روی مقصد نیست برو
@@ -350,7 +351,7 @@ class StatusBot:
                             except PlaywrightError as e:
                                 if "Target closed" in str(e):
                                     raise e
-                                self.log_msg("⚠️ مشکل اینترنت. تلاش مجدد...", "warning")
+                                self.log_msg(LOG_MESSAGES["connection_issue"], "warning")
                                 time.sleep(3)
                                 continue
 
@@ -362,8 +363,11 @@ class StatusBot:
                         # 2) اگر موفقیت و صفحه وضعیت آمد
                         is_success, extracted_info = self.check_success_and_save(page)
                         if is_success:
-                            self.log_msg(f"✅ موفقیت! {extracted_info}", "success")
-                            self.log_msg("🎉 رسید ذخیره شد و عملیات پایان یافت.", "success")
+                            if extracted_info:
+                                self.log_msg(LOG_MESSAGES["status_success"].format(info=extracted_info), "success")
+                            else:
+                                self.log_msg(LOG_MESSAGES["status_success_no_info"], "success")
+                            self.log_msg(LOG_MESSAGES["receipt_saved"], "success")
 
                             # منتظر بماند تا stop یا بستن مرورگر
                             while not stop_event.is_set():
@@ -376,10 +380,10 @@ class StatusBot:
                         msg_text = self.get_site_message(page)
                         if msg_text and msg_text != self.last_site_msg:
                             self.last_site_msg = msg_text
-                            self.log_msg(f"⚠️ پیام سایت: {msg_text}", "warning")
+                            self.log_msg(LOG_MESSAGES["site_message"].format(message=msg_text), "warning")
 
                             if "یافت نشد" in msg_text:
-                                self.log_msg("⛔ اطلاعات اشتباه است.", "error")
+                                self.log_msg(LOG_MESSAGES["invalid_info"], "error")
                                 time.sleep(2)
                                 break
 
@@ -398,18 +402,18 @@ class StatusBot:
 
                     except PlaywrightError as pe:
                         if "Target closed" in str(pe):
-                            self.log_msg("مرورگر بسته شد.", "stopped")
+                            self.log_msg(LOG_MESSAGES["browser_closed"], "stopped")
                             break
                         else:
-                            self.log_msg(f"خطای موقت: {pe}", "warning")
+                            self.log_msg(LOG_MESSAGES["temporary_error"].format(error=pe), "warning")
                             time.sleep(2)
 
                     except Exception as e:
-                        self.log_msg(f"خطای غیرمنتظره: {e}", "error")
+                        self.log_msg(LOG_MESSAGES["unexpected_error"].format(error=e), "error")
                         time.sleep(2)
 
         except Exception as e:
-            self.log_msg(f"Error: {e}", "error")
+            self.log_msg(LOG_MESSAGES["unexpected_error"].format(error=e), "error")
 
         finally:
             if context:
@@ -422,4 +426,4 @@ class StatusBot:
                     browser.close()
                 except:
                     pass
-            self.log_msg("پایان عملیات.", "stopped")
+            self.log_msg(LOG_MESSAGES["status_completed"], "stopped")

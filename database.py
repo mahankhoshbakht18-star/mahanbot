@@ -2,6 +2,7 @@ import sqlite3
 import json
 import os
 import sys
+from messages_fa import STATUS_MESSAGES
 
 def resource_path(relative_path):
     try:
@@ -149,7 +150,10 @@ class DBHandler:
                 conn = sqlite3.connect(DB_PATH)
                 c = conn.cursor()
                 # آپدیت دیتا و وضعیت همزمان
-                c.execute("UPDATE applicants SET data=?, status='Success', last_log='ثبت نام موفق' WHERE national_id=?", (json.dumps(d), nid))
+                c.execute(
+                    "UPDATE applicants SET data=?, status='Success', last_log=? WHERE national_id=?",
+                    (json.dumps(d), STATUS_MESSAGES["registration_success"], nid),
+                )
                 conn.commit()
                 conn.close()
                 return True

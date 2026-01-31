@@ -5,6 +5,7 @@ from playwright.sync_api import sync_playwright
 from bot_core import BotCore
 from browser_actions import BrowserActions
 from database import DBHandler
+from messages_fa import LOG_MESSAGES
 
 class RegistrationBot(BotCore):
     def run(self, stop_event):
@@ -23,12 +24,12 @@ class RegistrationBot(BotCore):
                     # نکته حیاتی: اینجا متغیر page را حذف کردیم.
                     # وقتی Alert باز است، نمی‌توان روی صفحه چیزی نوشت.
                     # فقط به داشبورد ارسال می‌کنیم.
-                    self.log(f"❌ پیام سایت: {msg}", "error") 
+                    self.log(LOG_MESSAGES["site_message"].format(message=msg), "error")
                     
                     # منطق پاکسازی کد نامعتبر
                     if any(x in msg for x in ["منقضی", "نامعتبر", "اشتباه", "صحیح نمی باشد"]):
                         DBHandler.clear_otp(self.nid)
-                        self.log("♻️ کد نامعتبر از دیتابیس پاک شد.", "warning")
+                        self.log(LOG_MESSAGES["invalid_otp_cleared"], "warning")
                     
                     # بستن فوری پنجره
                     dialog.accept()
@@ -40,7 +41,7 @@ class RegistrationBot(BotCore):
             # ============================================================
 
             try:
-                self.log("🚀 ربات آماده‌سازی شد", "info", page)
+                self.log(LOG_MESSAGES["bot_ready"], "info", page)
                 captcha_mode = self.settings.get('captcha_mode', 'human')
                 allow_final_submit = self.settings.get('final_submit', False)
 
@@ -62,7 +63,7 @@ class RegistrationBot(BotCore):
                         # ==========================
                         if page.locator("#ctl00_ContentPlaceHolder1_btnSendConfirmCode").is_visible():
                             if not page.locator("#ctl00_ContentPlaceHolder1_tbIDNo").input_value():
-                                self.log(f"📝 مرحله ۱: پر کردن فرم", "registering", page)
+                                self.log(LOG_MESSAGES["step_form"], "registering", page)
                                 BrowserActions.force_fill(page.locator("#ctl00_ContentPlaceHolder1_tbIDNo"), self.nid)
                                 if d.get('spouse'): BrowserActions.force_fill(page.locator("#ctl00_ContentPlaceHolder1_tbIDNo2"), d.get('spouse'))
                                 
@@ -90,12 +91,12 @@ class RegistrationBot(BotCore):
                         if page.locator("#ctl00_ContentPlaceHolder1_btnContinue1").is_visible():
                             otp = self.get_otp_code()
                             if otp:
-                                self.log(f"✅ ورود کد: {otp}", "success", page)
+                                self.log(LOG_MESSAGES["otp_entered"].format(otp=otp), "success", page)
                                 page.locator("#ctl00_ContentPlaceHolder1_tbMobileConfCode").fill(otp)
                                 self._solve_captcha_wrapper(page, "#ctl00_ContentPlaceHolder1_tbCaptcha2", "#ctl00_ContentPlaceHolder1_btnContinue1", captcha_mode)
                                 time.sleep(4)
                             else:
-                                self.log("📩 منتظر کد پیامک...", "waiting sms", page)
+                                self.log(LOG_MESSAGES["waiting_sms"], "waiting sms", page)
                                 time.sleep(3)
                             continue
 
@@ -103,7 +104,7 @@ class RegistrationBot(BotCore):
                         # STEP 3: اطلاعات سکونت
                         # ==========================
                         if page.locator("#ctl00_ContentPlaceHolder1_btnContinue2").is_visible():
-                            self.log("📍 مرحله ۳: اطلاعات تکمیلی", "registering", page)
+                            self.log(LOG_MESSAGES["step_additional"], "registering", page)
                             
                             try: page.select_option("#ctl00_ContentPlaceHolder1_ddlIsarST", value="0")
                             except: pass
@@ -120,23 +121,23 @@ class RegistrationBot(BotCore):
                             state_val = self._find_select_value(page, "#ctl00_ContentPlaceHolder1_ddlState", user_state)
                             if state_val:
                                 if page.locator("#ctl00_ContentPlaceHolder1_ddlState").input_value() != state_val:
-                                    self.log(f"استان: {user_state}", "info", page)
+                                    self.log(LOG_MESSAGES["state_selected"].format(state=user_state), "info", page)
                                     page.select_option("#ctl00_ContentPlaceHolder1_ddlState", value=state_val)
-                                    self.log("⏳ صبر برای رفرش شهرها...", "info", page)
+                                    self.log(LOG_MESSAGES["waiting_city_refresh"], "info", page)
                                     try: page.wait_for_function("document.getElementById('ctl00_ContentPlaceHolder1_ddlCity').options.length > 1", timeout=15000)
                                     except: time.sleep(5)
                             else:
-                                self.log(f"⚠️ استان '{user_state}' پیدا نشد", "error", page)
+                                self.log(LOG_MESSAGES["state_not_found"], "error", page)
 
                             # 2. شهر
                             user_city = d.get('city')
                             if user_city:
                                 city_val = self._find_select_value(page, "#ctl00_ContentPlaceHolder1_ddlCity", user_city)
                                 if city_val:
-                                    self.log(f"شهر: {user_city}", "info", page)
+                                    self.log(LOG_MESSAGES["city_selected"].format(city=user_city), "info", page)
                                     page.select_option("#ctl00_ContentPlaceHolder1_ddlCity", value=city_val)
                                 else:
-                                    self.log(f"⚠️ شهر '{user_city}' پیدا نشد", "warning", page)
+                                    self.log(LOG_MESSAGES["city_not_found"], "warning", page)
 
                             # 3. تلفن و کد پستی
                             if d.get('phone'): page.locator("#ctl00_ContentPlaceHolder1_tbTel").fill(str(d.get('phone')), force=True)
@@ -149,17 +150,17 @@ class RegistrationBot(BotCore):
                         # STEP 4: تایید نهایی
                         # ==========================
                         if page.locator("#ctl00_ContentPlaceHolder1_btnSave").is_visible():
-                            self.log("🏁 مرحله نهایی", "registering", page)
+                            self.log(LOG_MESSAGES["final_step"], "registering", page)
                             chk = page.locator("#ctl00_ContentPlaceHolder1_chkBoxWarning")
                             if not chk.is_checked(): chk.click(force=True)
                             
                             if not allow_final_submit:
-                                self.log("🛑 توقف (ثبت نهایی خاموش)", "stop", page)
+                                self.log(LOG_MESSAGES["final_submit_disabled"], "stop", page)
                                 time.sleep(10)
                                 return 
                             
                             page.locator("#ctl00_ContentPlaceHolder1_btnSave").click()
-                            self.log("💾 ثبت نهایی شد", "info", page)
+                            self.log(LOG_MESSAGES["final_submitted"], "info", page)
                             time.sleep(10)
                             continue
 
@@ -170,17 +171,17 @@ class RegistrationBot(BotCore):
                                 match = re.search(r'کد رهگیری\s*[:\-\s]*(\d{10})', full_text)
                                 code = match.group(1) if match else "---"
                                 DBHandler.save_success_data(self.nid, code)
-                                self.log(f"🎉 ثبت موفق! کد: {code}", "success", page)
-                            except: self.log("🎉 ثبت نام موفق!", "success", page)
+                                self.log(LOG_MESSAGES["registration_success"].format(code=code), "success", page)
+                            except: self.log(LOG_MESSAGES["registration_success_no_code"], "success", page)
                             return
 
                     except Exception: time.sleep(1)
 
-            except Exception as e: self.log(f"Fatal: {e}", "error")
+            except Exception as e: self.log(LOG_MESSAGES["unexpected_error"].format(error=e), "error")
             finally:
                 if context: context.close()
                 if browser: browser.close()
-                self.log("مرورگر بسته شد.", "stop")
+                self.log(LOG_MESSAGES["browser_closed"], "stop")
 
     # --- توابع کمکی ---
     def _solve_captcha_wrapper(self, page, input_sel, btn_sel, mode):

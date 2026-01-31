@@ -5,6 +5,7 @@ from playwright.sync_api import sync_playwright, Error as PlaywrightError
 from bot_core import BotCore
 from browser_actions import BrowserActions
 from database import DBHandler
+from messages_fa import LOG_MESSAGES
 
 class BankSelectionBot(BotCore):
     def run(self, stop_event, loan_type="rbtnNaghdi"):
@@ -23,7 +24,7 @@ class BankSelectionBot(BotCore):
                     browser, context, page = self.setup_browser(p)
                     page.on("dialog", lambda dialog: dialog.accept())
 
-                    self.log(f"🚀 شروع عملیات (دور {attempt})...", "info", page)
+                    self.log(LOG_MESSAGES["operation_started"].format(attempt=attempt), "info", page)
                     captcha_mode = self.settings.get('captcha_mode', 'human')
 
                     try: page.goto(TARGET_URL, timeout=60000)
@@ -33,7 +34,7 @@ class BankSelectionBot(BotCore):
                         
                         # 1. تشخیص مسدودی (Soft WAF)
                         if page.locator("body").get_by_text("درخواست شما رد شد").is_visible():
-                            self.log("⛔ مسدودی! رفرش...", "error", page)
+                            self.log(LOG_MESSAGES["site_blocked"], "error", page)
                             time.sleep(2)
                             page.goto(TARGET_URL)
                             continue
@@ -74,7 +75,7 @@ class BankSelectionBot(BotCore):
                                 current_val = page.locator("#ctl00_ContentPlaceHolder1_tbMobileConfCode").input_value()
                                 
                                 if current_val != otp_code:
-                                    self.log(f"✅ دریافت کد پیامک: {otp_code}", "success", page)
+                                    self.log(LOG_MESSAGES["sms_code_received"].format(code=otp_code), "success", page)
                                     page.locator("#ctl00_ContentPlaceHolder1_tbMobileConfCode").fill(otp_code)
                                     time.sleep(0.5)
                                 
@@ -88,11 +89,11 @@ class BankSelectionBot(BotCore):
                                 )
                                 
                                 if success:
-                                    self.log("👆 تایید کد پیامک...", "info", page)
+                                    self.log(LOG_MESSAGES["sms_confirming"], "info", page)
                                     # انتظار بیشتر برای رفرش صفحه و رفتن به انتخاب بانک
                                     time.sleep(3) 
                             else:
-                                self.log("📩 منتظر دریافت پیامک...", "waiting sms", page)
+                                self.log(LOG_MESSAGES["waiting_sms"], "waiting sms", page)
                                 time.sleep(2)
 
                         # ============================================================
@@ -103,10 +104,10 @@ class BankSelectionBot(BotCore):
                             result = self._process_bank_selection_v2(page)
                             
                             if result == "success":
-                                self.log("🎉 بانک رزرو شد! پایان عملیات.", "success", page)
+                                self.log(LOG_MESSAGES["bank_reserved"], "success", page)
                                 return 
                             elif result == "no_match":
-                                self.log("❌ بانک مورد نظر یافت نشد. رفرش...", "warning", page)
+                                self.log(LOG_MESSAGES["bank_not_found"], "warning", page)
                                 page.reload()
                             elif result == "waiting":
                                 time.sleep(2) # در حال پردازش
@@ -126,7 +127,7 @@ class BankSelectionBot(BotCore):
                         # موفقیت نهایی (کد رهگیری)
                         elif page.locator("#ctl00_ContentPlaceHolder1_lblTrackingCode").is_visible():
                             code = page.locator("#ctl00_ContentPlaceHolder1_lblTrackingCode").inner_text()
-                            self.log(f"✅ کد رهگیری: {code}", "success")
+                            self.log(LOG_MESSAGES["tracking_code_received"].format(code=code), "success")
                             DBHandler.save_success_data(self.nid, code)
                             return
 
@@ -134,7 +135,7 @@ class BankSelectionBot(BotCore):
 
                 except PlaywrightError as pe:
                     if "Target closed" in str(pe):
-                        self.log("🛑 مرورگر بسته شد.", "stopped")
+                        self.log(LOG_MESSAGES["browser_closed"], "stopped")
                         stop_event.set()
                         return
                     time.sleep(2)
@@ -175,7 +176,7 @@ class BankSelectionBot(BotCore):
 
             user_priorities = self.user_data.get('banks', [])
             if not user_priorities:
-                self.log("⚠️ لیست اولویت بانک خالی است!", "error")
+                self.log(LOG_MESSAGES["bank_priority_empty"], "error")
                 return "error"
 
             for priority in user_priorities:
@@ -193,13 +194,13 @@ class BankSelectionBot(BotCore):
                         break
                 
                 if found_val:
-                    self.log(f"🎯 بانک یافت شد: {target_name}", "selecting", page)
+                    self.log(LOG_MESSAGES["bank_found"].format(name=target_name), "selecting", page)
                     
                     # انتخاب بانک
                     page.select_option(dropdown_id, value=found_val)
                     
                     # چون المنت AutoPostBack دارد، باید صبر کنیم تا صفحه رفرش شود
-                    self.log("⏳ در حال بارگذاری شعب...", "info", page)
+                    self.log(LOG_MESSAGES["branches_loading"], "info", page)
                     try: 
                         page.wait_for_load_state("networkidle", timeout=5000)
                     except: 
@@ -222,10 +223,10 @@ class BankSelectionBot(BotCore):
                 
                 # دکمه ثبت نهایی
                 if self.settings.get('final_submit', False):
-                    self.log("🔥 ثبت نهایی...", "success", page)
+                    self.log(LOG_MESSAGES["final_registering"], "success", page)
                     page.click("#ctl00_ContentPlaceHolder1_btnRegister")
                 else:
-                    self.log("🛑 توقف قبل از ثبت نهایی (حالت تست)", "warning", page)
+                    self.log(LOG_MESSAGES["final_submit_disabled"], "warning", page)
                     time.sleep(5)
         except: pass
 
@@ -242,7 +243,7 @@ class BankSelectionBot(BotCore):
             code = self.captcha_service.solve(captcha_img.screenshot(), mode='general')
             
             if code and len(code) >= 4:
-                self.log(f"🧩 حل شد: {code}", "info", page)
+                self.log(LOG_MESSAGES["captcha_solved"].format(code=code), "info", page)
                 inp = page.locator(input_sel)
                 inp.clear()
                 
@@ -255,7 +256,7 @@ class BankSelectionBot(BotCore):
                     page.locator(btn_sel).click()
                 return True
             else:
-                self.log("❌ خطا در خواندن. رفرش...", "warning", page)
+                self.log(LOG_MESSAGES["captcha_read_error"], "warning", page)
                 try: page.locator(".BDC_ReloadLink").first.click()
                 except: pass
                 time.sleep(1.5)

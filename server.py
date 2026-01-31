@@ -12,6 +12,7 @@ from pydantic import BaseModel
 from collections import deque
 from typing import Deque, Dict, Any, Optional
 from database import DBHandler, resource_path
+from messages_fa import LOG_MESSAGES, RESPONSES
 from event_logger import (
     EVENT_BROADCASTER,
     build_log_callback,
@@ -240,7 +241,7 @@ class JobQueue:
                     outcome_status = "cancelled"
             except Exception as e:
                 job.error = str(e)
-                log_event(job.nid, job.id, f"خطا: {e}", "error")
+                log_event(job.nid, job.id, LOG_MESSAGES["job_error"].format(error=e), "error")
                 outcome_status = "failed"
             finally:
                 with self._lock:
@@ -255,16 +256,16 @@ class JobQueue:
         if job.bot_name == "register":
             bot = RegistrationBot(job.nid, settings, log_callback=log_callback, captcha_service=captcha_service)
             bot.run(job.stop_event)
-            log_event(job.nid, job.id, "ربات متوقف شد", "stopped")
+            log_event(job.nid, job.id, LOG_MESSAGES["bot_stopped"], "stopped")
         elif job.bot_name == "select":
             loan_type = job.payload.get("loan_type")
             bot = BankSelectionBot(job.nid, settings, log_callback=log_callback, captcha_service=captcha_service)
             bot.run(job.stop_event, loan_type)
-            log_event(job.nid, job.id, "ربات متوقف شد", "stopped")
+            log_event(job.nid, job.id, LOG_MESSAGES["bot_stopped"], "stopped")
         elif job.bot_name == "status":
             bot = StatusBot(job.nid, settings, log_callback=log_callback, captcha_service=captcha_service)
             bot.run(job.stop_event)
-            log_event(job.nid, job.id, "عملیات پایان یافت", "stopped")
+            log_event(job.nid, job.id, LOG_MESSAGES["status_completed"], "stopped")
         else:
             raise ValueError("Unsupported bot name")
 
@@ -280,20 +281,20 @@ def start_job(req: JobStartRequest, _: bool = Depends(require_api_key)):
     if bot_name == "status":
         user = DBHandler.get_applicant(req.nid)
         if not user:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="کاربر یافت نشد")
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=RESPONSES["user_not_found"])
         try:
             data = json.loads(user['data'])
         except Exception:
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="داده نامعتبر")
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=RESPONSES["invalid_data"])
         if not data.get('tracking_code'):
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="کد رهگیری ندارد")
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=RESPONSES["missing_tracking_code"])
     payload: Dict[str, Any] = {}
     if req.loan_type:
         payload["loan_type"] = req.loan_type
     try:
         job = queue.enqueue(bot_name, req.nid, payload)
     except ValueError:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Job already queued or running")
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=RESPONSES["job_already_running"])
     return {"status": "queued", "job": job.to_dict()}
 
 @app.post("/jobs/cancel/{job_id}")
@@ -366,29 +367,29 @@ async def delete_applicant(nid: str, _: bool = Depends(require_api_key)):
 @app.post("/receive_sms")
 def rec_sms(req: SMSRequest):
     if DBHandler.save_otp(req.nid, req.code):
-        log_event(req.nid, None, f"پیامک: {req.code}", "success")
+        log_event(req.nid, None, LOG_MESSAGES["sms_received"].format(code=req.code), "success")
         return {"status": "ok"}
     return {"status": "error"}
 
 @app.post("/bot/start-register/{nid}")
 def start_reg(nid: str, _: bool = Depends(require_api_key)):
     if not JOB_QUEUE:
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Job queue not ready")
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=RESPONSES["job_queue_not_ready"])
     try:
         job = JOB_QUEUE.enqueue("register", nid, {})
     except ValueError:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Job already queued or running")
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=RESPONSES["job_already_running"])
     return {"status": "queued", "job_id": job.id}
 
 @app.post("/bot/start-select")
 def start_sel(req: BankSelectRequest, _: bool = Depends(require_api_key)):
     nid = req.nid
     if not JOB_QUEUE:
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Job queue not ready")
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=RESPONSES["job_queue_not_ready"])
     try:
         job = JOB_QUEUE.enqueue("select", nid, {"loan_type": req.loan_type})
     except ValueError:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Job already queued or running")
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=RESPONSES["job_already_running"])
     return {"status": "queued", "job_id": job.id}
 
 @app.post("/bot/stop/{nid}")
@@ -396,7 +397,7 @@ def stop_bot(nid: str, _: bool = Depends(require_api_key)):
     if JOB_QUEUE:
         cancelled = JOB_QUEUE.cancel_by_nid(nid)
         if cancelled:
-            log_event(nid, None, "توقف...", "stopping")
+            log_event(nid, None, LOG_MESSAGES["stop_requested"], "stopping")
         else:
             DBHandler.update_status(nid, "Stopped", "Force Stop")
     else:
@@ -406,30 +407,30 @@ def stop_bot(nid: str, _: bool = Depends(require_api_key)):
 @app.post("/bot/action/view-status/{nid}")
 def action_view_status(nid: str, _: bool = Depends(require_api_key)):
     if not JOB_QUEUE:
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Job queue not ready")
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=RESPONSES["job_queue_not_ready"])
     user = DBHandler.get_applicant(nid)
-    if not user: return {"status": "error", "message": "کاربر یافت نشد"}
+    if not user: return {"status": "error", "message": RESPONSES["user_not_found"]}
     
     try:
         d = json.loads(user['data'])
         if not d.get('tracking_code'):
-            return {"status": "error", "message": "کد رهگیری ندارد"}
+            return {"status": "error", "message": RESPONSES["missing_tracking_code"]}
     except:
-        return {"status": "error", "message": "داده نامعتبر"}
+        return {"status": "error", "message": RESPONSES["invalid_data"]}
     try:
         job = JOB_QUEUE.enqueue("status", nid, {})
     except ValueError:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Job already queued or running")
-    return {"status": "queued", "job_id": job.id, "message": "استعلام وضعیت در صف قرار گرفت"}
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=RESPONSES["job_already_running"])
+    return {"status": "queued", "job_id": job.id, "message": RESPONSES["status_job_queued"]}
 
 @app.post("/bot/action/delete-request/{nid}")
 def action_delete_request(nid: str, _: bool = Depends(require_api_key)):
-    log_event(nid, None, "حذف درخواست (هنوز پیاده‌سازی نشده)", "warning")
+    log_event(nid, None, LOG_MESSAGES["delete_not_implemented"], "warning")
     return {"status": "ok"}
 
 @app.post("/bot/action/recover-code/{nid}")
 def action_recover_code(nid: str):
-    log_event(nid, None, "بازیابی کد (هنوز پیاده‌سازی نشده)", "info")
+    log_event(nid, None, LOG_MESSAGES["recover_not_implemented"], "info")
     return {"status": "ok"}
 
 # --- WebSocket Endpoint (اصلاح شده) ---
