@@ -6,6 +6,7 @@ let editingUserId = null;
 let allUsersData = [];
 let wsClient = null;
 let logEvents = [];
+let browserProfile = null;
 const LOG_BUFFER_LIMIT = 500;
 const logFilters = {
     text: '',
@@ -20,6 +21,7 @@ document.addEventListener("DOMContentLoaded", () => {
     startClock();
     setupLogFilters();
     connectWebSocket();
+    loadBrowserProfile();
     if(document.getElementById('otpInput')){
         document.getElementById('otpInput').addEventListener('keypress', function (e) {
             if (e.key === 'Enter') sendOtp(this.value);
@@ -56,7 +58,10 @@ function switchView(viewId, navEl) {
     if(viewId === 'status') fetchApplicants('status');
     if(viewId === 'recover') fetchApplicants('recover');
     if(viewId === 'delete-req') fetchApplicants('delete-req');
-    if(viewId === 'settings') loadSettings(); // لود تنظیمات
+    if(viewId === 'settings') {
+        loadSettings();
+        loadBrowserProfile();
+    }
     
     if(viewId === 'add' && !editingUserId) resetAddForm();
 }
@@ -209,13 +214,9 @@ async function actionViewStatus(nid) {
         }
     }
     try {
-        const res = await apiCall(`/bot/action/view-status/${nid}`, 'POST');
-        if(res.status === 'started') {
-            alert("ربات مشاهده وضعیت شروع شد.");
-            switchView('dashboard');
-        } else {
-            alert("خطا: " + res.message);
-        }
+        await apiCall(`/jobs/start`, 'POST', {bot_name: 'status', nid: nid});
+        alert("ربات مشاهده وضعیت شروع شد.");
+        switchView('dashboard');
     } catch(e) { alert("خطای ارتباط با سرور"); }
 }
 
@@ -349,6 +350,82 @@ async function loadSettings() {
     } catch(e) {}
 }
 
+async function loadBrowserProfile() {
+    try {
+        const profile = await (await fetch(`${API_URL}/settings/browser-profile`)).json();
+        browserProfile = profile;
+        if(document.getElementById('browserSelect')) {
+            document.getElementById('browserSelect').value = profile.browser || 'chromium';
+            document.getElementById('browserHeadless').checked = !!profile.headless;
+            document.getElementById('browserSlowMo').value = profile.slow_mo_ms ?? 0;
+            document.getElementById('browserTimeout').value = profile.timeout_ms ?? 30000;
+            document.getElementById('browserViewportWidth').value = profile.viewport?.width ?? 1280;
+            document.getElementById('browserViewportHeight').value = profile.viewport?.height ?? 720;
+            document.getElementById('browserUserDataDir').value = profile.user_data_dir || '';
+            document.getElementById('browserProxy').value = profile.proxy || '';
+        }
+        updateBrowserProfileSummary(profile);
+    } catch(e) {}
+}
+
+function updateBrowserProfileSummary(profile) {
+    const summary = document.getElementById('browserProfileSummary');
+    const label = document.getElementById('currentBrowserLabel');
+    if (summary) {
+        summary.textContent = `Browser: ${profile.browser} | Headless: ${profile.headless ? 'Yes' : 'No'} | SlowMo: ${profile.slow_mo_ms}ms`;
+    }
+    if (label) {
+        label.textContent = `${profile.browser || '--'}${profile.headless ? ' (headless)' : ''}`;
+    }
+}
+
+async function saveBrowserProfile() {
+    const payload = {
+        browser: document.getElementById('browserSelect').value,
+        headless: document.getElementById('browserHeadless').checked,
+        slow_mo_ms: parseInt(document.getElementById('browserSlowMo').value || '0', 10),
+        timeout_ms: parseInt(document.getElementById('browserTimeout').value || '30000', 10),
+        viewport: {
+            width: parseInt(document.getElementById('browserViewportWidth').value || '1280', 10),
+            height: parseInt(document.getElementById('browserViewportHeight').value || '720', 10)
+        },
+        user_data_dir: document.getElementById('browserUserDataDir').value || null,
+        proxy: document.getElementById('browserProxy').value || null
+    };
+    const res = await fetch(`${API_URL}/settings/browser-profile`, {
+        method: 'PUT',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify(payload)
+    });
+    if(res.ok) {
+        const saved = await res.json();
+        browserProfile = saved;
+        updateBrowserProfileSummary(saved);
+        alert('تنظیمات مرورگر ذخیره شد.');
+    } else {
+        alert('خطا در ذخیره تنظیمات مرورگر.');
+    }
+}
+
+function applyBrowserPreset(preset) {
+    if(preset === 'fast') {
+        document.getElementById('browserHeadless').checked = true;
+        document.getElementById('browserSlowMo').value = 0;
+    } else if(preset === 'debug') {
+        document.getElementById('browserHeadless').checked = false;
+        document.getElementById('browserSlowMo').value = 100;
+    }
+}
+
+async function testBrowserLaunch() {
+    const res = await fetch(`${API_URL}/browser/test-launch`, {method: 'POST'});
+    if(res.ok) {
+        alert('Test launch انجام شد.');
+    } else {
+        alert('Test launch با خطا مواجه شد.');
+    }
+}
+
 async function saveSettings() {
     // جمع‌آوری تمام فیلدها (قبلاً ناقص بود)
     const payload = {
@@ -370,9 +447,28 @@ async function saveSettings() {
 // توابع کمکی دیگر
 function translateStatus(s) { if(!s) return 'آماده'; s=s.toLowerCase(); if(s.includes('run')) return 'اجرا'; if(s.includes('wait')) return 'منتظر پیامک'; if(s.includes('succ')) return 'موفق'; if(s.includes('stop')) return 'متوقف'; return s; }
 function getStatusBadge(s) { if(!s) return 'bg-light text-muted'; s=s.toLowerCase(); if(s.includes('succ')) return 'bg-success'; if(s.includes('stop')) return 'bg-danger'; if(s.includes('wait')) return 'bg-warning text-dark'; if(s.includes('run')) return 'bg-primary'; return 'bg-secondary'; }
-function openBankModal(nid) { selectedNidForBank = nid; document.getElementById('modalNidDisplay').innerText = nid; new bootstrap.Modal(document.getElementById('bankActionModal')).show(); }
-async function confirmBankStart() { const t = document.querySelector('input[name="loanType"]:checked').value; await apiCall('/bot/start-select', 'POST', {nid: selectedNidForBank, loan_type: t}); bootstrap.Modal.getInstance(document.getElementById('bankActionModal')).hide(); switchView('dashboard'); }
-async function startRegister(nid) { await apiCall(`/bot/start-register/${nid}`, 'POST'); switchView('dashboard'); }
+function openBankModal(nid) {
+    selectedNidForBank = nid;
+    document.getElementById('modalNidDisplay').innerText = nid;
+    const overrideSelect = document.getElementById('runBrowserOverride');
+    if (overrideSelect) overrideSelect.value = '';
+    new bootstrap.Modal(document.getElementById('bankActionModal')).show();
+}
+async function confirmBankStart() {
+    const t = document.querySelector('input[name="loanType"]:checked').value;
+    const override = document.getElementById('runBrowserOverride')?.value;
+    const payload = {bot_name: 'select', nid: selectedNidForBank, loan_type: t};
+    if (override) {
+        payload.browser_profile_override = {browser: override};
+    }
+    await apiCall('/jobs/start', 'POST', payload);
+    bootstrap.Modal.getInstance(document.getElementById('bankActionModal')).hide();
+    switchView('dashboard');
+}
+async function startRegister(nid) {
+    await apiCall('/jobs/start', 'POST', {bot_name: 'register', nid: nid});
+    switchView('dashboard');
+}
 async function stopBot(nid) { await apiCall(`/bot/stop/${nid}`, 'POST'); setTimeout(fetchDashboardData, 1000); }
 async function apiCall(u, m, b) { return (await fetch(API_URL+u, {method:m, headers:{'Content-Type':'application/json'}, body:JSON.stringify(b)})).json(); }
 

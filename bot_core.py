@@ -1,20 +1,20 @@
 import time
-import random
 import os
 import json
+import threading
 import requests
-from playwright.sync_api import sync_playwright
 from database import DBHandler
 from captcha_service import CaptchaService
 from browser_actions import BrowserActions
-
-USER_AGENTS = [
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
-    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36"
-]
+from browser_launcher import (
+    BrowserLaunchError,
+    close_browser,
+    launch_browser,
+    safe_goto,
+)
 
 class BotCore:
-    def __init__(self, nid, settings, log_callback=None, captcha_service=None):
+    def __init__(self, nid, settings, log_callback=None, captcha_service=None, browser_profile=None):
         self.nid = nid
         self.settings = settings
         self.log_callback = log_callback
@@ -24,6 +24,7 @@ class BotCore:
         self.api_base_url = "https://python-ke7tg2.chbk.dev"
         self.user_dir = os.path.join(os.getcwd(), "chrome_profiles", nid)
         if not os.path.exists(self.user_dir): os.makedirs(self.user_dir)
+        self.browser_profile = browser_profile or {}
 
     def log(self, message, level="info", page=None):
         if self.log_callback: self.log_callback(self.nid, message, level)
@@ -67,19 +68,46 @@ class BotCore:
         
         return None
 
-    def setup_browser(self, playwright):
-        headless = self.settings.get('headless', False)
-        ua = random.choice(USER_AGENTS)
-        args = ["--start-maximized", "--no-sandbox", "--disable-blink-features=AutomationControlled"]
-        if self.settings.get('clear_cookies'):
-            browser = playwright.chromium.launch(headless=headless, args=args)
-            context = browser.new_context(user_agent=ua, viewport={'width':1366,'height':768})
-        else:
-            context = playwright.chromium.launch_persistent_context(self.user_dir, headless=headless, args=args, user_agent=ua, viewport={'width':1366,'height':768})
-        page = context.pages[0] if context.pages else context.new_page()
-        page.set_default_timeout(30000)
-        browser_instance = browser if self.settings.get('clear_cookies') else None
-        return browser_instance, context, page
+    def setup_browser(self, stop_event=None):
+        profile = dict(self.browser_profile)
+        if not self.settings.get("clear_cookies", True) and not profile.get("user_data_dir"):
+            profile["user_data_dir"] = self.user_dir
+        try:
+            playwright, browser, context, page = launch_browser(profile)
+        except BrowserLaunchError as exc:
+            self.log(f"❌ خطا در راه‌اندازی مرورگر: {exc.message}", "error")
+            raise
+        self._wrap_page_navigation(page)
+        if stop_event is not None:
+            self._start_cancel_watcher(stop_event, playwright, browser, context, page)
+        self.log(
+            f"Launching browser: {profile.get('browser', 'chromium')} (headless={profile.get('headless', False)})",
+            "info",
+            page,
+        )
+        self.log("Browser context created", "info", page)
+        return playwright, browser, context, page
+
+    def _wrap_page_navigation(self, page):
+        original_goto = page.goto
+
+        def guarded_goto(url, **kwargs):
+            return safe_goto(page, url, log_callback=self.log, **kwargs)
+
+        page.goto = guarded_goto  # type: ignore[assignment]
+        page._original_goto = original_goto  # type: ignore[attr-defined]
+
+    def _start_cancel_watcher(self, stop_event, playwright, browser, context, page):
+        def _watch():
+            stop_event.wait()
+            try:
+                self.log("🛑 لغو عملیات و بستن مرورگر...", "warning")
+            except Exception:
+                pass
+            close_browser(playwright, browser, context, page)
+
+        thread = threading.Thread(target=_watch, daemon=True)
+        thread.start()
 
     def solve_firewall(self, page):
         try:

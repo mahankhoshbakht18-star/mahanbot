@@ -1,17 +1,22 @@
 import time
 import random
 import re
-from playwright.sync_api import sync_playwright
 from bot_core import BotCore
 from browser_actions import BrowserActions
+from browser_launcher import BrowserLaunchError, close_browser
 from database import DBHandler
 
 class RegistrationBot(BotCore):
     def run(self, stop_event):
         attempt = 0
-        with sync_playwright() as p:
-            browser, context, page = self.setup_browser(p)
-            if not page: return
+        playwright = None
+        browser = None
+        context = None
+        page = None
+        try:
+            playwright, browser, context, page = self.setup_browser(stop_event)
+            if not page:
+                return
             
             # ============================================================
             # مدیریت هوشمند پیام‌های خطا (Alert Handler) - اصلاح شده
@@ -45,15 +50,17 @@ class RegistrationBot(BotCore):
                 allow_final_submit = self.settings.get('final_submit', False)
 
                 while attempt < self.retry_limit:
-                    if stop_event.is_set(): break
+                    if stop_event.is_set():
+                        break
                     attempt += 1
-                    
+
                     try:
                         if page.url == "about:blank" or "Register" not in page.url:
                              try: page.goto("https://ve.cbi.ir/Register.aspx", timeout=60000)
                              except: continue
-                        
-                        if stop_event.is_set(): break
+
+                        if stop_event.is_set():
+                            break
                         self.solve_firewall(page)
                         d = self.user_data
 
@@ -174,13 +181,16 @@ class RegistrationBot(BotCore):
                             except: self.log("🎉 ثبت نام موفق!", "success", page)
                             return
 
-                    except Exception: time.sleep(1)
+                    except Exception:
+                        time.sleep(1)
 
-            except Exception as e: self.log(f"Fatal: {e}", "error")
-            finally:
-                if context: context.close()
-                if browser: browser.close()
-                self.log("مرورگر بسته شد.", "stop")
+            except BrowserLaunchError as exc:
+                self.log(f"Fatal: {exc.message}", "error")
+            except Exception as e:
+                self.log(f"Fatal: {e}", "error")
+        finally:
+            close_browser(playwright, browser, context, page)
+            self.log("مرورگر بسته شد.", "stop")
 
     # --- توابع کمکی ---
     def _solve_captcha_wrapper(self, page, input_sel, btn_sel, mode):

@@ -1,9 +1,9 @@
 import time
 import json
 import random
-from playwright.sync_api import sync_playwright, Error as PlaywrightError
+from playwright.sync_api import Error as PlaywrightError
 from bot_core import BotCore
-from browser_actions import BrowserActions
+from browser_launcher import BrowserLaunchError, close_browser
 from database import DBHandler
 
 class BankSelectionBot(BotCore):
@@ -16,131 +16,138 @@ class BankSelectionBot(BotCore):
             if stop_event.is_set(): break
             attempt += 1
             
-            with sync_playwright() as p:
-                context = None
-                try:
-                    # اتصال به مرورگر
-                    browser, context, page = self.setup_browser(p)
-                    page.on("dialog", lambda dialog: dialog.accept())
+            playwright = None
+            browser = None
+            context = None
+            page = None
+            try:
+                # اتصال به مرورگر
+                playwright, browser, context, page = self.setup_browser(stop_event)
+                page.on("dialog", lambda dialog: dialog.accept())
 
-                    self.log(f"🚀 شروع عملیات (دور {attempt})...", "info", page)
-                    captcha_mode = self.settings.get('captcha_mode', 'human')
+                self.log(f"🚀 شروع عملیات (دور {attempt})...", "info", page)
+                captcha_mode = self.settings.get('captcha_mode', 'human')
 
-                    try: page.goto(TARGET_URL, timeout=60000)
-                    except: pass
+                try: page.goto(TARGET_URL, timeout=60000)
+                except: pass
 
-                    while not stop_event.is_set():
+                while not stop_event.is_set():
+                    
+                    # 1. تشخیص مسدودی (Soft WAF)
+                    if page.locator("body").get_by_text("درخواست شما رد شد").is_visible():
+                        self.log("⛔ مسدودی! رفرش...", "error", page)
+                        time.sleep(2)
+                        page.goto(TARGET_URL)
+                        continue
+
+                    # 2. حل فایروال
+                    if self.solve_firewall(page):
+                        continue
+
+                    # ============================================================
+                    # 🟢 مرحله ۱: ورود کد ملی
+                    # ============================================================
+                    if page.locator("#ctl00_ContentPlaceHolder1_btnSendConfirmCode").is_visible():
+                        # پر کردن کد ملی
+                        if not page.locator("#ctl00_ContentPlaceHolder1_tbIDNo").input_value():
+                            page.locator("#ctl00_ContentPlaceHolder1_tbIDNo").fill(self.nid)
                         
-                        # 1. تشخیص مسدودی (Soft WAF)
-                        if page.locator("body").get_by_text("درخواست شما رد شد").is_visible():
-                            self.log("⛔ مسدودی! رفرش...", "error", page)
-                            time.sleep(2)
-                            page.goto(TARGET_URL)
-                            continue
+                        # حل کپچا و کلیک (کپچا 1)
+                        self._solve_captcha_wrapper(
+                            page, 
+                            "#ctl00_ContentPlaceHolder1_tbCaptcha1", 
+                            "#ctl00_ContentPlaceHolder1_btnSendConfirmCode", 
+                            captcha_mode
+                        )
+                        # صبر کوتاه برای لود شدن صفحه بعد
+                        try: page.wait_for_selector("#ctl00_ContentPlaceHolder1_tbMobileConfCode", timeout=3000)
+                        except: pass
 
-                        # 2. حل فایروال
-                        if self.solve_firewall(page):
-                            continue
-
-                        # ============================================================
-                        # 🟢 مرحله ۱: ورود کد ملی
-                        # ============================================================
-                        if page.locator("#ctl00_ContentPlaceHolder1_btnSendConfirmCode").is_visible():
-                            # پر کردن کد ملی
-                            if not page.locator("#ctl00_ContentPlaceHolder1_tbIDNo").input_value():
-                                page.locator("#ctl00_ContentPlaceHolder1_tbIDNo").fill(self.nid)
+                    # ============================================================
+                    # 🔵 مرحله ۲: ورود کد پیامک (OTP) - اصلاح شده
+                    # ============================================================
+                    elif page.locator("#ctl00_ContentPlaceHolder1_tbMobileConfCode").is_visible():
+                        
+                        # دریافت کد از دیتابیس (دقیقاً مشابه متد فایل رجیستر)
+                        otp_code = self._get_otp_from_db_fresh()
+                        
+                        if otp_code:
+                            # چک می‌کنیم آیا فیلد خالی است یا مقدارش اشتباه است
+                            current_val = page.locator("#ctl00_ContentPlaceHolder1_tbMobileConfCode").input_value()
                             
-                            # حل کپچا و کلیک (کپچا 1)
-                            self._solve_captcha_wrapper(
-                                page, 
-                                "#ctl00_ContentPlaceHolder1_tbCaptcha1", 
-                                "#ctl00_ContentPlaceHolder1_btnSendConfirmCode", 
+                            if current_val != otp_code:
+                                self.log(f"✅ دریافت کد پیامک: {otp_code}", "success", page)
+                                page.locator("#ctl00_ContentPlaceHolder1_tbMobileConfCode").fill(otp_code)
+                                time.sleep(0.5)
+                            
+                            # حل کپچای دوم و کلیک دکمه ادامه
+                            # توجه: کپچا اینجا tbCaptcha2 است و دکمه btnContinue1
+                            success = self._solve_captcha_wrapper(
+                                page,
+                                "#ctl00_ContentPlaceHolder1_tbCaptcha2",
+                                "#ctl00_ContentPlaceHolder1_btnContinue1",
                                 captcha_mode
                             )
-                            # صبر کوتاه برای لود شدن صفحه بعد
-                            try: page.wait_for_selector("#ctl00_ContentPlaceHolder1_tbMobileConfCode", timeout=3000)
-                            except: pass
-
-                        # ============================================================
-                        # 🔵 مرحله ۲: ورود کد پیامک (OTP) - اصلاح شده
-                        # ============================================================
-                        elif page.locator("#ctl00_ContentPlaceHolder1_tbMobileConfCode").is_visible():
                             
-                            # دریافت کد از دیتابیس (دقیقاً مشابه متد فایل رجیستر)
-                            otp_code = self._get_otp_from_db_fresh()
-                            
-                            if otp_code:
-                                # چک می‌کنیم آیا فیلد خالی است یا مقدارش اشتباه است
-                                current_val = page.locator("#ctl00_ContentPlaceHolder1_tbMobileConfCode").input_value()
-                                
-                                if current_val != otp_code:
-                                    self.log(f"✅ دریافت کد پیامک: {otp_code}", "success", page)
-                                    page.locator("#ctl00_ContentPlaceHolder1_tbMobileConfCode").fill(otp_code)
-                                    time.sleep(0.5)
-                                
-                                # حل کپچای دوم و کلیک دکمه ادامه
-                                # توجه: کپچا اینجا tbCaptcha2 است و دکمه btnContinue1
-                                success = self._solve_captcha_wrapper(
-                                    page,
-                                    "#ctl00_ContentPlaceHolder1_tbCaptcha2",
-                                    "#ctl00_ContentPlaceHolder1_btnContinue1",
-                                    captcha_mode
-                                )
-                                
-                                if success:
-                                    self.log("👆 تایید کد پیامک...", "info", page)
-                                    # انتظار بیشتر برای رفرش صفحه و رفتن به انتخاب بانک
-                                    time.sleep(3) 
-                            else:
-                                self.log("📩 منتظر دریافت پیامک...", "waiting sms", page)
-                                time.sleep(2)
+                            if success:
+                                self.log("👆 تایید کد پیامک...", "info", page)
+                                # انتظار بیشتر برای رفرش صفحه و رفتن به انتخاب بانک
+                                time.sleep(3) 
+                        else:
+                            self.log("📩 منتظر دریافت پیامک...", "waiting sms", page)
+                            time.sleep(2)
 
-                        # ============================================================
-                        # 🟣 مرحله ۳: انتخاب بانک (صفحه ۴ - طبق المنت ارسالی شما)
-                        # ============================================================
-                        elif page.locator("#ctl00_ContentPlaceHolder1_ddlBankName").is_visible():
-                            # توجه: آی‌دی در این صفحه ddlBankName است
-                            result = self._process_bank_selection_v2(page)
-                            
-                            if result == "success":
-                                self.log("🎉 بانک رزرو شد! پایان عملیات.", "success", page)
-                                return 
-                            elif result == "no_match":
-                                self.log("❌ بانک مورد نظر یافت نشد. رفرش...", "warning", page)
-                                page.reload()
-                            elif result == "waiting":
-                                time.sleep(2) # در حال پردازش
-
-                        # ============================================================
-                        # 🟡 سایر صفحات (انتخاب شعبه، لاگین مجدد و ...)
-                        # ============================================================
+                    # ============================================================
+                    # 🟣 مرحله ۳: انتخاب بانک (صفحه ۴ - طبق المنت ارسالی شما)
+                    # ============================================================
+                    elif page.locator("#ctl00_ContentPlaceHolder1_ddlBankName").is_visible():
+                        # توجه: آی‌دی در این صفحه ddlBankName است
+                        result = self._process_bank_selection_v2(page)
                         
-                        # انتخاب شعبه (اگر بعد از انتخاب بانک آمد)
-                        elif page.locator("#ctl00_ContentPlaceHolder1_ddlBranch").is_visible():
-                            self._process_branch_selection(page)
+                        if result == "success":
+                            self.log("🎉 بانک رزرو شد! پایان عملیات.", "success", page)
+                            return 
+                        elif result == "no_match":
+                            self.log("❌ بانک مورد نظر یافت نشد. رفرش...", "warning", page)
+                            page.reload()
+                        elif result == "waiting":
+                            time.sleep(2) # در حال پردازش
 
-                        # اگر به صفحه لاگین پرت شد
-                        elif page.locator("#ctl00_ContentPlaceHolder1_btnLogin").is_visible():
-                            self._perform_login_standard(page, captcha_mode)
+                    # ============================================================
+                    # 🟡 سایر صفحات (انتخاب شعبه، لاگین مجدد و ...)
+                    # ============================================================
+                    
+                    # انتخاب شعبه (اگر بعد از انتخاب بانک آمد)
+                    elif page.locator("#ctl00_ContentPlaceHolder1_ddlBranch").is_visible():
+                        self._process_branch_selection(page)
 
-                        # موفقیت نهایی (کد رهگیری)
-                        elif page.locator("#ctl00_ContentPlaceHolder1_lblTrackingCode").is_visible():
-                            code = page.locator("#ctl00_ContentPlaceHolder1_lblTrackingCode").inner_text()
-                            self.log(f"✅ کد رهگیری: {code}", "success")
-                            DBHandler.save_success_data(self.nid, code)
-                            return
+                    # اگر به صفحه لاگین پرت شد
+                    elif page.locator("#ctl00_ContentPlaceHolder1_btnLogin").is_visible():
+                        self._perform_login_standard(page, captcha_mode)
 
-                        time.sleep(0.5)
-
-                except PlaywrightError as pe:
-                    if "Target closed" in str(pe):
-                        self.log("🛑 مرورگر بسته شد.", "stopped")
-                        stop_event.set()
+                    # موفقیت نهایی (کد رهگیری)
+                    elif page.locator("#ctl00_ContentPlaceHolder1_lblTrackingCode").is_visible():
+                        code = page.locator("#ctl00_ContentPlaceHolder1_lblTrackingCode").inner_text()
+                        self.log(f"✅ کد رهگیری: {code}", "success")
+                        DBHandler.save_success_data(self.nid, code)
                         return
-                    time.sleep(2)
-                except Exception:
-                    time.sleep(2)
-            
+
+                    time.sleep(0.5)
+
+            except PlaywrightError as pe:
+                if "Target closed" in str(pe):
+                    self.log("🛑 مرورگر بسته شد.", "stopped")
+                    stop_event.set()
+                    return
+                time.sleep(2)
+            except BrowserLaunchError as exc:
+                self.log(f"خطا در مرورگر: {exc.message}", "error")
+                time.sleep(2)
+            except Exception:
+                time.sleep(2)
+            finally:
+                close_browser(playwright, browser, context, page)
+
             if not stop_event.is_set():
                 time.sleep(2)
 
