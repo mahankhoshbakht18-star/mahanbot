@@ -1,7 +1,7 @@
 import threading
 import os
-import json
 import time
+import json
 import asyncio
 import aiosqlite
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Depends, Header, HTTPException, status
@@ -9,8 +9,16 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
-from typing import Dict, Any, Optional, List
+from typing import Dict, Any, Optional
 from database import DBHandler, resource_path
+from event_logger import (
+    EVENT_BROADCASTER,
+    build_log_callback,
+    create_job_id,
+    job_status_event,
+    log_event,
+    set_main_loop,
+)
 
 # ایمپورت ربات‌ها
 from bot_register import RegistrationBot
@@ -35,7 +43,7 @@ if not os.path.exists(STATIC_DIR):
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
 DBHandler.init_db()
-ACTIVE_BOTS = {}
+ACTIVE_BOTS: Dict[str, Dict[str, Any]] = {}
 MAIN_LOOP: Optional[asyncio.AbstractEventLoop] = None
 CAPTCHA_SERVICE: Optional[CaptchaService] = None
 
@@ -52,6 +60,7 @@ async def startup_event():
     """پاکسازی وضعیت‌های گیر کرده هنگام شروع برنامه"""
     global MAIN_LOOP, CAPTCHA_SERVICE
     MAIN_LOOP = asyncio.get_running_loop()
+    set_main_loop(MAIN_LOOP)
     model, ocr_firewall = load_captcha_resources()
     CAPTCHA_SERVICE = CaptchaService(model=model, ocr_firewall=ocr_firewall)
     try:
@@ -62,22 +71,6 @@ async def startup_event():
             await conn.commit()
     except Exception as e:
         print(f"Error checking DB on startup: {e}")
-
-# --- WebSocket ---
-class ConnectionManager:
-    def __init__(self):
-        self.active_connections: List[WebSocket] = []
-    async def connect(self, websocket: WebSocket):
-        await websocket.accept()
-        self.active_connections.append(websocket)
-    def disconnect(self, websocket: WebSocket):
-        if websocket in self.active_connections:
-            self.active_connections.remove(websocket)
-    async def broadcast(self, message: str):
-        for connection in self.active_connections:
-            try: await connection.send_text(message)
-            except: pass
-manager = ConnectionManager()
 
 # --- Models ---
 class ApplicantModel(BaseModel):
@@ -94,34 +87,18 @@ class SMSRequest(BaseModel):
     nid: str
     code: str
 
-# --- Helper ---
-def log_callback(nid, message, level="info"):
-    DBHandler.update_status(nid, level.title(), message)
-    payload = json.dumps({"type": "log", "nid": nid, "message": message, "level": level, "timestamp": time.strftime("%H:%M:%S")})
-    try:
-        if MAIN_LOOP and MAIN_LOOP.is_running():
-            try:
-                running_loop = asyncio.get_running_loop()
-            except RuntimeError:
-                running_loop = None
-            if running_loop and running_loop is MAIN_LOOP:
-                asyncio.create_task(manager.broadcast(payload))
-            else:
-                asyncio.run_coroutine_threadsafe(manager.broadcast(payload), MAIN_LOOP)
-    except:
-        pass
-
 def force_stop_bot(nid):
     """اگر رباتی با این کد ملی فعال است، آن را متوقف کن تا جدید اجرا شود"""
     if nid in ACTIVE_BOTS:
         try:
             # ارسال سیگنال توقف
-            ACTIVE_BOTS[nid].set()
+            ACTIVE_BOTS[nid]["stop_event"].set()
             # کمی صبر برای اینکه ترد قبلی بسته شود
             time.sleep(0.5)
             # اگر هنوز در لیست بود، دستی پاکش کن
-            if nid in ACTIVE_BOTS:
-                ACTIVE_BOTS.pop(nid, None)
+            bot_info = ACTIVE_BOTS.pop(nid, None)
+            if bot_info:
+                job_status_event(nid, bot_info.get("job_id"), "stopped", "force_stop")
         except:
             pass
 
@@ -132,33 +109,44 @@ def get_captcha_service():
     return CAPTCHA_SERVICE
 
 # --- Threads ---
-def run_register_thread(nid, settings, stop_event, captcha_service):
+def run_register_thread(nid, settings, stop_event, captcha_service, job_id):
     try:
+        log_callback = build_log_callback(job_id)
         bot = RegistrationBot(nid, settings, log_callback=log_callback, captcha_service=captcha_service)
-        bot.run(stop_event)
-    except Exception as e: log_callback(nid, f"خطا: {e}", "error")
-    finally:
-        ACTIVE_BOTS.pop(nid, None) # استفاده از pop برای جلوگیری از خطا
-        log_callback(nid, "ربات متوقف شد", "stopped")
-
-def run_select_thread(nid, settings, loan_type, stop_event, captcha_service):
-    try:
-        bot = BankSelectionBot(nid, settings, log_callback=log_callback, captcha_service=captcha_service)
-        bot.run(stop_event, loan_type)
-    except Exception as e: log_callback(nid, f"خطا: {e}", "error")
-    finally:
-        ACTIVE_BOTS.pop(nid, None)
-        log_callback(nid, "ربات متوقف شد", "stopped")
-
-def run_status_thread(nid, settings, stop_event, captcha_service):
-    try:
-        bot = StatusBot(nid, settings, log_callback=log_callback, captcha_service=captcha_service)
+        job_status_event(nid, job_id, "running")
         bot.run(stop_event)
     except Exception as e:
-        log_callback(nid, f"خطای وضعیت: {e}", "error")
+        log_event(nid, job_id, f"خطا: {e}", "error")
+    finally:
+        ACTIVE_BOTS.pop(nid, None) # استفاده از pop برای جلوگیری از خطا
+        log_event(nid, job_id, "ربات متوقف شد", "stopped")
+        job_status_event(nid, job_id, "stopped")
+
+def run_select_thread(nid, settings, loan_type, stop_event, captcha_service, job_id):
+    try:
+        log_callback = build_log_callback(job_id)
+        bot = BankSelectionBot(nid, settings, log_callback=log_callback, captcha_service=captcha_service)
+        job_status_event(nid, job_id, "running")
+        bot.run(stop_event, loan_type)
+    except Exception as e:
+        log_event(nid, job_id, f"خطا: {e}", "error")
     finally:
         ACTIVE_BOTS.pop(nid, None)
-        log_callback(nid, "عملیات پایان یافت", "stopped")
+        log_event(nid, job_id, "ربات متوقف شد", "stopped")
+        job_status_event(nid, job_id, "stopped")
+
+def run_status_thread(nid, settings, stop_event, captcha_service, job_id):
+    try:
+        log_callback = build_log_callback(job_id)
+        bot = StatusBot(nid, settings, log_callback=log_callback, captcha_service=captcha_service)
+        job_status_event(nid, job_id, "running")
+        bot.run(stop_event)
+    except Exception as e:
+        log_event(nid, job_id, f"خطای وضعیت: {e}", "error")
+    finally:
+        ACTIVE_BOTS.pop(nid, None)
+        log_event(nid, job_id, "عملیات پایان یافت", "stopped")
+        job_status_event(nid, job_id, "stopped")
 
 # --- Routes ---
 @app.get("/")
@@ -205,7 +193,7 @@ async def delete_applicant(nid: str, _: bool = Depends(require_api_key)):
 @app.post("/receive_sms")
 def rec_sms(req: SMSRequest):
     if DBHandler.save_otp(req.nid, req.code):
-        log_callback(req.nid, f"پیامک: {req.code}", "success")
+        log_event(req.nid, None, f"پیامک: {req.code}", "success")
         return {"status": "ok"}
     return {"status": "error"}
 
@@ -216,9 +204,15 @@ def start_reg(nid: str, _: bool = Depends(require_api_key)):
     
     settings = DBHandler.get_config()
     stop_event = threading.Event()
-    ACTIVE_BOTS[nid] = stop_event
+    job_id = create_job_id()
+    ACTIVE_BOTS[nid] = {"stop_event": stop_event, "job_id": job_id}
     captcha_service = get_captcha_service()
-    threading.Thread(target=run_register_thread, args=(nid, settings, stop_event, captcha_service), daemon=True).start()
+    job_status_event(nid, job_id, "started")
+    threading.Thread(
+        target=run_register_thread,
+        args=(nid, settings, stop_event, captcha_service, job_id),
+        daemon=True,
+    ).start()
     return {"status": "started"}
 
 @app.post("/bot/start-select")
@@ -228,16 +222,24 @@ def start_sel(req: BankSelectRequest, _: bool = Depends(require_api_key)):
     
     settings = DBHandler.get_config()
     stop_event = threading.Event()
-    ACTIVE_BOTS[nid] = stop_event
+    job_id = create_job_id()
+    ACTIVE_BOTS[nid] = {"stop_event": stop_event, "job_id": job_id}
     captcha_service = get_captcha_service()
-    threading.Thread(target=run_select_thread, args=(nid, settings, req.loan_type, stop_event, captcha_service), daemon=True).start()
+    job_status_event(nid, job_id, "started")
+    threading.Thread(
+        target=run_select_thread,
+        args=(nid, settings, req.loan_type, stop_event, captcha_service, job_id),
+        daemon=True,
+    ).start()
     return {"status": "started"}
 
 @app.post("/bot/stop/{nid}")
 def stop_bot(nid: str, _: bool = Depends(require_api_key)):
     if nid in ACTIVE_BOTS:
-        ACTIVE_BOTS[nid].set()
-        log_callback(nid, "توقف...", "stopping")
+        bot_info = ACTIVE_BOTS[nid]
+        bot_info["stop_event"].set()
+        log_event(nid, bot_info.get("job_id"), "توقف...", "stopping")
+        job_status_event(nid, bot_info.get("job_id"), "stopping")
     else:
         DBHandler.update_status(nid, "Stopped", "Force Stop")
     return {"status": "stopped"}
@@ -259,35 +261,39 @@ def action_view_status(nid: str, _: bool = Depends(require_api_key)):
 
     settings = DBHandler.get_config()
     stop_event = threading.Event()
-    ACTIVE_BOTS[nid] = stop_event
+    job_id = create_job_id()
+    ACTIVE_BOTS[nid] = {"stop_event": stop_event, "job_id": job_id}
     
     captcha_service = get_captcha_service()
-    t = threading.Thread(target=run_status_thread, args=(nid, settings, stop_event, captcha_service), daemon=True)
+    job_status_event(nid, job_id, "started")
+    t = threading.Thread(
+        target=run_status_thread, args=(nid, settings, stop_event, captcha_service, job_id), daemon=True
+    )
     t.start()
     
     return {"status": "started", "message": "استعلام وضعیت آغاز شد"}
 
 @app.post("/bot/action/delete-request/{nid}")
 def action_delete_request(nid: str, _: bool = Depends(require_api_key)):
-    log_callback(nid, "حذف درخواست (هنوز پیاده‌سازی نشده)", "warning")
+    log_event(nid, None, "حذف درخواست (هنوز پیاده‌سازی نشده)", "warning")
     return {"status": "ok"}
 
 @app.post("/bot/action/recover-code/{nid}")
 def action_recover_code(nid: str):
-    log_callback(nid, "بازیابی کد (هنوز پیاده‌سازی نشده)", "info")
+    log_event(nid, None, "بازیابی کد (هنوز پیاده‌سازی نشده)", "info")
     return {"status": "ok"}
 
 # --- WebSocket Endpoint (اصلاح شده) ---
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
-    await manager.connect(websocket)
+    await EVENT_BROADCASTER.connect(websocket)
     try:
         while True:
             await websocket.receive_text()
     except WebSocketDisconnect:
-        manager.disconnect(websocket)
+        EVENT_BROADCASTER.disconnect(websocket)
     except Exception:
-        manager.disconnect(websocket)
+        EVENT_BROADCASTER.disconnect(websocket)
 
 if __name__ == "__main__":
     import uvicorn

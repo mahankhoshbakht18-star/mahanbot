@@ -4,10 +4,22 @@ let selectedNidForBank = null;
 let dashboardInterval = null;
 let editingUserId = null;
 let allUsersData = [];
+let wsClient = null;
+let logEvents = [];
+const LOG_BUFFER_LIMIT = 500;
+const logFilters = {
+    text: '',
+    nid: '',
+    jobId: '',
+    level: '',
+    type: ''
+};
 
 document.addEventListener("DOMContentLoaded", () => {
     switchView('dashboard');
     startClock();
+    setupLogFilters();
+    connectWebSocket();
     if(document.getElementById('otpInput')){
         document.getElementById('otpInput').addEventListener('keypress', function (e) {
             if (e.key === 'Enter') sendOtp(this.value);
@@ -98,7 +110,6 @@ function renderDashboard(users) {
                 <td><button class="btn btn-sm btn-danger rounded-circle" onclick="stopBot('${user.national_id}')"><i class="fas fa-power-off"></i></button></td>
             `;
             tbody.appendChild(tr);
-            logToTerminal(user.national_id, user.last_log);
         }
     });
 
@@ -109,18 +120,6 @@ function renderDashboard(users) {
     if(document.getElementById('stat-active')) document.getElementById('stat-active').innerText = runningCount;
     if(document.getElementById('stat-success')) document.getElementById('stat-success').innerText = successCount;
     if(document.getElementById('stat-codes')) document.getElementById('stat-codes').innerText = codeCount;
-}
-
-let lastLog = "";
-function logToTerminal(nid, msg) {
-    if (!msg || msg === lastLog) return;
-    lastLog = msg;
-    const term = document.getElementById('terminalBox');
-    if(!term) return;
-    const div = document.createElement('div');
-    div.innerHTML = `<span style="color:#666">[${new Date().toLocaleTimeString('fa-IR')}]</span> <span style="color:#00e5ff">${nid}</span>: ${msg}`;
-    term.appendChild(div);
-    term.scrollTop = term.scrollHeight;
 }
 
 async function sendOtp(code) {
@@ -376,3 +375,113 @@ async function confirmBankStart() { const t = document.querySelector('input[name
 async function startRegister(nid) { await apiCall(`/bot/start-register/${nid}`, 'POST'); switchView('dashboard'); }
 async function stopBot(nid) { await apiCall(`/bot/stop/${nid}`, 'POST'); setTimeout(fetchDashboardData, 1000); }
 async function apiCall(u, m, b) { return (await fetch(API_URL+u, {method:m, headers:{'Content-Type':'application/json'}, body:JSON.stringify(b)})).json(); }
+
+function setupLogFilters() {
+    const textInput = document.getElementById('logFilterText');
+    const nidInput = document.getElementById('logFilterNid');
+    const jobInput = document.getElementById('logFilterJob');
+    const typeSelect = document.getElementById('logFilterType');
+    const levelSelect = document.getElementById('logFilterLevel');
+    const clearBtn = document.getElementById('logClearBtn');
+
+    if(textInput) textInput.addEventListener('input', () => { logFilters.text = textInput.value.trim().toLowerCase(); renderLogs(); });
+    if(nidInput) nidInput.addEventListener('input', () => { logFilters.nid = nidInput.value.trim(); renderLogs(); });
+    if(jobInput) jobInput.addEventListener('input', () => { logFilters.jobId = jobInput.value.trim(); renderLogs(); });
+    if(typeSelect) typeSelect.addEventListener('change', () => { logFilters.type = typeSelect.value; renderLogs(); });
+    if(levelSelect) levelSelect.addEventListener('change', () => { logFilters.level = levelSelect.value; renderLogs(); });
+    if(clearBtn) clearBtn.addEventListener('click', () => {
+        logEvents = [];
+        renderLogs(true);
+    });
+}
+
+function connectWebSocket() {
+    const wsUrl = API_URL.replace('http', 'ws') + '/ws';
+    wsClient = new WebSocket(wsUrl);
+
+    wsClient.onmessage = (event) => {
+        try {
+            const payload = JSON.parse(event.data);
+            handleSocketEvent(payload);
+        } catch (e) {
+            console.warn('Invalid WS payload', e);
+        }
+    };
+
+    wsClient.onclose = () => {
+        setTimeout(connectWebSocket, 2000);
+    };
+}
+
+function handleSocketEvent(payload) {
+    if (!payload || !payload.type) return;
+    logEvents.push(payload);
+    if (logEvents.length > LOG_BUFFER_LIMIT) {
+        logEvents.shift();
+    }
+    renderLogs();
+}
+
+function renderLogs(clearInitial = false) {
+    const term = document.getElementById('terminalBox');
+    if (!term) return;
+    term.innerHTML = '';
+    if (!logEvents.length && clearInitial) {
+        term.innerHTML = '<div class="text-muted">No log events.</div>';
+        return;
+    }
+    const filtered = logEvents.filter((event) => {
+        if (logFilters.type && event.type !== logFilters.type) return false;
+        if (logFilters.level && (event.level || '').toLowerCase() !== logFilters.level) return false;
+        if (logFilters.nid && (event.nid || '').indexOf(logFilters.nid) === -1) return false;
+        if (logFilters.jobId && (event.job_id || '').indexOf(logFilters.jobId) === -1) return false;
+        if (logFilters.text) {
+            const haystack = `${event.message || ''} ${event.status || ''} ${event.name || ''} ${event.value || ''}`.toLowerCase();
+            if (!haystack.includes(logFilters.text)) return false;
+        }
+        return true;
+    });
+
+    if (!filtered.length) {
+        term.innerHTML = '<div class="text-muted">رویدادی یافت نشد.</div>';
+        return;
+    }
+
+    filtered.forEach((event) => {
+        const div = document.createElement('div');
+        const timeText = event.ts ? new Date(event.ts * 1000).toLocaleTimeString('fa-IR') : '';
+        const nidLabel = event.nid ? `<span style="color:#00e5ff">${event.nid}</span>` : '<span style="color:#00e5ff">system</span>';
+        const jobLabel = event.job_id ? `<span style="color:#9ccc65">#${event.job_id.slice(0, 8)}</span>` : '';
+        const levelLabel = event.level ? `<span style="color:${getLevelColor(event.level)}">[${event.level}]</span>` : '';
+        const typeLabel = `<span style="color:#90a4ae">(${event.type})</span>`;
+
+        let message = '';
+        if (event.type === 'log') {
+            message = event.message || '';
+        } else if (event.type === 'job_status') {
+            message = `status=${event.status || ''}${event.detail ? ` (${event.detail})` : ''}`;
+        } else if (event.type === 'metric') {
+            message = `${event.name}: ${event.value}`;
+        }
+
+        div.innerHTML = `<span style="color:#666">[${timeText}]</span> ${typeLabel} ${nidLabel} ${jobLabel} ${levelLabel} ${message}`;
+        term.appendChild(div);
+    });
+
+    term.scrollTop = term.scrollHeight;
+}
+
+function getLevelColor(level) {
+    const palette = {
+        success: '#4caf50',
+        warning: '#ffb300',
+        error: '#ef5350',
+        info: '#64b5f6',
+        stopped: '#f44336',
+        stopping: '#ffa726',
+        registering: '#42a5f5',
+        selecting: '#7e57c2',
+        'waiting sms': '#ff9800'
+    };
+    return palette[level.toLowerCase()] || '#cfd8dc';
+}
