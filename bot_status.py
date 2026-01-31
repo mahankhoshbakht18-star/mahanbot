@@ -2,16 +2,18 @@ import time
 import json
 import re
 import os
-from playwright.sync_api import sync_playwright, Error as PlaywrightError, TimeoutError as PlaywrightTimeoutError
+from playwright.sync_api import Error as PlaywrightError
+from browser_launcher import BrowserLaunchError, close_browser, launch_browser, safe_goto
 from database import DBHandler
 from captcha_service import CaptchaService
 
 
 class StatusBot:
-    def __init__(self, nid, settings, log_callback=None, captcha_service=None):
+    def __init__(self, nid, settings, log_callback=None, captcha_service=None, browser_profile=None):
         self.nid = nid
         self.settings = settings
         self.log = log_callback
+        self.browser_profile = browser_profile or {}
 
         self.user_data = self._load_user_data()
         self.captcha_service = captcha_service or CaptchaService()
@@ -38,6 +40,18 @@ class StatusBot:
         if self.log:
             self.log(self.nid, msg, level)
         print(f"[{self.nid}] {msg}")
+
+    def _wrap_page_navigation(self, page):
+        original_goto = page.goto
+
+        def guarded_goto(url, **kwargs):
+            return safe_goto(page, url, log_callback=self._log_for_safe_goto, **kwargs)
+
+        page.goto = guarded_goto  # type: ignore[assignment]
+        page._original_goto = original_goto  # type: ignore[attr-defined]
+
+    def _log_for_safe_goto(self, message, level="warning", page=None):
+        self.log_msg(message, level)
 
     # -----------------------------------------------------------
     # 🔥 ابزارهای کمکی
@@ -317,109 +331,101 @@ class StatusBot:
 
         self.log_msg(f"شروع استعلام برای: {tracking_code}", "info")
 
+        playwright = None
         browser = None
         context = None
+        page = None
 
         try:
-            with sync_playwright() as p:
-                browser = p.chromium.launch(headless=False)
+            playwright, browser, context, page = launch_browser(self.browser_profile)
+            self._wrap_page_navigation(page)
+            self.log_msg("باز کردن سایت...", "info")
 
-                context = browser.new_context(
-                    viewport={"width": 1280, "height": 720},
-                    user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120 Safari/537.36"
-                )
+            # برای اینکه سریع‌تر باشه
+            page.set_default_timeout(15000)
 
-                page = context.new_page()
-                self.log_msg("باز کردن سایت...", "info")
+            while not stop_event.is_set():
+                try:
+                    if page.is_closed():
+                        self.log_msg("مرورگر توسط کاربر بسته شد.", "stopped")
+                        break
 
-                # برای اینکه سریع‌تر باشه
-                page.set_default_timeout(15000)
-
-                while not stop_event.is_set():
-                    try:
-                        if page.is_closed():
-                            self.log_msg("مرورگر توسط کاربر بسته شد.", "stopped")
-                            break
-
-                        # اگر صفحه روی مقصد نیست برو
-                        current_url = page.url
-                        if "TasTrace" not in current_url and "Trace" not in current_url:
-                            try:
-                                page.goto("https://ve.cbi.ir/TasTrace.aspx", timeout=30000)
-                                page.wait_for_timeout(500)
-                            except PlaywrightError as e:
-                                if "Target closed" in str(e):
-                                    raise e
-                                self.log_msg("⚠️ مشکل اینترنت. تلاش مجدد...", "warning")
-                                time.sleep(3)
-                                continue
-
-                        # 1) فایروال
-                        if self.solve_firewall_if_exists(page):
-                            time.sleep(1)
+                    # اگر صفحه روی مقصد نیست برو
+                    current_url = page.url
+                    if "TasTrace" not in current_url and "Trace" not in current_url:
+                        try:
+                            page.goto("https://ve.cbi.ir/TasTrace.aspx", timeout=30000)
+                            page.wait_for_timeout(500)
+                        except PlaywrightError as e:
+                            if "Target closed" in str(e):
+                                raise e
+                            self.log_msg("⚠️ مشکل اینترنت. تلاش مجدد...", "warning")
+                            time.sleep(3)
                             continue
 
-                        # 2) اگر موفقیت و صفحه وضعیت آمد
-                        is_success, extracted_info = self.check_success_and_save(page)
-                        if is_success:
-                            self.log_msg(f"✅ موفقیت! {extracted_info}", "success")
-                            self.log_msg("🎉 رسید ذخیره شد و عملیات پایان یافت.", "success")
-
-                            # منتظر بماند تا stop یا بستن مرورگر
-                            while not stop_event.is_set():
-                                if page.is_closed():
-                                    break
-                                time.sleep(1)
-                            break
-
-                        # 3) پیام سایت
-                        msg_text = self.get_site_message(page)
-                        if msg_text and msg_text != self.last_site_msg:
-                            self.last_site_msg = msg_text
-                            self.log_msg(f"⚠️ پیام سایت: {msg_text}", "warning")
-
-                            if "یافت نشد" in msg_text:
-                                self.log_msg("⛔ اطلاعات اشتباه است.", "error")
-                                time.sleep(2)
-                                break
-
-                            if "در دسترس نمی باشد" in msg_text:
-                                page.reload()
-                                continue
-
-                        # 4) حل کپچا و submit فرم (با انتظار صحیح، بدون نیاز به refresh دستی)
-                        submitted = self.submit_form_with_captcha(page, tracking_code)
-                        if submitted:
-                            # اگر submit گفت موفق شد، دور بعد check_success می‌گیره و ذخیره می‌کنه
-                            time.sleep(1)
-                            continue
-
+                    # 1) فایروال
+                    if self.solve_firewall_if_exists(page):
                         time.sleep(1)
+                        continue
 
-                    except PlaywrightError as pe:
-                        if "Target closed" in str(pe):
-                            self.log_msg("مرورگر بسته شد.", "stopped")
-                            break
-                        else:
-                            self.log_msg(f"خطای موقت: {pe}", "warning")
+                    # 2) اگر موفقیت و صفحه وضعیت آمد
+                    is_success, extracted_info = self.check_success_and_save(page)
+                    if is_success:
+                        self.log_msg(f"✅ موفقیت! {extracted_info}", "success")
+                        self.log_msg("🎉 رسید ذخیره شد و عملیات پایان یافت.", "success")
+
+                        # منتظر بماند تا stop یا بستن مرورگر
+                        while not stop_event.is_set():
+                            if page.is_closed():
+                                break
+                            time.sleep(1)
+                        break
+
+                    # 3) پیام سایت
+                    msg_text = self.get_site_message(page)
+                    if msg_text and msg_text != self.last_site_msg:
+                        self.last_site_msg = msg_text
+                        self.log_msg(f"⚠️ پیام سایت: {msg_text}", "warning")
+
+                        if "یافت نشد" in msg_text:
+                            self.log_msg("⛔ اطلاعات اشتباه است.", "error")
                             time.sleep(2)
+                            break
 
-                    except Exception as e:
-                        self.log_msg(f"خطای غیرمنتظره: {e}", "error")
+                        if "در دسترس نمی باشد" in msg_text:
+                            page.reload()
+                            continue
+
+                    # 4) حل کپچا و submit فرم (با انتظار صحیح، بدون نیاز به refresh دستی)
+                    submitted = self.submit_form_with_captcha(page, tracking_code)
+                    if submitted:
+                        # اگر submit گفت موفق شد، دور بعد check_success می‌گیره و ذخیره می‌کنه
+                        time.sleep(1)
+                        continue
+
+                    time.sleep(1)
+
+                except PlaywrightError as pe:
+                    if "Target closed" in str(pe):
+                        self.log_msg("مرورگر بسته شد.", "stopped")
+                        break
+                    else:
+                        self.log_msg(f"خطای موقت: {pe}", "warning")
                         time.sleep(2)
 
+                except BrowserLaunchError as exc:
+                    self.log_msg(f"خطا در مرورگر: {exc.message}", "error")
+                    break
+
+                except Exception as e:
+                    self.log_msg(f"خطای غیرمنتظره: {e}", "error")
+                    time.sleep(2)
+
+        except BrowserLaunchError as exc:
+            self.log_msg(f"Error: {exc.message}", "error")
         except Exception as e:
             self.log_msg(f"Error: {e}", "error")
 
         finally:
-            if context:
-                try:
-                    context.close()
-                except:
-                    pass
-            if browser:
-                try:
-                    browser.close()
-                except:
-                    pass
+            close_browser(playwright, browser, context, page)
             self.log_msg("پایان عملیات.", "stopped")

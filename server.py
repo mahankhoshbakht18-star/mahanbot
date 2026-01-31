@@ -20,6 +20,12 @@ from event_logger import (
     log_event,
     set_main_loop,
 )
+from browser_launcher import (
+    BrowserLaunchError,
+    get_default_browser_profile,
+    merge_browser_profiles,
+    normalize_browser_profile,
+)
 
 # ایمپورت ربات‌ها
 from bot_register import RegistrationBot
@@ -105,6 +111,31 @@ class JobStartRequest(BaseModel):
     bot_name: str
     nid: str
     loan_type: Optional[str] = None
+    browser_profile_override: Optional[Dict[str, Any]] = None
+
+
+class BrowserProfileRequest(BaseModel):
+    browser: Optional[str] = None
+    headless: Optional[bool] = None
+    slow_mo_ms: Optional[int] = None
+    viewport: Optional[Dict[str, int]] = None
+    user_data_dir: Optional[str] = None
+    proxy: Optional[str] = None
+    timeout_ms: Optional[int] = None
+
+
+def load_browser_profile_settings() -> Dict[str, Any]:
+    stored = DBHandler.get_setting("browser_profile") or {}
+    try:
+        return merge_browser_profiles(get_default_browser_profile(), stored)
+    except BrowserLaunchError:
+        return get_default_browser_profile()
+
+
+def save_browser_profile_settings(profile: Dict[str, Any]) -> Dict[str, Any]:
+    normalized = normalize_browser_profile(profile)
+    DBHandler.update_setting("browser_profile", normalized)
+    return normalized
 
 
 def get_max_concurrency() -> int:
@@ -183,6 +214,7 @@ class JobQueue:
                 except ValueError:
                     pass
                 job_status_event(job.nid, job.id, "cancelled")
+                log_event(job.nid, job.id, "Job canceled", "warning")
                 return job
             if job.status in {"running", "cancelling"}:
                 job.cancel_requested = True
@@ -190,6 +222,7 @@ class JobQueue:
                 if job.status != "cancelling":
                     job.status = "cancelling"
                     job_status_event(job.nid, job.id, "cancelling")
+                    log_event(job.nid, job.id, "Job cancel requested", "warning")
                 return job
             return job
 
@@ -233,6 +266,7 @@ class JobQueue:
                 job.status = "running"
                 job.started_at = time.time()
             job_status_event(job.nid, job.id, "running")
+            log_event(job.nid, job.id, f"Job started ({job.bot_name})", "info")
             outcome_status = "stopped"
             try:
                 self._run_job(job)
@@ -247,22 +281,47 @@ class JobQueue:
                     job.status = outcome_status
                     job.finished_at = time.time()
                 job_status_event(job.nid, job.id, outcome_status)
+                log_event(job.nid, job.id, f"Job {outcome_status}", "info")
 
     def _run_job(self, job: Job) -> None:
         settings = DBHandler.get_config()
+        base_profile = load_browser_profile_settings()
+        override = job.payload.get("browser_profile_override")
+        try:
+            browser_profile = merge_browser_profiles(base_profile, override)
+        except BrowserLaunchError as exc:
+            raise ValueError(exc.message)
         captcha_service = get_captcha_service()
         log_callback = build_log_callback(job.id)
         if job.bot_name == "register":
-            bot = RegistrationBot(job.nid, settings, log_callback=log_callback, captcha_service=captcha_service)
+            bot = RegistrationBot(
+                job.nid,
+                settings,
+                log_callback=log_callback,
+                captcha_service=captcha_service,
+                browser_profile=browser_profile,
+            )
             bot.run(job.stop_event)
             log_event(job.nid, job.id, "ربات متوقف شد", "stopped")
         elif job.bot_name == "select":
             loan_type = job.payload.get("loan_type")
-            bot = BankSelectionBot(job.nid, settings, log_callback=log_callback, captcha_service=captcha_service)
+            bot = BankSelectionBot(
+                job.nid,
+                settings,
+                log_callback=log_callback,
+                captcha_service=captcha_service,
+                browser_profile=browser_profile,
+            )
             bot.run(job.stop_event, loan_type)
             log_event(job.nid, job.id, "ربات متوقف شد", "stopped")
         elif job.bot_name == "status":
-            bot = StatusBot(job.nid, settings, log_callback=log_callback, captcha_service=captcha_service)
+            bot = StatusBot(
+                job.nid,
+                settings,
+                log_callback=log_callback,
+                captcha_service=captcha_service,
+                browser_profile=browser_profile,
+            )
             bot.run(job.stop_event)
             log_event(job.nid, job.id, "عملیات پایان یافت", "stopped")
         else:
@@ -290,6 +349,11 @@ def start_job(req: JobStartRequest, _: bool = Depends(require_api_key)):
     payload: Dict[str, Any] = {}
     if req.loan_type:
         payload["loan_type"] = req.loan_type
+    if req.browser_profile_override:
+        try:
+            payload["browser_profile_override"] = normalize_browser_profile(req.browser_profile_override)
+        except BrowserLaunchError as exc:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=exc.to_dict())
     try:
         job = queue.enqueue(bot_name, req.nid, payload)
     except ValueError:
@@ -369,6 +433,60 @@ def rec_sms(req: SMSRequest):
         log_event(req.nid, None, f"پیامک: {req.code}", "success")
         return {"status": "ok"}
     return {"status": "error"}
+
+@app.get("/settings")
+def get_settings():
+    return DBHandler.get_config()
+
+@app.post("/settings")
+def update_settings(payload: Dict[str, Any]):
+    current = DBHandler.get_config()
+    current.update(payload)
+    DBHandler.update_config(current)
+    return {"status": "ok", "settings": current}
+
+@app.get("/settings/browser-profile")
+def get_browser_profile():
+    return load_browser_profile_settings()
+
+@app.put("/settings/browser-profile")
+def update_browser_profile(req: BrowserProfileRequest):
+    data = req.dict(exclude_unset=True)
+    try:
+        merged = merge_browser_profiles(load_browser_profile_settings(), data)
+    except BrowserLaunchError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=exc.to_dict())
+    saved = save_browser_profile_settings(merged)
+    return saved
+
+@app.post("/browser/test-launch")
+def test_browser_launch(req: Optional[BrowserProfileRequest] = None):
+    profile = load_browser_profile_settings()
+    if req:
+        override = req.dict(exclude_unset=True)
+        try:
+            profile = merge_browser_profiles(profile, override)
+        except BrowserLaunchError as exc:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=exc.to_dict())
+    from browser_launcher import close_browser, ensure_allowed_url, launch_browser
+
+    target_url = "http://127.0.0.1:8000/static/test.html"
+    try:
+        ensure_allowed_url(target_url)
+    except BrowserLaunchError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=exc.to_dict())
+    playwright = None
+    browser = None
+    context = None
+    page = None
+    try:
+        playwright, browser, context, page = launch_browser(profile)
+        page.goto(target_url, wait_until="load")
+        return {"status": "ok"}
+    except BrowserLaunchError as exc:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=exc.to_dict())
+    finally:
+        close_browser(playwright, browser, context, page)
 
 @app.post("/bot/start-register/{nid}")
 def start_reg(nid: str, _: bool = Depends(require_api_key)):

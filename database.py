@@ -65,6 +65,33 @@ class DBHandler:
         except: pass
 
     @staticmethod
+    def get_setting(key):
+        try:
+            conn = sqlite3.connect(DB_PATH)
+            c = conn.cursor()
+            c.execute("SELECT value FROM settings WHERE key=?", (key,))
+            row = c.fetchone()
+            conn.close()
+            return json.loads(row[0]) if row else None
+        except:
+            return None
+
+    @staticmethod
+    def update_setting(key, value):
+        try:
+            conn = sqlite3.connect(DB_PATH)
+            c = conn.cursor()
+            c.execute(
+                "INSERT INTO settings (key, value) VALUES (?, ?) "
+                "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+                (key, json.dumps(value)),
+            )
+            conn.commit()
+            conn.close()
+        except:
+            pass
+
+    @staticmethod
     def get_applicant(nid):
         try:
             conn = sqlite3.connect(DB_PATH)
