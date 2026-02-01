@@ -93,11 +93,18 @@ def build_event(event_type: str, nid: Optional[str] = None, job_id: Optional[str
     return event
 
 
-def log_event(nid: str, job_id: Optional[str], message: str, level: str = "info") -> None:
+def log_event(
+    nid: str,
+    job_id: Optional[str],
+    message: str,
+    level: str = "info",
+    meta: Optional[Dict[str, Any]] = None,
+) -> None:
     DBHandler.update_status(nid, level.title(), message)
-    EVENT_BROADCASTER.emit_event(
-        build_event("log", nid=nid, job_id=job_id, level=level, message=message)
-    )
+    event = build_event("log", nid=nid, job_id=job_id, level=level, message=message)
+    if meta:
+        event["meta"] = meta
+    EVENT_BROADCASTER.emit_event(event)
 
 
 def job_status_event(nid: str, job_id: Optional[str], status: str, detail: Optional[str] = None) -> None:
@@ -113,7 +120,7 @@ def metric_event(name: str, value: Any, nid: Optional[str] = None, job_id: Optio
 
 
 def build_log_callback(job_id: Optional[str]):
-    def _callback(nid: str, message: str, level: str = "info") -> None:
-        log_event(nid, job_id, message, level)
+    def _callback(nid: str, message: str, level: str = "info", meta: Optional[Dict[str, Any]] = None) -> None:
+        log_event(nid, job_id, message, level, meta=meta)
 
     return _callback

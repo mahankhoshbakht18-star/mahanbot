@@ -9,6 +9,7 @@ from browser_actions import BrowserActions
 from browser_launcher import (
     BrowserLaunchError,
     close_browser,
+    open_healthcheck_page,
     launch_browser,
     safe_goto,
 )
@@ -26,8 +27,12 @@ class BotCore:
         if not os.path.exists(self.user_dir): os.makedirs(self.user_dir)
         self.browser_profile = browser_profile or {}
 
-    def log(self, message, level="info", page=None):
-        if self.log_callback: self.log_callback(self.nid, message, level)
+    def log(self, message, level="info", page=None, meta=None):
+        if self.log_callback:
+            try:
+                self.log_callback(self.nid, message, level, meta)
+            except TypeError:
+                self.log_callback(self.nid, message, level)
         else: print(f"[{level.upper()}] {self.nid}: {message}")
         if page:
             color = "red" if level == "error" else ("green" if level == "success" else "blue")
@@ -80,6 +85,7 @@ class BotCore:
         self._wrap_page_navigation(page)
         if stop_event is not None:
             self._start_cancel_watcher(stop_event, playwright, browser, context, page)
+        open_healthcheck_page(page, log_callback=self.log)
         self.log(
             f"Launching browser: {profile.get('browser', 'chromium')} (headless={profile.get('headless', False)})",
             "info",
