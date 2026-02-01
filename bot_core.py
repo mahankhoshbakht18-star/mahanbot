@@ -11,7 +11,6 @@ from browser_launcher import (
     close_browser,
     open_healthcheck_page,
     launch_browser,
-    safe_goto,
 )
 
 class BotCore:
@@ -82,7 +81,6 @@ class BotCore:
         except BrowserLaunchError as exc:
             self.log(f"❌ خطا در راه‌اندازی مرورگر: {exc.message}", "error")
             raise
-        self._wrap_page_navigation(page)
         if stop_event is not None:
             self._start_cancel_watcher(stop_event, playwright, browser, context, page)
         open_healthcheck_page(page, log_callback=self.log)
@@ -93,15 +91,6 @@ class BotCore:
         )
         self.log("Browser context created", "info", page)
         return playwright, browser, context, page
-
-    def _wrap_page_navigation(self, page):
-        original_goto = page.goto
-
-        def guarded_goto(url, **kwargs):
-            return safe_goto(page, url, log_callback=self.log, **kwargs)
-
-        page.goto = guarded_goto  # type: ignore[assignment]
-        page._original_goto = original_goto  # type: ignore[attr-defined]
 
     def _start_cancel_watcher(self, stop_event, playwright, browser, context, page):
         def _watch():
