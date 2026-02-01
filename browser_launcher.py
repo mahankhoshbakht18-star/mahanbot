@@ -5,10 +5,13 @@ from urllib.parse import urlparse
 
 from playwright.sync_api import sync_playwright
 
+from allowlist import domain_matches, get_allowed_domains
+
 ALLOWED_BROWSERS = {"chromium", "firefox", "webkit"}
 DEFAULT_TIMEOUT_MS = 30000
 DEFAULT_VIEWPORT = {"width": 1280, "height": 720}
 PROFILE_ROOT = Path(os.getenv("MAHANBOT_PROFILE_ROOT", Path.cwd() / "browser_profiles")).resolve()
+DEFAULT_HEALTHCHECK_URL = "http://127.0.0.1:8000/static/healthcheck.html"
 
 
 class BrowserLaunchError(Exception):
@@ -129,20 +132,27 @@ def merge_browser_profiles(base: Dict[str, Any], override: Optional[Dict[str, An
     return normalize_browser_profile(merged)
 
 
-def get_allowed_domains() -> Iterable[str]:
-    raw = os.getenv("ALLOWED_DOMAINS", "localhost,127.0.0.1")
-    domains = []
-    for item in raw.split(","):
-        hostname = _extract_hostname(item)
-        if hostname:
-            domains.append(hostname)
-    return domains
-
-
-def _domain_matches(allowed: str, hostname: str) -> bool:
-    if allowed.startswith("."):
-        return hostname.endswith(allowed.lstrip("."))
-    return hostname == allowed
+def open_healthcheck_page(page, *, allowed_domains: Optional[Iterable[str]] = None, log_callback=None) -> bool:
+    url = get_healthcheck_url()
+    goto = getattr(page, "_original_goto", page.goto)
+    try:
+        ensure_allowed_url(url, allowed_domains=allowed_domains)
+        goto(url, wait_until="load")
+        return True
+    except BrowserLaunchError as exc:
+        if log_callback:
+            try:
+                log_callback("⚠️ بارگذاری صفحه داخلی سلامت مرورگر ناموفق بود.", "warning", meta=exc.details)
+            except TypeError:
+                log_callback("⚠️ بارگذاری صفحه داخلی سلامت مرورگر ناموفق بود.", "warning")
+        return False
+    except Exception as exc:
+        if log_callback:
+            try:
+                log_callback(f"⚠️ خطا در بارگذاری صفحه سلامت: {exc}", "warning")
+            except TypeError:
+                log_callback(f"⚠️ خطا در بارگذاری صفحه سلامت: {exc}", "warning")
+        return False
 
 
 def _extract_hostname(value: Optional[str]) -> Optional[str]:
@@ -163,17 +173,10 @@ def ensure_allowed_url(url: str, allowed_domains: Optional[Iterable[str]] = None
     hostname = _extract_hostname(url)
     if not hostname:
         return
-    domains = [
-        domain
-        for domain in (_extract_hostname(domain) for domain in (allowed_domains or get_allowed_domains()))
-        if domain
-    ]
-    if any(_domain_matches(domain, hostname) for domain in domains):
-        return
     raise BrowserLaunchError(
         "domain_not_allowed",
         "Navigation blocked by allowlist",
-        {"url": url, "allowed_domains": domains},
+        {"url": url, "host": hostname, "effective_allowed_domains": domains},
     )
 
 
@@ -181,12 +184,30 @@ def safe_goto(page, url: str, *, allowed_domains: Optional[Iterable[str]] = None
     try:
         ensure_allowed_url(url, allowed_domains=allowed_domains)
     except BrowserLaunchError as exc:
-        message = f"⛔ Blocked navigation to {url} (allowlist)"
+        meta = {
+            "url": url,
+            "host": exc.details.get("host"),
+            "effective_allowed_domains": exc.details.get("effective_allowed_domains", []),
+        }
         if log_callback:
             try:
-                log_callback(message, "warning", page)
+                log_callback("Navigation blocked by allowlist", "warning", page, meta)
             except TypeError:
-                log_callback(message, "warning")
+                try:
+                    log_callback("Navigation blocked by allowlist", "warning", meta=meta)
+                except TypeError:
+                    log_callback("Navigation blocked by allowlist", "warning")
+            try:
+                log_callback(
+                    "این آدرس در فهرست دامنه‌های مجاز نیست. دامنه را در تنظیمات دامنه‌های مجاز اضافه کنید.",
+                    "warning",
+                    page,
+                )
+            except TypeError:
+                log_callback(
+                    "این آدرس در فهرست دامنه‌های مجاز نیست. دامنه را در تنظیمات دامنه‌های مجاز اضافه کنید.",
+                    "warning",
+                )
         raise exc
     return page.goto(url, **kwargs)
 

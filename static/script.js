@@ -9,6 +9,7 @@ let allUsersData = [];
 let wsClient = null;
 let logEvents = [];
 let browserProfile = null;
+let allowedDomainsState = { env: [], db: [], effective: [] };
 const LOG_BUFFER_LIMIT = 500;
 const logFilters = {
     text: '',
@@ -83,6 +84,7 @@ function switchView(viewId, navEl) {
     if(viewId === 'settings') {
         loadSettings();
         loadBrowserProfile();
+        loadAllowedDomains();
     }
     
     if(viewId === 'add' && !editingUserId) resetAddForm();
@@ -227,14 +229,6 @@ function renderSimpleList(data, elId, actionFn, txt, cls) {
 }
 
 async function actionViewStatus(nid) {
-    const user = allUsersData.find(u => u.national_id === nid);
-    if(user) {
-        let d = parseUserData(user.data);
-        if(!d.tracking_code) {
-            alert(getMessage('alerts.missing_tracking', 'خطا: کد رهگیری برای این کاربر ثبت نشده است.'));
-            return;
-        }
-    }
     try {
         await apiCall(`/jobs/start`, 'POST', {bot_name: 'status', nid: nid});
         alert(getMessage('alerts.status_started', 'ربات مشاهده وضعیت شروع شد.'));
@@ -464,6 +458,145 @@ async function saveSettings() {
     
     await apiCall('/settings', 'POST', payload);
     alert(getMessage('alerts.settings_saved', 'تنظیمات با موفقیت ذخیره شد.'));
+}
+
+async function loadAllowedDomains() {
+    const statusEl = document.getElementById('allowedDomainsStatus');
+    if (statusEl) statusEl.textContent = '';
+    try {
+        const res = await fetch(`${API_URL}/settings/allowed-domains`);
+        if (!res.ok) throw new Error('Failed');
+        allowedDomainsState = await res.json();
+        renderAllowedDomains();
+    } catch (e) {
+        if (statusEl) {
+            statusEl.textContent = getMessage('alerts.allowed_domains_failed', 'خطا در بارگذاری دامنه‌های مجاز.');
+            statusEl.className = 'small text-danger';
+        }
+    }
+}
+
+function renderAllowedDomains() {
+    const envBox = document.getElementById('allowedDomainsEnv');
+    const effectiveBox = document.getElementById('allowedDomainsEffective');
+    const dbBox = document.getElementById('allowedDomainsDbList');
+    const statusEl = document.getElementById('allowedDomainsStatus');
+    if (statusEl) {
+        statusEl.textContent = '';
+        statusEl.className = 'small text-muted';
+    }
+
+    const renderList = (container, items, emptyText) => {
+        if (!container) return;
+        if (!items || !items.length) {
+            container.innerHTML = `<span class="text-muted">${emptyText}</span>`;
+            return;
+        }
+        container.innerHTML = items.map(item => `<span class="badge bg-secondary me-1 mb-1">${item}</span>`).join('');
+    };
+
+    renderList(envBox, allowedDomainsState.env || [], 'دامنه‌ای ثبت نشده است.');
+    renderList(effectiveBox, allowedDomainsState.effective || [], 'دامنه‌ای ثبت نشده است.');
+
+    if (dbBox) {
+        if (!allowedDomainsState.db || !allowedDomainsState.db.length) {
+            dbBox.innerHTML = '<span class="text-muted">دامنه‌ای ثبت نشده است.</span>';
+        } else {
+            dbBox.innerHTML = allowedDomainsState.db.map((domain, idx) => `
+                <span class="badge bg-light text-dark border me-1 mb-1">
+                    ${domain}
+                    <i class="fas fa-times text-danger ms-1" style="cursor:pointer" onclick="removeAllowedDomain(${idx})"></i>
+                </span>
+            `).join('');
+        }
+    }
+}
+
+function addAllowedDomain() {
+    const input = document.getElementById('allowedDomainInput');
+    if (!input) return;
+    const value = input.value.trim().toLowerCase();
+    if (!value) return;
+    if (!allowedDomainsState.db.includes(value)) {
+        allowedDomainsState.db.push(value);
+        renderAllowedDomains();
+    }
+    input.value = '';
+}
+
+function removeAllowedDomain(index) {
+    allowedDomainsState.db.splice(index, 1);
+    renderAllowedDomains();
+}
+
+async function saveAllowedDomains() {
+    const statusEl = document.getElementById('allowedDomainsStatus');
+    if (statusEl) {
+        statusEl.textContent = getMessage('alerts.allowed_domains_saving', 'در حال ذخیره دامنه‌ها...');
+        statusEl.className = 'small text-muted';
+    }
+    try {
+        const res = await fetch(`${API_URL}/settings/allowed-domains`, {
+            method: 'PUT',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({domains: allowedDomainsState.db})
+        });
+        const data = await res.json();
+        if (!res.ok) {
+            const message = data?.detail?.details?.invalid_domains
+                ? `${getMessage('alerts.allowed_domains_invalid', 'دامنه‌های نامعتبر')}: ${data.detail.details.invalid_domains.join(', ')}`
+                : getMessage('alerts.allowed_domains_failed', 'خطا در ذخیره دامنه‌های مجاز.');
+            if (statusEl) {
+                statusEl.textContent = message;
+                statusEl.className = 'small text-danger';
+            }
+            return;
+        }
+        allowedDomainsState = data;
+        renderAllowedDomains();
+        if (statusEl) {
+            statusEl.textContent = getMessage('alerts.allowed_domains_saved', 'دامنه‌های مجاز ذخیره شد.');
+            statusEl.className = 'small text-success';
+        }
+    } catch (e) {
+        if (statusEl) {
+            statusEl.textContent = getMessage('alerts.allowed_domains_failed', 'خطا در ذخیره دامنه‌های مجاز.');
+            statusEl.className = 'small text-danger';
+        }
+    }
+}
+
+async function testAllowlistUrl() {
+    const input = document.getElementById('allowlistTestUrl');
+    const resultEl = document.getElementById('allowlistTestResult');
+    if (!input || !resultEl) return;
+    const url = input.value.trim();
+    if (!url) return;
+    resultEl.textContent = getMessage('alerts.allowlist_checking', 'در حال بررسی...');
+    resultEl.className = 'small text-muted';
+    try {
+        const res = await fetch(`${API_URL}/settings/allowed-domains/check`, {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({url})
+        });
+        const data = await res.json();
+        if (!res.ok) {
+            resultEl.textContent = getMessage('alerts.allowlist_check_failed', 'خطا در بررسی آدرس.');
+            resultEl.className = 'small text-danger';
+            return;
+        }
+        if (data.allowed) {
+            resultEl.textContent = getMessage('alerts.allowlist_allowed', 'این آدرس مجاز است.');
+            resultEl.className = 'small text-success';
+        } else {
+            resultEl.textContent = getMessage('alerts.allowlist_blocked', 'این آدرس در فهرست مجاز نیست.');
+            resultEl.className = 'small text-warning';
+        }
+    } catch (e) {
+        resultEl.textContent = getMessage('alerts.allowlist_check_failed', 'خطا در بررسی آدرس.');
+        resultEl.className = 'small text-danger';
+    }
 }
 
 // توابع کمکی دیگر

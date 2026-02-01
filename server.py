@@ -11,8 +11,9 @@ from fastapi.responses import HTMLResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from collections import deque
-from typing import Deque, Dict, Any, Optional
+from typing import Deque, Dict, Any, Optional, List
 from database import DBHandler, resource_path
+from allowlist import get_allowlist_snapshot, get_allowed_domains, is_url_allowed, normalize_domain_list
 from event_logger import (
     EVENT_BROADCASTER,
     build_log_callback,
@@ -146,6 +147,14 @@ class BrowserProfileRequest(BaseModel):
     user_data_dir: Optional[str] = None
     proxy: Optional[str] = None
     timeout_ms: Optional[int] = None
+
+
+class AllowedDomainsRequest(BaseModel):
+    domains: List[str]
+
+
+class AllowlistCheckRequest(BaseModel):
+    url: str
 
 
 def load_browser_profile_settings() -> Dict[str, Any]:
@@ -292,19 +301,34 @@ class JobQueue:
             job_status_event(job.nid, job.id, "running")
             log_event(job.nid, job.id, f"Job started ({job.bot_name})", "info")
             outcome_status = "stopped"
+            error_message = None
+            error_payload: Any = None
             try:
                 self._run_job(job)
                 if job.cancel_requested:
                     outcome_status = "cancelled"
             except Exception as e:
-                job.error = str(e)
-                log_event(job.nid, job.id, f"خطا: {e}", "error")
+                if hasattr(e, "to_dict"):
+                    error_payload = e.to_dict()
+                    error_message = error_payload.get("message") or str(e)
+                else:
+                    error_message = str(e)
+                    error_payload = error_message
+                job.error = error_payload
+                log_event(
+                    job.nid,
+                    job.id,
+                    f"خطا: {error_message}",
+                    "error",
+                    meta=error_payload if isinstance(error_payload, dict) else None,
+                )
                 outcome_status = "failed"
             finally:
                 with self._lock:
                     job.status = outcome_status
                     job.finished_at = time.time()
-                job_status_event(job.nid, job.id, outcome_status)
+                detail = error_message if outcome_status == "failed" else None
+                job_status_event(job.nid, job.id, outcome_status, detail=detail)
                 log_event(job.nid, job.id, f"Job {outcome_status}", "info")
 
     def _run_job(self, job: Job) -> None:
@@ -369,25 +393,6 @@ def start_job(req: JobStartRequest, _: bool = Depends(require_api_key)):
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail=get_message("responses", "user_not_found", RESPONSES["user_not_found"]),
-            )
-        try:
-            raw_data = user["data"]
-            if isinstance(raw_data, str):
-                data = json.loads(raw_data)
-            elif isinstance(raw_data, dict):
-                data = raw_data
-            else:
-                data = {}
-        except Exception as exc:
-            logger.warning("Invalid user data for %s: %s", req.nid, exc)
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=get_message("responses", "invalid_data", RESPONSES["invalid_data"]),
-            )
-        if not data.get('tracking_code'):
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=get_message("responses", "tracking_code_missing", RESPONSES["tracking_code_missing"]),
             )
     payload: Dict[str, Any] = {}
     if req.loan_type:
@@ -487,6 +492,41 @@ def update_settings(payload: Dict[str, Any]):
     current.update(payload)
     DBHandler.update_config(current)
     return {"status": "ok", "settings": current}
+
+
+@app.get("/settings/allowed-domains")
+def get_allowed_domains_settings():
+    return get_allowlist_snapshot()
+
+
+@app.put("/settings/allowed-domains")
+def update_allowed_domains(req: AllowedDomainsRequest):
+    normalized, invalid = normalize_domain_list(req.domains)
+    if invalid:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={
+                "code": "INVALID_ALLOWED_DOMAINS",
+                "message": "One or more domains are invalid.",
+                "details": {"invalid_domains": invalid},
+            },
+        )
+    DBHandler.update_setting("allowed_domains", normalized)
+    return get_allowlist_snapshot()
+
+
+@app.post("/settings/allowed-domains/check")
+def check_allowed_domains(req: AllowlistCheckRequest):
+    allowed, host, effective = is_url_allowed(req.url, allowed_domains=get_allowed_domains())
+    if not host:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={
+                "code": "INVALID_URL",
+                "message": "URL must include a hostname.",
+            },
+        )
+    return {"allowed": allowed, "host": host, "effective_allowed_domains": effective}
 
 @app.get("/settings/browser-profile")
 def get_browser_profile():
