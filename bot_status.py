@@ -3,9 +3,16 @@ import json
 import re
 import os
 from playwright.sync_api import Error as PlaywrightError
-from browser_launcher import BrowserLaunchError, close_browser, launch_browser, safe_goto
+from browser_launcher import (
+    BrowserLaunchError,
+    close_browser,
+    launch_browser,
+    open_healthcheck_page,
+    safe_goto,
+)
 from database import DBHandler
 from captcha_service import CaptchaService
+from errors import JobRunError
 
 
 class StatusBot:
@@ -36,9 +43,12 @@ class StatusBot:
                 return {}
         return {}
 
-    def log_msg(self, msg, level="info"):
+    def log_msg(self, msg, level="info", meta=None):
         if self.log:
-            self.log(self.nid, msg, level)
+            try:
+                self.log(self.nid, msg, level, meta)
+            except TypeError:
+                self.log(self.nid, msg, level)
         print(f"[{self.nid}] {msg}")
 
     def _wrap_page_navigation(self, page):
@@ -50,8 +60,8 @@ class StatusBot:
         page.goto = guarded_goto  # type: ignore[assignment]
         page._original_goto = original_goto  # type: ignore[attr-defined]
 
-    def _log_for_safe_goto(self, message, level="warning", page=None):
-        self.log_msg(message, level)
+    def _log_for_safe_goto(self, message, level="warning", page=None, meta=None):
+        self.log_msg(message, level, meta)
 
     # -----------------------------------------------------------
     # 🔥 ابزارهای کمکی
@@ -324,13 +334,6 @@ class StatusBot:
     # -----------------------------------------------------------
 
     def run(self, stop_event):
-        tracking_code = self.user_data.get("tracking_code")
-        if not tracking_code:
-            self.log_msg("❌ کد رهگیری موجود نیست.", "error")
-            return
-
-        self.log_msg(f"شروع استعلام برای: {tracking_code}", "info")
-
         playwright = None
         browser = None
         context = None
@@ -339,6 +342,18 @@ class StatusBot:
         try:
             playwright, browser, context, page = launch_browser(self.browser_profile)
             self._wrap_page_navigation(page)
+            open_healthcheck_page(page, log_callback=self._log_for_safe_goto)
+            tracking_code = self.user_data.get("tracking_code")
+            if not tracking_code:
+                error = JobRunError(
+                    "MISSING_TRACKING_CODE",
+                    "کد رهگیری برای این متقاضی ثبت نشده است.",
+                    {"nid": self.nid},
+                )
+                self.log_msg(error.message, "error", error.to_dict())
+                raise error
+
+            self.log_msg(f"شروع استعلام برای: {tracking_code}", "info")
             self.log_msg("باز کردن سایت...", "info")
 
             # برای اینکه سریع‌تر باشه
@@ -421,6 +436,8 @@ class StatusBot:
                     self.log_msg(f"خطای غیرمنتظره: {e}", "error")
                     time.sleep(2)
 
+        except JobRunError:
+            pass
         except BrowserLaunchError as exc:
             self.log_msg(f"Error: {exc.message}", "error")
         except Exception as e:

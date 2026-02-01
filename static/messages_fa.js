@@ -13,7 +13,15 @@ window.MESSAGES_FA = {
         browser_settings_failed: "خطا در ذخیره تنظیمات مرورگر.",
         test_launch_ok: "Test launch انجام شد.",
         test_launch_failed: "Test launch با خطا مواجه شد.",
-        otp_sent: "ارسال شد"
+        otp_sent: "ارسال شد",
+        allowed_domains_saved: "دامنه‌های مجاز ذخیره شد.",
+        allowed_domains_failed: "خطا در ذخیره دامنه‌های مجاز.",
+        allowed_domains_invalid: "دامنه‌های نامعتبر",
+        allowed_domains_saving: "در حال ذخیره دامنه‌ها...",
+        allowlist_allowed: "این آدرس مجاز است.",
+        allowlist_blocked: "این آدرس در فهرست مجاز نیست.",
+        allowlist_checking: "در حال بررسی...",
+        allowlist_check_failed: "خطا در بررسی آدرس."
     },
     status: {
         ready: "آماده",
