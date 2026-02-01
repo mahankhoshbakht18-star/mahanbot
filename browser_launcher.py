@@ -132,10 +132,6 @@ def merge_browser_profiles(base: Dict[str, Any], override: Optional[Dict[str, An
     return normalize_browser_profile(merged)
 
 
-def get_healthcheck_url() -> str:
-    return os.getenv("MAHANBOT_HEALTHCHECK_URL", DEFAULT_HEALTHCHECK_URL)
-
-
 def open_healthcheck_page(page, *, allowed_domains: Optional[Iterable[str]] = None, log_callback=None) -> bool:
     url = get_healthcheck_url()
     goto = getattr(page, "_original_goto", page.goto)
@@ -159,14 +155,23 @@ def open_healthcheck_page(page, *, allowed_domains: Optional[Iterable[str]] = No
         return False
 
 
-def ensure_allowed_url(url: str, allowed_domains: Optional[Iterable[str]] = None) -> None:
-    parsed = urlparse(url)
+def _extract_hostname(value: Optional[str]) -> Optional[str]:
+    if not value:
+        return None
+    candidate = value.strip()
+    if not candidate:
+        return None
+    parsed = urlparse(candidate if "://" in candidate else f"//{candidate}")
     hostname = parsed.hostname
+    if hostname:
+        return hostname.lower()
+    stripped = candidate.split("/")[0].split("?")[0].split("#")[0]
+    return stripped.lower() if stripped else None
+
+
+def ensure_allowed_url(url: str, allowed_domains: Optional[Iterable[str]] = None) -> None:
+    hostname = _extract_hostname(url)
     if not hostname:
-        return
-    hostname = hostname.lower()
-    domains = list(allowed_domains or get_allowed_domains())
-    if any(domain_matches(domain, hostname) for domain in domains):
         return
     raise BrowserLaunchError(
         "domain_not_allowed",
@@ -220,6 +225,8 @@ def launch_browser(profile: Dict[str, Any]) -> Tuple[Any, Any, Any, Any]:
             "headless": normalized["headless"],
             "slow_mo": normalized["slow_mo_ms"],
         }
+        if normalized["browser"] == "chromium":
+            launch_options.setdefault("args", []).append("--disable-blink-features=AutomationControlled")
         if normalized["proxy"]:
             launch_options["proxy"] = {"server": normalized["proxy"]}
         if normalized["user_data_dir"]:
