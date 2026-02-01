@@ -18,6 +18,7 @@ class DBHandler:
         try:
             conn = sqlite3.connect(DB_PATH)
             c = conn.cursor()
+            c.execute("PRAGMA journal_mode=WAL;")
             c.execute('''CREATE TABLE IF NOT EXISTS applicants 
                          (id INTEGER PRIMARY KEY AUTOINCREMENT, 
                           full_name TEXT, 

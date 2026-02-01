@@ -7,7 +7,7 @@ import aiosqlite
 import logging
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Depends, Header, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from collections import deque
@@ -79,6 +79,9 @@ def require_api_key(x_api_key: Optional[str] = Header(None, alias="X-API-KEY")):
 async def log_unhandled_exceptions(request, call_next):
     try:
         return await call_next(request)
+    except ConnectionResetError:
+        logger.debug("Connection reset by peer on %s %s", request.method, request.url.path)
+        return Response(status_code=204)
     except Exception:
         logger.exception("Unhandled exception on %s %s", request.method, request.url.path)
         raise
@@ -626,6 +629,9 @@ async def websocket_endpoint(websocket: WebSocket):
         while True:
             await websocket.receive_text()
     except WebSocketDisconnect:
+        EVENT_BROADCASTER.disconnect(websocket)
+    except ConnectionResetError:
+        logger.debug("WebSocket connection reset by peer")
         EVENT_BROADCASTER.disconnect(websocket)
     except Exception:
         EVENT_BROADCASTER.disconnect(websocket)
