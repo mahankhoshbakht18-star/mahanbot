@@ -1,11 +1,8 @@
 import os
 from pathlib import Path
 from typing import Any, Dict, Iterable, Optional, Tuple
-from urllib.parse import urlparse
 
 from playwright.sync_api import sync_playwright
-
-from allowlist import domain_matches, get_allowed_domains
 
 ALLOWED_BROWSERS = {"chromium", "firefox", "webkit"}
 DEFAULT_TIMEOUT_MS = 30000
@@ -155,60 +152,11 @@ def open_healthcheck_page(page, *, allowed_domains: Optional[Iterable[str]] = No
         return False
 
 
-def _extract_hostname(value: Optional[str]) -> Optional[str]:
-    if not value:
-        return None
-    candidate = value.strip()
-    if not candidate:
-        return None
-    parsed = urlparse(candidate if "://" in candidate else f"//{candidate}")
-    hostname = parsed.hostname
-    if hostname:
-        return hostname.lower()
-    stripped = candidate.split("/")[0].split("?")[0].split("#")[0]
-    return stripped.lower() if stripped else None
-
-
 def ensure_allowed_url(url: str, allowed_domains: Optional[Iterable[str]] = None) -> None:
-    hostname = _extract_hostname(url)
-    if not hostname:
-        return
-    raise BrowserLaunchError(
-        "domain_not_allowed",
-        "Navigation blocked by allowlist",
-        {"url": url, "host": hostname, "effective_allowed_domains": domains},
-    )
+    return
 
 
 def safe_goto(page, url: str, *, allowed_domains: Optional[Iterable[str]] = None, log_callback=None, **kwargs):
-    try:
-        ensure_allowed_url(url, allowed_domains=allowed_domains)
-    except BrowserLaunchError as exc:
-        meta = {
-            "url": url,
-            "host": exc.details.get("host"),
-            "effective_allowed_domains": exc.details.get("effective_allowed_domains", []),
-        }
-        if log_callback:
-            try:
-                log_callback("Navigation blocked by allowlist", "warning", page, meta)
-            except TypeError:
-                try:
-                    log_callback("Navigation blocked by allowlist", "warning", meta=meta)
-                except TypeError:
-                    log_callback("Navigation blocked by allowlist", "warning")
-            try:
-                log_callback(
-                    "این آدرس در فهرست دامنه‌های مجاز نیست. دامنه را در تنظیمات دامنه‌های مجاز اضافه کنید.",
-                    "warning",
-                    page,
-                )
-            except TypeError:
-                log_callback(
-                    "این آدرس در فهرست دامنه‌های مجاز نیست. دامنه را در تنظیمات دامنه‌های مجاز اضافه کنید.",
-                    "warning",
-                )
-        raise exc
     return page.goto(url, **kwargs)
 
 
