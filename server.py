@@ -1,18 +1,21 @@
+# server.py
 import os
 import threading
 import time
 import json
 import asyncio
-import aiosqlite
 import logging
+from collections import deque
+from typing import Deque, Dict, Any, Optional, List
+
+import aiosqlite
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Depends, Header, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
-from collections import deque
-from typing import Deque, Dict, Any, Optional, List
-from database import DBHandler, resource_path
+
+from database import DBHandler, resource_path, DB_PATH  # DB_PATH از database.py شما
 from allowlist import get_allowlist_snapshot, get_allowed_domains, is_url_allowed, normalize_domain_list
 from event_logger import (
     EVENT_BROADCASTER,
@@ -30,7 +33,6 @@ from browser_launcher import (
 )
 from messages_fa import RESPONSES, LOG_MESSAGES, get_message
 
-# ایمپورت ربات‌ها
 from bot_register import RegistrationBot
 from bot_select import BankSelectionBot
 from bot_status import StatusBot
@@ -44,16 +46,14 @@ if not logging.getLogger().handlers:
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # TODO: Restrict origins here when you know the allowed domains.
+    allow_origins=["*"],
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 STATIC_DIR = os.path.join(BASE_DIR, "static")
-if not os.path.exists(STATIC_DIR):
-    os.makedirs(STATIC_DIR)
-
+os.makedirs(STATIC_DIR, exist_ok=True)
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
 DBHandler.init_db()
@@ -61,6 +61,8 @@ MAIN_LOOP: Optional[asyncio.AbstractEventLoop] = None
 CAPTCHA_SERVICE: Optional[CaptchaService] = None
 JOB_QUEUE: Optional["JobQueue"] = None
 
+
+# ------------------------- Helpers -------------------------
 def require_api_key(x_api_key: Optional[str] = Header(None, alias="X-API-KEY")):
     expected_key = os.getenv("MAHANBOT_API_KEY")
     if not expected_key:
@@ -87,39 +89,63 @@ async def log_unhandled_exceptions(request, call_next):
         logger.exception("Unhandled exception on %s %s", request.method, request.url.path)
         raise
 
+
+async def _open_aiosqlite():
+    """
+    برای جلوگیری از 'database is locked' و هماهنگی با DBHandler (sqlite3 sync)
+    """
+    conn = await aiosqlite.connect(DB_PATH, timeout=30)
+    await conn.execute("PRAGMA journal_mode=WAL;")
+    await conn.execute("PRAGMA synchronous=NORMAL;")
+    await conn.execute("PRAGMA busy_timeout=5000;")
+    await conn.execute("PRAGMA foreign_keys=ON;")
+    return conn
+
+
+def _check_uvicorn_ws_backend():
+    has_backend = False
+    try:
+        import websockets  # noqa
+        has_backend = True
+    except Exception:
+        pass
+    try:
+        import wsproto  # noqa
+        has_backend = True
+    except Exception:
+        pass
+    if not has_backend:
+        logger.warning(
+            "WebSocket backend نصب نیست. یکی از اینها را نصب کن: "
+            "`pip install websockets` یا `pip install wsproto` یا `pip install \"uvicorn[standard]\"`"
+        )
+
+
 @app.on_event("startup")
 async def startup_event():
-    """پاکسازی وضعیت‌های گیر کرده هنگام شروع برنامه"""
     global MAIN_LOOP, CAPTCHA_SERVICE, JOB_QUEUE
     MAIN_LOOP = asyncio.get_running_loop()
     set_main_loop(MAIN_LOOP)
+
+    _check_uvicorn_ws_backend()
+
     model, ocr_firewall = load_captcha_resources()
     CAPTCHA_SERVICE = CaptchaService(model=model, ocr_firewall=ocr_firewall)
+
     JOB_QUEUE = JobQueue(max_concurrency=get_max_concurrency())
     JOB_QUEUE.start()
+
+    # Reset stuck statuses
     try:
-        async with aiosqlite.connect(resource_path('cbi_ultimate.db')) as conn:
+        async with await _open_aiosqlite() as conn:
             await conn.execute(
-                "UPDATE applicants SET status='Stopped' WHERE status IN ('Running', 'Selecting', 'Registering', 'Waiting SMS')"
+                "UPDATE applicants SET status='Stopped' "
+                "WHERE status IN ('Running','Selecting','Registering','Waiting SMS')"
             )
             await conn.commit()
     except Exception as e:
-        print(f"Error checking DB on startup: {e}")
+        logger.warning("DB startup reset failed: %s", e)
 
-# --- Models ---
-class ApplicantModel(BaseModel):
-    id: Optional[int] = None
-    full_name: str
-    national_id: str
-    data: Dict[str, Any]
-
-class BankSelectRequest(BaseModel):
-    nid: str
-    loan_type: Optional[str] = None
-
-class SMSRequest(BaseModel):
-    nid: str
-    code: str
 
 def get_captcha_service():
     global CAPTCHA_SERVICE
@@ -127,10 +153,41 @@ def get_captcha_service():
         CAPTCHA_SERVICE = CaptchaService()
     return CAPTCHA_SERVICE
 
-def require_job_queue() -> "JobQueue":
-    if not JOB_QUEUE:
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Job queue not ready")
-    return JOB_QUEUE
+
+def get_max_concurrency() -> int:
+    try:
+        value = int(os.getenv("MAHANBOT_MAX_CONCURRENCY", "2"))
+    except ValueError:
+        value = 2
+    return max(1, value)
+
+
+def load_browser_profile_settings() -> Dict[str, Any]:
+    stored = DBHandler.get_setting("browser_profile") or {}
+    try:
+        return merge_browser_profiles(get_default_browser_profile(), stored)
+    except Exception:
+        return get_default_browser_profile()
+
+
+def save_browser_profile_settings(profile: Dict[str, Any]) -> Dict[str, Any]:
+    normalized = normalize_browser_profile(profile)
+    DBHandler.update_setting("browser_profile", normalized)
+    return normalized
+
+
+# ------------------------- Models -------------------------
+class ApplicantModel(BaseModel):
+    id: Optional[int] = None
+    full_name: str
+    national_id: str
+    data: Dict[str, Any]
+
+
+class SMSRequest(BaseModel):
+    nid: str
+    code: str
+
 
 class JobStartRequest(BaseModel):
     bot_name: str
@@ -149,36 +206,7 @@ class BrowserProfileRequest(BaseModel):
     timeout_ms: Optional[int] = None
 
 
-class AllowedDomainsRequest(BaseModel):
-    domains: List[str]
-
-
-class AllowlistCheckRequest(BaseModel):
-    url: str
-
-
-def load_browser_profile_settings() -> Dict[str, Any]:
-    stored = DBHandler.get_setting("browser_profile") or {}
-    try:
-        return merge_browser_profiles(get_default_browser_profile(), stored)
-    except BrowserLaunchError:
-        return get_default_browser_profile()
-
-
-def save_browser_profile_settings(profile: Dict[str, Any]) -> Dict[str, Any]:
-    normalized = normalize_browser_profile(profile)
-    DBHandler.update_setting("browser_profile", normalized)
-    return normalized
-
-
-def get_max_concurrency() -> int:
-    try:
-        value = int(os.getenv("MAHANBOT_MAX_CONCURRENCY", "2"))
-    except ValueError:
-        value = 2
-    return max(1, value)
-
-
+# ------------------------- Job Queue -------------------------
 class Job:
     def __init__(self, bot_name: str, nid: str, payload: Dict[str, Any]):
         self.id = create_job_id()
@@ -191,7 +219,7 @@ class Job:
         self.finished_at: Optional[float] = None
         self.stop_event = threading.Event()
         self.cancel_requested = False
-        self.error: Optional[str] = None
+        self.error: Optional[Any] = None
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -218,16 +246,16 @@ class JobQueue:
 
     def start(self) -> None:
         for index in range(self._max_concurrency):
-            worker = threading.Thread(target=self._worker_loop, args=(index,), daemon=True)
-            worker.start()
-            self._workers.append(worker)
+            t = threading.Thread(target=self._worker_loop, args=(index,), daemon=True)
+            t.start()
+            self._workers.append(t)
 
     def enqueue(self, bot_name: str, nid: str, payload: Dict[str, Any]) -> Job:
         with self._condition:
             for job in self._jobs.values():
                 if job.bot_name == bot_name and job.nid == nid and job.status in {"queued", "running", "cancelling"}:
                     raise ValueError("duplicate")
-            job = Job(bot_name=bot_name, nid=nid, payload=payload)
+            job = Job(bot_name, nid, payload)
             self._jobs[job.id] = job
             self._queue.append(job.id)
             self._condition.notify()
@@ -246,8 +274,8 @@ class JobQueue:
                     self._queue.remove(job_id)
                 except ValueError:
                     pass
+                job.stop_event.set()
                 job_status_event(job.nid, job.id, "cancelled")
-                log_event(job.nid, job.id, "Job canceled", "warning")
                 return job
             if job.status in {"running", "cancelling"}:
                 job.cancel_requested = True
@@ -255,32 +283,16 @@ class JobQueue:
                 if job.status != "cancelling":
                     job.status = "cancelling"
                     job_status_event(job.nid, job.id, "cancelling")
-                    log_event(job.nid, job.id, "Job cancel requested", "warning")
                 return job
             return job
 
-    def cancel_by_nid(self, nid: str) -> int:
-        cancelled = 0
-        for job in self.list_jobs():
-            if job["nid"] == nid and job["status"] in {"queued", "running", "cancelling"}:
-                if self.cancel(job["id"]):
-                    cancelled += 1
-        return cancelled
+    def list_jobs(self) -> list[Dict[str, Any]]:
+        with self._lock:
+            return [j.to_dict() for j in self._jobs.values()]
 
     def get(self, job_id: str) -> Optional[Job]:
         with self._lock:
             return self._jobs.get(job_id)
-
-    def list_jobs(self) -> list[Dict[str, Any]]:
-        with self._lock:
-            return [job.to_dict() for job in self._jobs.values()]
-
-    def is_nid_active(self, nid: str) -> bool:
-        with self._lock:
-            return any(
-                job.nid == nid and job.status in {"queued", "running", "cancelling"}
-                for job in self._jobs.values()
-            )
 
     def _worker_loop(self, worker_id: int) -> None:
         while True:
@@ -291,167 +303,69 @@ class JobQueue:
                 job = self._jobs.get(job_id)
                 if not job or job.status != "queued":
                     continue
-                if job.stop_event.is_set() or job.cancel_requested:
-                    job.status = "cancelled"
-                    job.finished_at = time.time()
-                    job_status_event(job.nid, job.id, "cancelled")
-                    continue
                 job.status = "running"
                 job.started_at = time.time()
+
             job_status_event(job.nid, job.id, "running")
             log_event(job.nid, job.id, f"Job started ({job.bot_name})", "info")
-            outcome_status = "stopped"
-            error_message = None
-            error_payload: Any = None
+
             try:
                 self._run_job(job)
                 if job.cancel_requested:
-                    outcome_status = "cancelled"
-            except Exception as e:
-                if hasattr(e, "to_dict"):
-                    error_payload = e.to_dict()
-                    error_message = error_payload.get("message") or str(e)
+                    job.status = "cancelled"
                 else:
-                    error_message = str(e)
-                    error_payload = error_message
-                job.error = error_payload
-                log_event(
-                    job.nid,
-                    job.id,
-                    f"خطا: {error_message}",
-                    "error",
-                    meta=error_payload if isinstance(error_payload, dict) else None,
-                )
-                outcome_status = "failed"
+                    job.status = "stopped"
+            except Exception as e:
+                job.status = "failed"
+                job.error = str(e)
+                log_event(job.nid, job.id, f"خطا: {e}", "error")
             finally:
-                with self._lock:
-                    job.status = outcome_status
-                    job.finished_at = time.time()
-                detail = error_message if outcome_status == "failed" else None
-                job_status_event(job.nid, job.id, outcome_status, detail=detail)
-                log_event(job.nid, job.id, f"Job {outcome_status}", "info")
+                job.finished_at = time.time()
+                job_status_event(job.nid, job.id, job.status)
 
     def _run_job(self, job: Job) -> None:
         settings = DBHandler.get_config()
         base_profile = load_browser_profile_settings()
         override = job.payload.get("browser_profile_override")
-        try:
-            browser_profile = merge_browser_profiles(base_profile, override)
-        except BrowserLaunchError as exc:
-            raise ValueError(exc.message)
+        browser_profile = merge_browser_profiles(base_profile, override)
+
         captcha_service = get_captcha_service()
         log_callback = build_log_callback(job.id)
+
         if job.bot_name == "register":
-            bot = RegistrationBot(
-                job.nid,
-                settings,
-                log_callback=log_callback,
-                captcha_service=captcha_service,
-                browser_profile=browser_profile,
-            )
-            bot.run(job.stop_event)
-            log_event(job.nid, job.id, "ربات متوقف شد", "stopped")
+            RegistrationBot(job.nid, settings, log_callback, captcha_service, browser_profile).run(job.stop_event)
         elif job.bot_name == "select":
-            loan_type = job.payload.get("loan_type")
-            bot = BankSelectionBot(
-                job.nid,
-                settings,
-                log_callback=log_callback,
-                captcha_service=captcha_service,
-                browser_profile=browser_profile,
+            BankSelectionBot(job.nid, settings, log_callback, captcha_service, browser_profile).run(
+                job.stop_event, job.payload.get("loan_type")
             )
-            bot.run(job.stop_event, loan_type)
-            log_event(job.nid, job.id, "ربات متوقف شد", "stopped")
         elif job.bot_name == "status":
-            bot = StatusBot(
-                job.nid,
-                settings,
-                log_callback=log_callback,
-                captcha_service=captcha_service,
-                browser_profile=browser_profile,
-            )
-            bot.run(job.stop_event)
-            log_event(job.nid, job.id, "عملیات پایان یافت", "stopped")
+            StatusBot(job.nid, settings, log_callback, captcha_service, browser_profile).run(job.stop_event)
         else:
             raise ValueError("Unsupported bot name")
 
-# --- Routes ---
-@app.post("/jobs/start")
-def start_job(req: JobStartRequest, _: bool = Depends(require_api_key)):
-    queue = require_job_queue()
-    bot_name = req.bot_name.lower()
-    if bot_name not in {"register", "select", "status"}:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Unsupported bot name")
-    if bot_name == "select" and not req.loan_type:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=get_message("responses", "loan_type_required", RESPONSES["loan_type_required"]),
-        )
-    if bot_name == "status":
-        user = DBHandler.get_applicant(req.nid)
-        if not user:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=get_message("responses", "user_not_found", RESPONSES["user_not_found"]),
-            )
-    payload: Dict[str, Any] = {}
-    if req.loan_type:
-        payload["loan_type"] = req.loan_type
-    if req.browser_profile_override:
-        try:
-            payload["browser_profile_override"] = normalize_browser_profile(req.browser_profile_override)
-        except BrowserLaunchError as exc:
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=exc.to_dict())
-    try:
-        job = queue.enqueue(bot_name, req.nid, payload)
-    except ValueError:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Job already queued or running")
-    return {"status": "queued", "job": job.to_dict()}
 
-@app.post("/jobs/cancel/{job_id}")
-def cancel_job(job_id: str, _: bool = Depends(require_api_key)):
-    queue = require_job_queue()
-    job = queue.cancel(job_id)
-    if not job:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found")
-    return {"status": job.status, "job": job.to_dict()}
-
-@app.get("/jobs")
-def list_jobs(_: bool = Depends(require_api_key)):
-    queue = require_job_queue()
-    jobs = sorted(queue.list_jobs(), key=lambda item: item["created_at"], reverse=True)
-    return {"jobs": jobs}
-
-@app.get("/jobs/{job_id}")
-def get_job(job_id: str, _: bool = Depends(require_api_key)):
-    queue = require_job_queue()
-    job = queue.get(job_id)
-    if not job:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found")
-    return {"job": job.to_dict()}
-
+# ------------------------- UI Routes -------------------------
 @app.get("/")
 def serve_index():
     index_path = os.path.join(STATIC_DIR, "index.html")
     if os.path.exists(index_path):
-        with open(index_path, "r", encoding="utf-8") as f: return HTMLResponse(content=f.read())
-    return HTMLResponse("Error: index.html not found in static folder")
+        with open(index_path, "r", encoding="utf-8") as f:
+            return HTMLResponse(content=f.read())
+    return HTMLResponse("index.html not found")
 
+
+# ✅ داشبورد شما این endpoint را لازم دارد
 @app.get("/applicants")
 def get_applicants():
-    apps = DBHandler.get_all_applicants()
-    for app_data in apps:
-        if JOB_QUEUE:
-            app_data['is_active'] = JOB_QUEUE.is_nid_active(app_data['national_id'])
-        else:
-            app_data['is_active'] = False
-    return apps
+    return DBHandler.get_all_applicants()
 
+
+# ✅ ذخیره متقاضی
 @app.post("/applicants")
 async def save_applicant(req: ApplicantModel):
     try:
-        d_str = json.dumps(req.data)
-        async with aiosqlite.connect(resource_path('cbi_ultimate.db')) as conn:
+        d_str = json.dumps(req.data, ensure_ascii=False)
+        async with await _open_aiosqlite() as conn:
             if req.id:
                 await conn.execute(
                     "UPDATE applicants SET full_name=?, national_id=?, data=? WHERE id=?",
@@ -464,73 +378,24 @@ async def save_applicant(req: ApplicantModel):
                 )
             await conn.commit()
         return {"status": "ok"}
-    except Exception as e: return {"status": "error", "msg": str(e)}
+    except Exception as e:
+        return {"status": "error", "msg": str(e)}
 
+
+# ✅ حذف متقاضی
 @app.delete("/applicants/{nid}")
 async def delete_applicant(nid: str, _: bool = Depends(require_api_key)):
-    if JOB_QUEUE:
-        JOB_QUEUE.cancel_by_nid(nid)
-    async with aiosqlite.connect(resource_path('cbi_ultimate.db')) as conn:
+    async with await _open_aiosqlite() as conn:
         await conn.execute("DELETE FROM applicants WHERE national_id=?", (nid,))
         await conn.commit()
     return {"status": "deleted"}
 
-@app.post("/receive_sms")
-def rec_sms(req: SMSRequest):
-    if DBHandler.save_otp(req.nid, req.code):
-        log_event(req.nid, None, f"پیامک: {req.code}", "success")
-        return {"status": "ok"}
-    return {"status": "error"}
 
-@app.get("/settings")
-def get_settings():
-    return DBHandler.get_config()
-
-@app.post("/settings")
-def update_settings(payload: Dict[str, Any]):
-    current = DBHandler.get_config()
-    current.update(payload)
-    DBHandler.update_config(current)
-    return {"status": "ok", "settings": current}
-
-
-@app.get("/settings/allowed-domains")
-def get_allowed_domains_settings():
-    return get_allowlist_snapshot()
-
-
-@app.put("/settings/allowed-domains")
-def update_allowed_domains(req: AllowedDomainsRequest):
-    normalized, invalid = normalize_domain_list(req.domains)
-    if invalid:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail={
-                "code": "INVALID_ALLOWED_DOMAINS",
-                "message": "One or more domains are invalid.",
-                "details": {"invalid_domains": invalid},
-            },
-        )
-    DBHandler.update_setting("allowed_domains", normalized)
-    return get_allowlist_snapshot()
-
-
-@app.post("/settings/allowed-domains/check")
-def check_allowed_domains(req: AllowlistCheckRequest):
-    allowed, host, effective = is_url_allowed(req.url, allowed_domains=get_allowed_domains())
-    if not host:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail={
-                "code": "INVALID_URL",
-                "message": "URL must include a hostname.",
-            },
-        )
-    return {"allowed": allowed, "host": host, "effective_allowed_domains": effective}
-
+# ✅ این endpoint را داشبورد شما لازم دارد
 @app.get("/settings/browser-profile")
 def get_browser_profile():
     return load_browser_profile_settings()
+
 
 @app.put("/settings/browser-profile")
 def update_browser_profile(req: BrowserProfileRequest):
@@ -539,129 +404,35 @@ def update_browser_profile(req: BrowserProfileRequest):
         merged = merge_browser_profiles(load_browser_profile_settings(), data)
     except BrowserLaunchError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=exc.to_dict())
-    saved = save_browser_profile_settings(merged)
-    return saved
+    return save_browser_profile_settings(merged)
 
-@app.post("/browser/test-launch")
-def test_browser_launch(req: Optional[BrowserProfileRequest] = None):
-    profile = load_browser_profile_settings()
-    if req:
-        override = req.dict(exclude_unset=True)
-        try:
-            profile = merge_browser_profiles(profile, override)
-        except BrowserLaunchError as exc:
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=exc.to_dict())
-    from browser_launcher import close_browser, ensure_allowed_url, launch_browser
 
-    target_url = "http://127.0.0.1:8000/static/test.html"
-    try:
-        ensure_allowed_url(target_url)
-    except BrowserLaunchError as exc:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=exc.to_dict())
-    playwright = None
-    browser = None
-    context = None
-    page = None
-    try:
-        playwright, browser, context, page = launch_browser(profile)
-        page.goto(target_url, wait_until="load")
-        return {"status": "ok"}
-    except BrowserLaunchError as exc:
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=exc.to_dict())
-    finally:
-        close_browser(playwright, browser, context, page)
-
-@app.post("/bot/start-register/{nid}")
-def start_reg(nid: str, _: bool = Depends(require_api_key)):
+@app.post("/jobs/start")
+def start_job(req: JobStartRequest, _: bool = Depends(require_api_key)):
     if not JOB_QUEUE:
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Job queue not ready")
-    try:
-        job = JOB_QUEUE.enqueue("register", nid, {})
-    except ValueError:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Job already queued or running")
-    return {"status": "queued", "job_id": job.id}
+        raise HTTPException(status_code=500, detail="Job queue not ready")
 
-@app.post("/bot/start-select")
-def start_sel(req: BankSelectRequest, _: bool = Depends(require_api_key)):
-    nid = req.nid
+    payload: Dict[str, Any] = {}
+    if req.loan_type:
+        payload["loan_type"] = req.loan_type
+    if req.browser_profile_override:
+        payload["browser_profile_override"] = normalize_browser_profile(req.browser_profile_override)
+
+    job = JOB_QUEUE.enqueue(req.bot_name.lower(), req.nid, payload)
+    return {"status": "queued", "job": job.to_dict()}
+
+
+@app.post("/jobs/cancel/{job_id}")
+def cancel_job(job_id: str, _: bool = Depends(require_api_key)):
     if not JOB_QUEUE:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=get_message("responses", "job_queue_not_ready", RESPONSES["job_queue_not_ready"]),
-        )
-    try:
-        loan_type = req.loan_type or "rbtnNaghdi"
-        job = JOB_QUEUE.enqueue("select", nid, {"loan_type": loan_type})
-    except ValueError:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail=get_message("responses", "job_already_running", RESPONSES["job_already_running"]),
-        )
-    return {"status": "queued", "job_id": job.id}
+        raise HTTPException(status_code=500, detail="Job queue not ready")
+    job = JOB_QUEUE.cancel(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+    return {"status": job.status, "job": job.to_dict()}
 
-@app.post("/bot/stop/{nid}")
-def stop_bot(nid: str, _: bool = Depends(require_api_key)):
-    if JOB_QUEUE:
-        cancelled = JOB_QUEUE.cancel_by_nid(nid)
-        if cancelled:
-            log_event(nid, None, "توقف...", "stopping")
-        else:
-            DBHandler.update_status(nid, "Stopped", "Force Stop")
-    else:
-        DBHandler.update_status(nid, "Stopped", "Force Stop")
-    return {"status": "stopped"}
 
-@app.post("/bot/action/view-status/{nid}")
-def action_view_status(nid: str, _: bool = Depends(require_api_key)):
-    if not JOB_QUEUE:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=get_message("responses", "job_queue_not_ready", RESPONSES["job_queue_not_ready"]),
-        )
-    user = DBHandler.get_applicant(nid)
-    if not user:
-        return {"status": "error", "message": get_message("responses", "user_not_found", RESPONSES["user_not_found"])}
-    
-    try:
-        raw_data = user["data"]
-        if isinstance(raw_data, str):
-            data = json.loads(raw_data)
-        elif isinstance(raw_data, dict):
-            data = raw_data
-        else:
-            data = {}
-        if not data.get('tracking_code'):
-            return {
-                "status": "error",
-                "message": get_message("responses", "tracking_code_missing", RESPONSES["tracking_code_missing"]),
-            }
-    except Exception as exc:
-        logger.warning("Invalid user data for %s: %s", nid, exc)
-        return {"status": "error", "message": get_message("responses", "invalid_data", RESPONSES["invalid_data"])}
-    try:
-        job = JOB_QUEUE.enqueue("status", nid, {})
-    except ValueError:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail=get_message("responses", "job_already_running", RESPONSES["job_already_running"]),
-        )
-    return {
-        "status": "queued",
-        "job_id": job.id,
-        "message": get_message("responses", "status_job_queued", RESPONSES["status_job_queued"]),
-    }
-
-@app.post("/bot/action/delete-request/{nid}")
-def action_delete_request(nid: str, _: bool = Depends(require_api_key)):
-    log_event(nid, None, "حذف درخواست (هنوز پیاده‌سازی نشده)", "warning")
-    return {"status": "ok"}
-
-@app.post("/bot/action/recover-code/{nid}")
-def action_recover_code(nid: str):
-    log_event(nid, None, "بازیابی کد (هنوز پیاده‌سازی نشده)", "info")
-    return {"status": "ok"}
-
-# --- WebSocket Endpoint (اصلاح شده) ---
+# ✅ WebSocket پایدار (بدون اسپم لاگ)
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
     await EVENT_BROADCASTER.connect(websocket)
@@ -669,14 +440,22 @@ async def websocket_endpoint(websocket: WebSocket):
         while True:
             await websocket.receive_text()
     except WebSocketDisconnect:
-        EVENT_BROADCASTER.disconnect(websocket)
+        pass
     except ConnectionResetError:
-        logger.debug("WebSocket connection reset by peer")
-        EVENT_BROADCASTER.disconnect(websocket)
+        # قطع ناگهانی مرورگر/کلاینت
+        pass
+    except RuntimeError:
+        # shutdown / close mid-await
+        pass
     except Exception:
+        # جلوگیری از اسپم
+        pass
+    finally:
         EVENT_BROADCASTER.disconnect(websocket)
+
 
 if __name__ == "__main__":
     import uvicorn
-    # اجرا روی پورت 8000
-    uvicorn.run(app, host="127.0.0.1", port=8000)
+    # پیشنهاد بهتر:
+    # uvicorn server:app --host 127.0.0.1 --port 8000 --reload
+    uvicorn.run("server:app", host="127.0.0.1", port=8000, reload=False)

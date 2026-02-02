@@ -1,3 +1,4 @@
+# bot_status.py
 import time
 import json
 import re
@@ -15,6 +16,20 @@ from captcha_service import CaptchaService
 from errors import JobRunError
 
 
+TARGET_URL = "https://ve.cbi.ir/TasTrace.aspx"
+
+
+def sleep_with_stop(stop_event, seconds: float, step: float = 0.2) -> bool:
+    if seconds <= 0:
+        return stop_event.is_set()
+    end = time.time() + seconds
+    while time.time() < end:
+        if stop_event.is_set():
+            return True
+        time.sleep(min(step, end - time.time()))
+    return stop_event.is_set()
+
+
 class StatusBot:
     def __init__(self, nid, settings, log_callback=None, captcha_service=None, browser_profile=None):
         self.nid = nid
@@ -25,11 +40,9 @@ class StatusBot:
         self.user_data = self._load_user_data()
         self.captcha_service = captcha_service or CaptchaService()
 
-        # جلوگیری از خروجی تکراری
         self.saved_receipt = False
         self.last_site_msg = None
 
-        # مسیر ذخیره رسید (کنار همین فایل)
         self.base_dir = os.path.dirname(os.path.abspath(__file__))
         self.save_dir = os.path.join(self.base_dir, "مشاهده_وضعیت")
         os.makedirs(self.save_dir, exist_ok=True)
@@ -39,7 +52,7 @@ class StatusBot:
         if user and user.get("data"):
             try:
                 return json.loads(user["data"])
-            except:
+            except Exception:
                 return {}
         return {}
 
@@ -63,21 +76,13 @@ class StatusBot:
     def _log_for_safe_goto(self, message, level="warning", page=None, meta=None):
         self.log_msg(message, level, meta)
 
-    # -----------------------------------------------------------
-    # 🔥 ابزارهای کمکی
-    # -----------------------------------------------------------
-
     def safe_visible(self, locator):
-        """ایمن‌ترین روش برای چک visible بودن بدون اینکه exception بیاد"""
         try:
             return locator.count() > 0 and locator.is_visible()
-        except:
+        except Exception:
             return False
 
     def wait_for_any_success_indicator(self, page, timeout=7000):
-        """
-        منتظر می‌ماند تا یکی از نشانه‌های صفحه‌ی موفقیت دیده شود (بدون نیاز به Refresh)
-        """
         success_indicators = [
             "استعلام آخرین وضعیت ثبت درخواست",
             "جایگاه در صف انتظار",
@@ -87,39 +92,32 @@ class StatusBot:
 
         start = time.time()
         while (time.time() - start) * 1000 < timeout:
+            if page.is_closed():
+                return False
+            if sleep_with_stop(self._stop_event, 0.3):
+                return False
             try:
-                if page.is_closed():
-                    return False
-                page.wait_for_timeout(300)
                 body_text = page.inner_text("body")
                 if any(x in body_text for x in success_indicators):
                     return True
-            except:
+            except Exception:
                 pass
         return False
 
     def get_site_message(self, page):
-        """پیام خطای سایت از lblMessage"""
         try:
             lbl_msg = page.locator("span[id*='lblMessage']")
             if self.safe_visible(lbl_msg):
                 msg_text = lbl_msg.inner_text().strip()
                 if msg_text:
                     return msg_text
-        except:
+        except Exception:
             pass
         return ""
 
-    # -----------------------------------------------------------
-    # 🛡️ حل فایروال
-    # -----------------------------------------------------------
-
     def solve_firewall_if_exists(self, page):
-        """
-        حل کپچای ثانویه (فایروال) در صورت وجود
-        """
         try:
-            if page.is_closed():
+            if page.is_closed() or self._stop_event.is_set():
                 return False
 
             ans = page.locator("#ans")
@@ -137,15 +135,10 @@ class StatusBot:
                     if solved_code:
                         self.log_msg(f"کد فایروال: {solved_code}", "info")
                         ans.fill(solved_code)
-
-                        # دکمه تایید فایروال
                         page.click("#jar")
-
-                        # اینجا مهمه: به جای networkidle، کوتاه صبر + چک محتوا
                         page.wait_for_timeout(800)
                         return True
                     else:
-                        # اگر حل نشد، یک reload نرم
                         page.reload()
                         return False
 
@@ -154,22 +147,14 @@ class StatusBot:
 
         return False
 
-    # -----------------------------------------------------------
-    # ✅ تشخیص موفقیت + ذخیره رسید
-    # -----------------------------------------------------------
-
     def check_success_and_save(self, page):
-        """
-        بررسی ورود موفق و ذخیره اسکرین‌شات در پوشه
-        """
         try:
-            if page.is_closed():
+            if page.is_closed() or self._stop_event.is_set():
                 return False, ""
 
-            # اطمینان از آماده بودن DOM
             try:
                 page.wait_for_load_state("domcontentloaded", timeout=5000)
-            except:
+            except Exception:
                 pass
 
             body_text = page.inner_text("body")
@@ -185,13 +170,11 @@ class StatusBot:
             if not is_logged_in:
                 return False, ""
 
-            # استخراج اطلاعات
             info_text = ""
             match_state = re.search(r"صف انتظار.*?استان\s*:\s*(\d+)", body_text, re.S)
             if match_state:
                 info_text += f" | نوبت استان: {match_state.group(1)}"
 
-            # جلوگیری از ذخیره‌ی چندباره
             if self.saved_receipt:
                 return True, info_text
 
@@ -208,16 +191,11 @@ class StatusBot:
         except Exception:
             return False, ""
 
-    # -----------------------------------------------------------
-    # 🚀 ارسال فرم (کپچا + کلیک) با انتظار صحیح
-    # -----------------------------------------------------------
-
     def submit_form_with_captcha(self, page, tracking_code):
-        """
-        کپچا را حل می‌کند، فرم را submit می‌کند
-        و به جای رفرش، منتظر نشانه‌ی موفقیت می‌ماند.
-        """
         try:
+            if self._stop_event.is_set():
+                return False
+
             captcha_input = page.locator("input[name='ctl00$ContentPlaceHolder1$tbCaptcha1']")
             nid_input = page.locator("input[name='ctl00$ContentPlaceHolder1$tbIDNo']")
             track_input = page.locator("input[name='ctl00$ContentPlaceHolder1$tbTraceCD']")
@@ -227,122 +205,66 @@ class StatusBot:
             if not self.safe_visible(captcha_input):
                 return False
 
-            # Fill nid + tracking code فقط اگر خالی‌اند
             try:
                 if not nid_input.input_value():
                     nid_input.fill(self.nid)
-            except:
+            except Exception:
                 nid_input.fill(self.nid)
 
             try:
                 if not track_input.input_value():
                     track_input.fill(tracking_code)
-            except:
+            except Exception:
                 track_input.fill(tracking_code)
 
-            # اگر کپچا از قبل پر شده، دوباره حل نکن
             try:
                 current_captcha_val = captcha_input.input_value()
-            except:
+            except Exception:
                 current_captcha_val = ""
 
             if current_captcha_val.strip():
                 return False
 
-            # صبر برای لود کامل تصویر کپچا
             try:
                 captcha_img.wait_for(state="visible", timeout=7000)
-            except:
+            except Exception:
                 return False
 
             page.wait_for_timeout(300)
-            captcha_bytes = captcha_img.screenshot()
+            if self._stop_event.is_set():
+                return False
 
-            solved_code = self.captcha_service.solve(captcha_bytes, mode="general")
-            if not solved_code:
-                # Reload captcha image
+            captcha_bytes = captcha_img.screenshot()
+            solved = self.captcha_service.solve(captcha_bytes, mode="general")
+            if not solved or len(str(solved).strip()) < 4:
                 try:
-                    page.locator("a[href*='ReloadImage']").click()
-                except:
+                    page.locator(".BDC_ReloadLink").first.click()
+                except Exception:
                     pass
                 return False
 
-            self.log_msg(f"کپچا حل شد: {solved_code}", "info")
-            captcha_input.fill(solved_code)
+            captcha_input.fill(str(solved).strip())
+            btn_trace.click()
 
-            # ⭐ نکته کلیدی:
-            # بعد از کلیک، بجای networkidle منتظر یکی از این‌ها می‌مانیم:
-            # 1) تغییر صفحه
-            # 2) یا ظهور نشانه‌های موفقیت
-            # 3) یا پیام lblMessage
+            # Wait a bit, then next loop will check success indicators
+            page.wait_for_timeout(500)
+            return True
 
-            page.wait_for_timeout(250)
-
-            # کلیک روی دکمه مشاهده وضعیت
-            try:
-                with page.expect_response(lambda r: "TasTrace" in r.url or "Trace" in r.url, timeout=5000):
-                    btn_trace.click()
-            except:
-                # اگر response نشد، فقط کلیک کن
-                try:
-                    btn_trace.click()
-                except:
-                    return False
-
-            # کمی صبر برای رندر شدن نتیجه
-            page.wait_for_timeout(700)
-
-            # اگر موفقیت سریع ظاهر شود:
-            if self.wait_for_any_success_indicator(page, timeout=7000):
-                return True
-
-            # اگر پیام خطا آمد
-            msg_text = self.get_site_message(page)
-            if msg_text:
-                if msg_text != self.last_site_msg:
-                    self.last_site_msg = msg_text
-                    self.log_msg(f"⚠️ پیام سایت: {msg_text}", "warning")
-
-                # اگر کد امنیتی اشتباه بود، پاک کن تا دوباره حل شود
-                if "کد امنیتی" in msg_text:
-                    try:
-                        captcha_input.fill("")
-                    except:
-                        pass
-
-                return False
-
-            # اگر نه موفقیت نه خطا… یعنی سایت نتیجه را نیاورده → یک retry منطقی
-            # این همان جایی است که قبلاً شما Refresh دستی می‌کردید.
-            self.log_msg("⏳ کپچا ارسال شد اما نتیجه نیامد؛ تلاش مجدد بدون Refresh دستی...", "warning")
-
-            # یک بار reload سبک (نه refresh دستی کاربر) برای دریافت نتیجه
-            try:
-                page.reload()
-                page.wait_for_timeout(1000)
-            except:
-                pass
-
+        except Exception:
             return False
-
-        except Exception as e:
-            self.log_msg(f"submit_form_with_captcha error: {e}", "warning")
-            return False
-
-    # -----------------------------------------------------------
-    # 🧠 اجرای اصلی
-    # -----------------------------------------------------------
 
     def run(self, stop_event):
         playwright = None
         browser = None
         context = None
         page = None
+        self._stop_event = stop_event
 
         try:
             playwright, browser, context, page = launch_browser(self.browser_profile)
             self._wrap_page_navigation(page)
             open_healthcheck_page(page, log_callback=self._log_for_safe_goto)
+
             tracking_code = self.user_data.get("tracking_code")
             if not tracking_code:
                 error = JobRunError(
@@ -354,9 +276,15 @@ class StatusBot:
                 raise error
 
             self.log_msg(f"شروع استعلام برای: {tracking_code}", "info")
-            self.log_msg("باز کردن سایت...", "info")
 
-            # برای اینکه سریع‌تر باشه
+            # ✅ DIRECT NAVIGATION (must happen immediately)
+            try:
+                page.goto(TARGET_URL, timeout=60000, wait_until="domcontentloaded")
+            except Exception:
+                if sleep_with_stop(stop_event, 1.0):
+                    return
+                page.goto(TARGET_URL, timeout=60000, wait_until="domcontentloaded")
+
             page.set_default_timeout(15000)
 
             while not stop_event.is_set():
@@ -365,38 +293,40 @@ class StatusBot:
                         self.log_msg("مرورگر توسط کاربر بسته شد.", "stopped")
                         break
 
-                    # اگر صفحه روی مقصد نیست برو
-                    current_url = page.url
-                    if "TasTrace" not in current_url and "Trace" not in current_url:
+                    # Keep on target
+                    current_url = page.url or ""
+                    if "TasTrace.aspx" not in current_url:
                         try:
-                            page.goto("https://ve.cbi.ir/TasTrace.aspx", timeout=30000)
+                            page.goto(TARGET_URL, timeout=30000, wait_until="domcontentloaded")
                             page.wait_for_timeout(500)
                         except PlaywrightError as e:
                             if "Target closed" in str(e):
                                 raise e
                             self.log_msg("⚠️ مشکل اینترنت. تلاش مجدد...", "warning")
-                            time.sleep(3)
+                            if sleep_with_stop(stop_event, 3):
+                                break
                             continue
 
-                    # 1) فایروال
+                    if stop_event.is_set():
+                        break
+
                     if self.solve_firewall_if_exists(page):
-                        time.sleep(1)
+                        if sleep_with_stop(stop_event, 1):
+                            break
                         continue
 
-                    # 2) اگر موفقیت و صفحه وضعیت آمد
                     is_success, extracted_info = self.check_success_and_save(page)
                     if is_success:
                         self.log_msg(f"✅ موفقیت! {extracted_info}", "success")
                         self.log_msg("🎉 رسید ذخیره شد و عملیات پایان یافت.", "success")
-
-                        # منتظر بماند تا stop یا بستن مرورگر
+                        # wait until stop or user closes browser
                         while not stop_event.is_set():
                             if page.is_closed():
                                 break
-                            time.sleep(1)
+                            if sleep_with_stop(stop_event, 1):
+                                break
                         break
 
-                    # 3) پیام سایت
                     msg_text = self.get_site_message(page)
                     if msg_text and msg_text != self.last_site_msg:
                         self.last_site_msg = msg_text
@@ -404,29 +334,33 @@ class StatusBot:
 
                         if "یافت نشد" in msg_text:
                             self.log_msg("⛔ اطلاعات اشتباه است.", "error")
-                            time.sleep(2)
+                            if sleep_with_stop(stop_event, 2):
+                                break
                             break
 
                         if "در دسترس نمی باشد" in msg_text:
-                            page.reload()
+                            try:
+                                page.reload()
+                            except Exception:
+                                pass
                             continue
 
-                    # 4) حل کپچا و submit فرم (با انتظار صحیح، بدون نیاز به refresh دستی)
                     submitted = self.submit_form_with_captcha(page, tracking_code)
                     if submitted:
-                        # اگر submit گفت موفق شد، دور بعد check_success می‌گیره و ذخیره می‌کنه
-                        time.sleep(1)
+                        if sleep_with_stop(stop_event, 1):
+                            break
                         continue
 
-                    time.sleep(1)
+                    if sleep_with_stop(stop_event, 1):
+                        break
 
                 except PlaywrightError as pe:
                     if "Target closed" in str(pe):
                         self.log_msg("مرورگر بسته شد.", "stopped")
                         break
-                    else:
-                        self.log_msg(f"خطای موقت: {pe}", "warning")
-                        time.sleep(2)
+                    self.log_msg(f"خطای موقت: {pe}", "warning")
+                    if sleep_with_stop(stop_event, 2):
+                        break
 
                 except BrowserLaunchError as exc:
                     self.log_msg(f"خطا در مرورگر: {exc.message}", "error")
@@ -434,7 +368,8 @@ class StatusBot:
 
                 except Exception as e:
                     self.log_msg(f"خطای غیرمنتظره: {e}", "error")
-                    time.sleep(2)
+                    if sleep_with_stop(stop_event, 2):
+                        break
 
         except JobRunError:
             pass
@@ -442,7 +377,6 @@ class StatusBot:
             self.log_msg(f"Error: {exc.message}", "error")
         except Exception as e:
             self.log_msg(f"Error: {e}", "error")
-
         finally:
             close_browser(playwright, browser, context, page)
             self.log_msg("پایان عملیات.", "stopped")

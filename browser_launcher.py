@@ -1,14 +1,30 @@
+# browser_launcher.py
 import os
 from pathlib import Path
 from typing import Any, Dict, Iterable, Optional, Tuple
+from urllib.parse import urlsplit, urlunsplit
 
 from playwright.sync_api import sync_playwright
+
+from allowlist import is_url_allowed, get_allowed_domains
 
 ALLOWED_BROWSERS = {"chromium", "firefox", "webkit"}
 DEFAULT_TIMEOUT_MS = 30000
 DEFAULT_VIEWPORT = {"width": 1280, "height": 720}
 PROFILE_ROOT = Path(os.getenv("MAHANBOT_PROFILE_ROOT", Path.cwd() / "browser_profiles")).resolve()
 DEFAULT_HEALTHCHECK_URL = "http://127.0.0.1:8000/static/healthcheck.html"
+
+# Hardcoded never-block allowlist (exact URLs requested)
+HARD_ALLOWED_URLS = {
+    "https://ve.cbi.ir/Register.aspx",
+    "https://ve.cbi.ir/SelectBnkShb.aspx",
+    "https://ve.cbi.ir/SelEditCase.aspx",
+    "https://ve.cbi.ir/EditShb.aspx",
+    "https://ve.cbi.ir/TasReqDelete.aspx",
+    "https://ve.cbi.ir/TasTrace.aspx",
+    "https://ve.cbi.ir/GetTraceCD.aspx",
+    "https://ve.cbi.ir/DefaultVE.aspx",
+}
 
 
 class BrowserLaunchError(Exception):
@@ -32,6 +48,10 @@ def get_default_browser_profile() -> Dict[str, Any]:
         "proxy": None,
         "timeout_ms": DEFAULT_TIMEOUT_MS,
     }
+
+
+def get_healthcheck_url() -> str:
+    return os.getenv("MAHANBOT_HEALTHCHECK_URL", DEFAULT_HEALTHCHECK_URL)
 
 
 def _resolve_user_data_dir(user_data_dir: Optional[str]) -> Optional[str]:
@@ -129,12 +149,118 @@ def merge_browser_profiles(base: Dict[str, Any], override: Optional[Dict[str, An
     return normalize_browser_profile(merged)
 
 
+def _normalize_url(url: str) -> str:
+    """
+    QA-friendly normalizer:
+    - Accepts bare host like 've.cbi.ir' -> 'https://ve.cbi.ir'
+    - Keeps path/query/fragment intact
+    - Lowercases scheme + hostname for consistent comparisons
+    """
+    if not isinstance(url, str):
+        raise BrowserLaunchError("invalid_url", "URL must be a string", {"received_type": str(type(url))})
+    raw = url.strip()
+    if not raw:
+        raise BrowserLaunchError("invalid_url", "URL is empty")
+
+    parts = urlsplit(raw)
+
+    # If no scheme, assume https for navigation
+    if not parts.scheme:
+        parts = urlsplit("https://" + raw.lstrip("/"))
+
+    scheme = (parts.scheme or "https").lower()
+    hostname = (parts.hostname or "").lower()
+
+    netloc = parts.netloc
+    if hostname:
+        # rebuild netloc using normalized hostname + original port if present
+        port = parts.port
+        if port:
+            netloc = f"{hostname}:{port}"
+        else:
+            netloc = hostname
+
+    normalized = urlunsplit((scheme, netloc, parts.path or "", parts.query or "", parts.fragment or ""))
+    return normalized
+
+
+def _canonical_for_allowlist(url: str) -> str:
+    """
+    Canonical form for comparing to HARD_ALLOWED_URLS:
+    - scheme https
+    - lowercase hostname
+    - exact path (case-sensitive)
+    - no query/fragment
+    """
+    normalized = _normalize_url(url)
+    parts = urlsplit(normalized)
+    scheme = "https"
+    hostname = (parts.hostname or "").lower()
+    path = parts.path or ""
+    return urlunsplit((scheme, hostname, path, "", ""))
+
+
+def ensure_allowed_url(url: str, allowed_domains: Optional[Iterable[str]] = None) -> None:
+    """
+    Robust allow check:
+    - Always extracts hostname reliably from ANY URL-like input.
+    - Never blocks the HARD_ALLOWED_URLS list (exact allowlist requested).
+    - Otherwise respects allowed_domains (db/env) if provided/available.
+    """
+    normalized = _normalize_url(url)
+    canonical = _canonical_for_allowlist(normalized)
+
+    # 1) Hard allow (never block)
+    if canonical in HARD_ALLOWED_URLS:
+        return
+
+    # 2) If caller provided an allowlist, use it; otherwise use the global allowlist,
+    #    but make sure ve.cbi.ir is always allowed (to prevent internal self-blocks).
+    domains = list(allowed_domains) if allowed_domains is not None else get_allowed_domains()
+    if "ve.cbi.ir" not in domains:
+        domains.append("ve.cbi.ir")
+
+    allowed, host, effective = is_url_allowed(normalized, allowed_domains=domains)
+    if not allowed:
+        raise BrowserLaunchError(
+            "url_not_allowed",
+            "URL is blocked by internal allowlist",
+            {"url": normalized, "host": host, "allowed_domains": effective},
+        )
+
+
+def safe_goto(page, url: str, *, allowed_domains: Optional[Iterable[str]] = None, log_callback=None, **kwargs):
+    """
+    - Normalizes URL (fixes bare host inputs)
+    - Runs allowlist validation (with hard allow overrides)
+    """
+    try:
+        ensure_allowed_url(url, allowed_domains=allowed_domains)
+        normalized = _normalize_url(url)
+        goto = getattr(page, "_original_goto", page.goto)
+        return goto(normalized, **kwargs)
+    except BrowserLaunchError as exc:
+        if log_callback:
+            try:
+                log_callback(f"❌ URL Blocked: {exc.message}", "error", meta=exc.details)
+            except TypeError:
+                log_callback(f"❌ URL Blocked: {exc.message}", "error")
+        raise
+    except Exception as exc:
+        if log_callback:
+            try:
+                log_callback(f"⚠️ Navigation error: {exc}", "warning")
+            except TypeError:
+                pass
+        raise
+
+
 def open_healthcheck_page(page, *, allowed_domains: Optional[Iterable[str]] = None, log_callback=None) -> bool:
     url = get_healthcheck_url()
     goto = getattr(page, "_original_goto", page.goto)
     try:
         ensure_allowed_url(url, allowed_domains=allowed_domains)
-        goto(url, wait_until="load")
+        goto(_normalize_url(url), wait_until="load")
         return True
     except BrowserLaunchError as exc:
         if log_callback:
@@ -152,14 +278,6 @@ def open_healthcheck_page(page, *, allowed_domains: Optional[Iterable[str]] = No
         return False
 
 
-def ensure_allowed_url(url: str, allowed_domains: Optional[Iterable[str]] = None) -> None:
-    return
-
-
-def safe_goto(page, url: str, *, allowed_domains: Optional[Iterable[str]] = None, log_callback=None, **kwargs):
-    return page.goto(url, **kwargs)
-
-
 def launch_browser(profile: Dict[str, Any]) -> Tuple[Any, Any, Any, Any]:
     normalized = normalize_browser_profile(profile)
     playwright = None
@@ -173,10 +291,16 @@ def launch_browser(profile: Dict[str, Any]) -> Tuple[Any, Any, Any, Any]:
             "headless": normalized["headless"],
             "slow_mo": normalized["slow_mo_ms"],
         }
+
+        # ✅ Required: prevent soft blocks / reduce automation fingerprint
         if normalized["browser"] == "chromium":
-            launch_options.setdefault("args", []).append("--disable-blink-features=AutomationControlled")
+            args = launch_options.setdefault("args", [])
+            if "--disable-blink-features=AutomationControlled" not in args:
+                args.append("--disable-blink-features=AutomationControlled")
+
         if normalized["proxy"]:
             launch_options["proxy"] = {"server": normalized["proxy"]}
+
         if normalized["user_data_dir"]:
             context = browser_type.launch_persistent_context(
                 normalized["user_data_dir"],
@@ -186,6 +310,7 @@ def launch_browser(profile: Dict[str, Any]) -> Tuple[Any, Any, Any, Any]:
         else:
             browser = browser_type.launch(**launch_options)
             context = browser.new_context(viewport=normalized["viewport"])
+
         page = context.pages[0] if context.pages else context.new_page()
         page.set_default_timeout(normalized["timeout_ms"])
         page.set_default_navigation_timeout(normalized["timeout_ms"])
