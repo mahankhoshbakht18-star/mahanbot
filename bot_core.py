@@ -39,10 +39,16 @@ class BotCore:
 
     def _load_user_data(self):
         row = DBHandler.get_applicant(self.nid)
+        data = {}
         if row and row['data']:
-            if isinstance(row['data'], str): return json.loads(row['data'])
-            return row['data']
-        return {}
+            if isinstance(row['data'], str):
+                data = json.loads(row['data'])
+            else:
+                data = row['data']
+        if row:
+            data.setdefault("full_name", row.get("full_name"))
+            data.setdefault("national_id", row.get("national_id"))
+        return data or {}
 
     def get_otp_code(self):
         """دریافت کد تایید (ابتدا لوکال/دستی، سپس سرور چابکان)"""
