@@ -97,40 +97,43 @@ class RegistrationBot(BotCore):
                         break
 
                     d = self.user_data
+                    full_name = str(d.get("full_name") or "").strip()
+                    first_name, last_name = self._split_full_name(d, full_name)
 
                     # ==========================
                     # STEP 1: فرم هویتی
                     # ==========================
-                    if page.locator("#ctl00_ContentPlaceHolder1_btnSendConfirmCode").is_visible():
+                    if self._is_visible(page, "#ctl00_ContentPlaceHolder1_btnSendConfirmCode"):
                         if stop_event.is_set():
                             break
 
-                        if not page.locator("#ctl00_ContentPlaceHolder1_tbIDNo").input_value():
+                        self._wait_for_ready(page)
+                        if not self._input_has_value(page, ["#ctl00_ContentPlaceHolder1_tbIDNo", "input[name='ctl00$ContentPlaceHolder1$tbIDNo']"]):
                             self.log("📝 مرحله ۱: پر کردن فرم", "registering", page)
-                            BrowserActions.force_fill(page.locator("#ctl00_ContentPlaceHolder1_tbIDNo"), self.nid)
-                            if d.get("spouse"):
-                                BrowserActions.force_fill(page.locator("#ctl00_ContentPlaceHolder1_tbIDNo2"), d.get("spouse"))
+                            self._fill_text(page, ["#ctl00_ContentPlaceHolder1_tbIDNo", "input[name='ctl00$ContentPlaceHolder1$tbIDNo']"], self.nid)
+                            self._fill_text(page, ["#ctl00_ContentPlaceHolder1_tbFName", "input[name='ctl00$ContentPlaceHolder1$tbFName']"], first_name)
+                            self._fill_text(page, ["#ctl00_ContentPlaceHolder1_tbLName", "input[name='ctl00$ContentPlaceHolder1$tbLName']"], last_name)
 
-                            if d.get("birth_y"):
-                                page.locator("#ctl00_ContentPlaceHolder1_tbBrYear").fill(str(d.get("birth_y")))
-                                page.select_option(
-                                    "#ctl00_ContentPlaceHolder1_ddlBrMonth", value=str(d.get("birth_m")).zfill(2)
-                                )
-                                page.select_option(
-                                    "#ctl00_ContentPlaceHolder1_ddlBrDay", value=str(d.get("birth_d")).zfill(2)
-                                )
+                            spouse = d.get("spouse")
+                            if spouse:
+                                self._fill_text(page, ["#ctl00_ContentPlaceHolder1_tbIDNo2", "input[name='ctl00$ContentPlaceHolder1$tbIDNo2']"], spouse)
 
-                            if d.get("marriage_y"):
-                                page.locator("#ctl00_ContentPlaceHolder1_tbMarrYear").fill(str(d.get("marriage_y")))
-                                page.select_option(
-                                    "#ctl00_ContentPlaceHolder1_ddlMarryMonth", value=str(d.get("marriage_m")).zfill(2)
-                                )
-                                page.select_option(
-                                    "#ctl00_ContentPlaceHolder1_ddlMarryDay", value=str(d.get("marriage_d")).zfill(2)
-                                )
+                            birth_y, birth_m, birth_d = self._get_birth_parts(d)
+                            if birth_y:
+                                self._fill_text(page, ["#ctl00_ContentPlaceHolder1_tbBrYear", "input[name='ctl00$ContentPlaceHolder1$tbBrYear']"], birth_y)
+                                self._select_option(page, "#ctl00_ContentPlaceHolder1_ddlBrMonth", value=str(birth_m).zfill(2) if birth_m else None)
+                                self._select_option(page, "#ctl00_ContentPlaceHolder1_ddlBrDay", value=str(birth_d).zfill(2) if birth_d else None)
 
-                            BrowserActions.force_fill(
-                                page.locator("#ctl00_ContentPlaceHolder1_tbMobileNo"), d.get("mobile", "")
+                            marriage_y, marriage_m, marriage_d = self._get_marriage_parts(d)
+                            if marriage_y:
+                                self._fill_text(page, ["#ctl00_ContentPlaceHolder1_tbMarrYear", "input[name='ctl00$ContentPlaceHolder1$tbMarrYear']"], marriage_y)
+                                self._select_option(page, "#ctl00_ContentPlaceHolder1_ddlMarryMonth", value=str(marriage_m).zfill(2) if marriage_m else None)
+                                self._select_option(page, "#ctl00_ContentPlaceHolder1_ddlMarryDay", value=str(marriage_d).zfill(2) if marriage_d else None)
+
+                            self._fill_text(
+                                page,
+                                ["#ctl00_ContentPlaceHolder1_tbMobileNo", "input[name='ctl00$ContentPlaceHolder1$tbMobileNo']"],
+                                d.get("mobile", ""),
                             )
 
                         if stop_event.is_set():
@@ -143,7 +146,7 @@ class RegistrationBot(BotCore):
                             captcha_mode,
                         )
                         try:
-                            page.wait_for_selector("#ctl00_ContentPlaceHolder1_tbMobileConfCode", timeout=5000)
+                            page.wait_for_selector("#ctl00_ContentPlaceHolder1_tbMobileConfCode", timeout=10000, state="visible")
                         except Exception:
                             pass
                         continue
@@ -151,14 +154,14 @@ class RegistrationBot(BotCore):
                     # ==========================
                     # STEP 2: کد تایید
                     # ==========================
-                    if page.locator("#ctl00_ContentPlaceHolder1_btnContinue1").is_visible():
+                    if self._is_visible(page, "#ctl00_ContentPlaceHolder1_btnContinue1"):
                         if stop_event.is_set():
                             break
 
                         otp = self.get_otp_code()
                         if otp:
                             self.log(f"✅ ورود کد: {otp}", "success", page)
-                            page.locator("#ctl00_ContentPlaceHolder1_tbMobileConfCode").fill(otp)
+                            self._fill_text(page, ["#ctl00_ContentPlaceHolder1_tbMobileConfCode", "input[name='ctl00$ContentPlaceHolder1$tbMobileConfCode']"], otp)
                             self._solve_captcha_wrapper(
                                 page,
                                 "#ctl00_ContentPlaceHolder1_tbCaptcha2",
@@ -176,11 +179,12 @@ class RegistrationBot(BotCore):
                     # ==========================
                     # STEP 3: اطلاعات سکونت
                     # ==========================
-                    if page.locator("#ctl00_ContentPlaceHolder1_btnContinue2").is_visible():
+                    if self._is_visible(page, "#ctl00_ContentPlaceHolder1_btnContinue2"):
                         if stop_event.is_set():
                             break
 
                         self.log("📍 مرحله ۳: اطلاعات تکمیلی", "registering", page)
+                        self._wait_for_ready(page)
 
                         try:
                             page.select_option("#ctl00_ContentPlaceHolder1_ddlIsarST", value="0")
@@ -222,9 +226,9 @@ class RegistrationBot(BotCore):
                                 self.log(f"⚠️ شهر '{user_city}' پیدا نشد", "warning", page)
 
                         if d.get("phone"):
-                            page.locator("#ctl00_ContentPlaceHolder1_tbTel").fill(str(d.get("phone")), force=True)
+                            self._fill_text(page, ["#ctl00_ContentPlaceHolder1_tbTel", "input[name='ctl00$ContentPlaceHolder1$tbTel']"], d.get("phone"))
                         if d.get("zip_code"):
-                            page.locator("#ctl00_ContentPlaceHolder1_tbZipCD").fill(str(d.get("zip_code")), force=True)
+                            self._fill_text(page, ["#ctl00_ContentPlaceHolder1_tbZipCD", "input[name='ctl00$ContentPlaceHolder1$tbZipCD']"], d.get("zip_code"))
 
                         if stop_event.is_set():
                             break
@@ -240,7 +244,7 @@ class RegistrationBot(BotCore):
                     # ==========================
                     # STEP 4: تایید نهایی
                     # ==========================
-                    if page.locator("#ctl00_ContentPlaceHolder1_btnSave").is_visible():
+                    if self._is_visible(page, "#ctl00_ContentPlaceHolder1_btnSave"):
                         if stop_event.is_set():
                             break
 
@@ -294,6 +298,86 @@ class RegistrationBot(BotCore):
             self.log("مرورگر بسته شد.", "stop")
 
     # --- توابع کمکی ---
+    def _wait_for_ready(self, page):
+        try:
+            page.wait_for_load_state("domcontentloaded", timeout=20000)
+        except Exception:
+            pass
+
+    def _is_visible(self, page, selector):
+        try:
+            return page.locator(selector).first.is_visible()
+        except Exception:
+            return False
+
+    def _input_has_value(self, page, selectors):
+        locator = self._find_locator(page, selectors)
+        try:
+            return bool(locator and locator.input_value())
+        except Exception:
+            return False
+
+    def _find_locator(self, page, selectors):
+        for selector in selectors:
+            locator = page.locator(selector).first
+            try:
+                if locator.count() > 0:
+                    return locator
+            except Exception:
+                continue
+        return page.locator(selectors[0]).first
+
+    def _fill_text(self, page, selectors, value):
+        if value is None or value == "":
+            return
+        locator = self._find_locator(page, selectors)
+        try:
+            locator.wait_for(state="visible", timeout=10000)
+        except Exception:
+            return
+        try:
+            BrowserActions.force_fill(locator, value)
+        except Exception:
+            try:
+                locator.fill(str(value))
+            except Exception:
+                pass
+
+    def _select_option(self, page, selector, value=None):
+        if not value:
+            return
+        try:
+            page.locator(selector).wait_for(state="visible", timeout=10000)
+            page.select_option(selector, value=value)
+        except Exception:
+            pass
+
+    def _get_birth_parts(self, data):
+        return (
+            data.get("birth_y") or data.get("birth_year"),
+            data.get("birth_m") or data.get("birth_month"),
+            data.get("birth_d") or data.get("birth_day"),
+        )
+
+    def _get_marriage_parts(self, data):
+        return (
+            data.get("marriage_y") or data.get("marriage_year"),
+            data.get("marriage_m") or data.get("marriage_month"),
+            data.get("marriage_d") or data.get("marriage_day"),
+        )
+
+    def _split_full_name(self, data, fallback):
+        first = data.get("first_name") or data.get("fname")
+        last = data.get("last_name") or data.get("lname")
+        if first or last:
+            return (first or "").strip(), (last or "").strip()
+        name = fallback.strip()
+        if not name:
+            return "", ""
+        parts = name.split()
+        if len(parts) == 1:
+            return parts[0], ""
+        return " ".join(parts[:-1]), parts[-1]
     def _solve_captcha_wrapper(self, page, input_sel, btn_sel, mode):
         if mode == "robot":
             return self._handle_captcha_robot(page, input_sel, btn_sel)
