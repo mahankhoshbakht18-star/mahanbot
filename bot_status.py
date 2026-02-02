@@ -158,7 +158,10 @@ class StatusBot:
             except Exception:
                 pass
 
-            body_text = page.inner_text("body")
+            try:
+                body_text = page.inner_text("body")
+            except Exception:
+                body_text = ""
 
             success_indicators = [
                 "استعلام آخرین وضعیت ثبت درخواست",
@@ -265,7 +268,30 @@ class StatusBot:
             btn_trace.click()
 
             try:
-                page.wait_for_load_state("networkidle", timeout=5000)
+                page.wait_for_function(
+                    """
+                    (prevUrl, captchaSelector, prevSrc, tableSelector) => {
+                        const sameUrl = window.location.href === prevUrl;
+                        const captchaImg = document.querySelector(captchaSelector);
+                        const currentSrc = captchaImg ? captchaImg.getAttribute('src') : null;
+                        const table = document.querySelector(tableSelector);
+                        const tableVisible = table && table.offsetParent !== null;
+                        return !sameUrl || tableVisible || (prevSrc && currentSrc && prevSrc !== currentSrc);
+                    }
+                    """,
+                    arg=[
+                        previous_url,
+                        "#c_tastrace_ctl00_contentplaceholder1_captcha1_CaptchaImage",
+                        previous_captcha_src,
+                        "#ctl00_ContentPlaceHolder1_GridView1",
+                    ],
+                    timeout=5000,
+                )
+            except Exception:
+                pass
+
+            try:
+                page.wait_for_load_state("networkidle", timeout=3000)
             except Exception:
                 pass
 

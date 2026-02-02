@@ -131,10 +131,10 @@ class CaptchaService:
     def _normalize_image_bytes(self, image_bytes):
         if image_bytes is None:
             return None
+        if isinstance(image_bytes, (bytes, bytearray, memoryview)):
+            return bytes(image_bytes)
         if hasattr(image_bytes, "read"):
             return image_bytes.read()
-        if isinstance(image_bytes, (bytes, bytearray)):
-            return bytes(image_bytes)
         try:
             return io.BytesIO(image_bytes).getvalue()
         except Exception:
