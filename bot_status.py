@@ -36,9 +36,8 @@ class StatusBot:
         self.settings = settings
         self.log = log_callback
         self.browser_profile = browser_profile or {}
-
-        self.user_data = self._load_user_data()
         self.captcha_service = captcha_service or CaptchaService()
+        self.user_data = self._load_user_data()
 
         self.saved_receipt = False
         self.last_site_msg = None

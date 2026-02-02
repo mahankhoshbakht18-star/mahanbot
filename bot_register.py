@@ -25,6 +25,15 @@ def sleep_with_stop(stop_event, seconds: float, step: float = 0.2) -> bool:
 
 
 class RegistrationBot(BotCore):
+    def __init__(self, nid, settings, log_callback=None, captcha_service=None, browser_profile=None):
+        super().__init__(
+            nid,
+            settings,
+            log_callback=log_callback,
+            captcha_service=captcha_service,
+            browser_profile=browser_profile,
+        )
+
     def run(self, stop_event):
         attempt = 0
         playwright = None
