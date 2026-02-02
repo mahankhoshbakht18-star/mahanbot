@@ -274,6 +274,8 @@ class RegistrationBot(BotCore):
                         return
 
                 except Exception:
+                    if self.close_browser_on_stop(stop_event, playwright, browser, context, page):
+                        return
                     # strict stop checks around sleeps / retries
                     if sleep_with_stop(stop_event, 1):
                         break

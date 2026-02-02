@@ -319,12 +319,8 @@ class StatusBot:
                     if is_success:
                         self.log_msg(f"✅ موفقیت! {extracted_info}", "success")
                         self.log_msg("🎉 رسید ذخیره شد و عملیات پایان یافت.", "success")
-                        # wait until stop or user closes browser
                         while not stop_event.is_set():
-                            if page.is_closed():
-                                break
-                            if sleep_with_stop(stop_event, 1):
-                                break
+                            time.sleep(1)
                         break
 
                     msg_text = self.get_site_message(page)
@@ -355,6 +351,9 @@ class StatusBot:
                         break
 
                 except PlaywrightError as pe:
+                    if stop_event.is_set():
+                        close_browser(playwright, browser, context, page)
+                        break
                     if "Target closed" in str(pe):
                         self.log_msg("مرورگر بسته شد.", "stopped")
                         break
@@ -363,10 +362,16 @@ class StatusBot:
                         break
 
                 except BrowserLaunchError as exc:
+                    if stop_event.is_set():
+                        close_browser(playwright, browser, context, page)
+                        break
                     self.log_msg(f"خطا در مرورگر: {exc.message}", "error")
                     break
 
                 except Exception as e:
+                    if stop_event.is_set():
+                        close_browser(playwright, browser, context, page)
+                        break
                     self.log_msg(f"خطای غیرمنتظره: {e}", "error")
                     if sleep_with_stop(stop_event, 2):
                         break
