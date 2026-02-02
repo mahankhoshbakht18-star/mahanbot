@@ -167,7 +167,13 @@ class StatusBot:
                 "شعبه پیشنهادی شما",
             ]
 
-            is_logged_in = any(indicator in body_text for indicator in success_indicators)
+            result_table = page.locator("#ctl00_ContentPlaceHolder1_GridView1")
+            url_matches = "TasTrace.aspx" in (page.url or "")
+            table_visible = self.safe_visible(result_table)
+            is_logged_in = table_visible and url_matches
+
+            if not is_logged_in:
+                is_logged_in = any(indicator in body_text for indicator in success_indicators)
             if not is_logged_in:
                 return False, ""
 
@@ -195,16 +201,17 @@ class StatusBot:
     def submit_form_with_captcha(self, page, tracking_code):
         try:
             if self._stop_event.is_set():
-                return False
+                return "idle"
 
-            captcha_input = page.locator("input[name='ctl00$ContentPlaceHolder1$tbCaptcha1']")
+            captcha_selector = "input[name='ctl00$ContentPlaceHolder1$tbCaptcha1']"
+            captcha_input = page.locator(captcha_selector)
             nid_input = page.locator("input[name='ctl00$ContentPlaceHolder1$tbIDNo']")
             track_input = page.locator("input[name='ctl00$ContentPlaceHolder1$tbTraceCD']")
             btn_trace = page.locator("#ctl00_ContentPlaceHolder1_btnTrace")
             captcha_img = page.locator("#c_tastrace_ctl00_contentplaceholder1_captcha1_CaptchaImage")
 
             if not self.safe_visible(captcha_input):
-                return False
+                return "idle"
 
             try:
                 if not nid_input.input_value():
@@ -224,16 +231,15 @@ class StatusBot:
                 current_captcha_val = ""
 
             if current_captcha_val.strip():
-                return False
+                return "idle"
 
             try:
                 captcha_img.wait_for(state="visible", timeout=7000)
             except Exception:
-                return False
+                return "idle"
 
-            page.wait_for_timeout(300)
             if self._stop_event.is_set():
-                return False
+                return "idle"
 
             captcha_bytes = captcha_img.screenshot()
             solved = self.captcha_service.solve(captcha_bytes, mode="general")
@@ -242,17 +248,43 @@ class StatusBot:
                     page.locator(".BDC_ReloadLink").first.click()
                 except Exception:
                     pass
-                return False
+                return "idle"
 
-            captcha_input.fill(str(solved).strip())
+            captcha_value = str(solved).strip()
+            captcha_input.fill(captcha_value)
+            page.dispatch_event(captcha_selector, "change")
+            page.dispatch_event(captcha_selector, "blur")
+
+            previous_url = page.url or ""
+            previous_captcha_src = None
+            try:
+                previous_captcha_src = captcha_img.get_attribute("src")
+            except Exception:
+                previous_captcha_src = None
+
             btn_trace.click()
 
-            # Wait a bit, then next loop will check success indicators
-            page.wait_for_timeout(500)
-            return True
+            try:
+                page.wait_for_load_state("networkidle", timeout=5000)
+            except Exception:
+                pass
+
+            current_url = page.url or ""
+            new_captcha_src = None
+            try:
+                new_captcha_src = captcha_img.get_attribute("src")
+            except Exception:
+                new_captcha_src = None
+
+            if current_url == previous_url and previous_captcha_src and new_captcha_src:
+                if previous_captcha_src != new_captcha_src:
+                    self.log_msg("کپچا رفرش شد. تلاش مجدد...", "warning")
+                    return "soft_retry"
+
+            return "submitted"
 
         except Exception:
-            return False
+            return "idle"
 
     def run(self, stop_event):
         playwright = None
@@ -342,10 +374,10 @@ class StatusBot:
                                 pass
                             continue
 
-                    submitted = self.submit_form_with_captcha(page, tracking_code)
-                    if submitted:
-                        if sleep_with_stop(stop_event, 1):
-                            break
+                    submission_status = self.submit_form_with_captcha(page, tracking_code)
+                    if submission_status == "soft_retry":
+                        continue
+                    if submission_status == "submitted":
                         continue
 
                     if sleep_with_stop(stop_event, 1):

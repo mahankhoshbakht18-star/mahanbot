@@ -1,3 +1,4 @@
+import io
 import ddddocr
 import cv2
 import numpy as np
@@ -86,6 +87,7 @@ class CaptchaService:
         """
         تابع اصلی که توسط ربات صدا زده می‌شود
         """
+        image_bytes = self._normalize_image_bytes(image_bytes)
         if not image_bytes:
             return None
 
@@ -125,6 +127,18 @@ class CaptchaService:
         
         print(f"🤖 مدل خواند: {text}")
         return text
+
+    def _normalize_image_bytes(self, image_bytes):
+        if image_bytes is None:
+            return None
+        if hasattr(image_bytes, "read"):
+            return image_bytes.read()
+        if isinstance(image_bytes, (bytes, bytearray)):
+            return bytes(image_bytes)
+        try:
+            return io.BytesIO(image_bytes).getvalue()
+        except Exception:
+            return None
 
     def _decode_prediction(self, text_batch):
         """تبدیل خروجی مدل به متن"""
