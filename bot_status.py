@@ -8,7 +8,6 @@ from browser_launcher import (
     BrowserLaunchError,
     close_browser,
     launch_browser,
-    open_healthcheck_page,
     safe_goto,
 )
 from database import DBHandler
@@ -259,11 +258,18 @@ class StatusBot:
         context = None
         page = None
         self._stop_event = stop_event
+        should_close = False
 
         try:
             playwright, browser, context, page = launch_browser(self.browser_profile)
             self._wrap_page_navigation(page)
-            open_healthcheck_page(page, log_callback=self._log_for_safe_goto)
+            try:
+                page.goto(TARGET_URL, timeout=60000, wait_until="domcontentloaded")
+            except Exception:
+                if sleep_with_stop(stop_event, 1.0):
+                    should_close = True
+                    return
+                page.goto(TARGET_URL, timeout=60000, wait_until="domcontentloaded")
 
             tracking_code = self.user_data.get("tracking_code")
             if not tracking_code:
@@ -273,17 +279,10 @@ class StatusBot:
                     {"nid": self.nid},
                 )
                 self.log_msg(error.message, "error", error.to_dict())
+                should_close = True
                 raise error
 
             self.log_msg(f"شروع استعلام برای: {tracking_code}", "info")
-
-            # ✅ DIRECT NAVIGATION (must happen immediately)
-            try:
-                page.goto(TARGET_URL, timeout=60000, wait_until="domcontentloaded")
-            except Exception:
-                if sleep_with_stop(stop_event, 1.0):
-                    return
-                page.goto(TARGET_URL, timeout=60000, wait_until="domcontentloaded")
 
             page.set_default_timeout(15000)
 
@@ -291,6 +290,7 @@ class StatusBot:
                 try:
                     if page.is_closed():
                         self.log_msg("مرورگر توسط کاربر بسته شد.", "stopped")
+                        should_close = True
                         break
 
                     # Keep on target
@@ -321,6 +321,7 @@ class StatusBot:
                         self.log_msg("🎉 رسید ذخیره شد و عملیات پایان یافت.", "success")
                         while not stop_event.is_set():
                             time.sleep(1)
+                        should_close = True
                         break
 
                     msg_text = self.get_site_message(page)
@@ -352,10 +353,11 @@ class StatusBot:
 
                 except PlaywrightError as pe:
                     if stop_event.is_set():
-                        close_browser(playwright, browser, context, page)
+                        should_close = True
                         break
                     if "Target closed" in str(pe):
                         self.log_msg("مرورگر بسته شد.", "stopped")
+                        should_close = True
                         break
                     self.log_msg(f"خطای موقت: {pe}", "warning")
                     if sleep_with_stop(stop_event, 2):
@@ -363,16 +365,18 @@ class StatusBot:
 
                 except BrowserLaunchError as exc:
                     if stop_event.is_set():
-                        close_browser(playwright, browser, context, page)
+                        should_close = True
                         break
                     self.log_msg(f"خطا در مرورگر: {exc.message}", "error")
+                    should_close = True
                     break
 
                 except Exception as e:
                     if stop_event.is_set():
-                        close_browser(playwright, browser, context, page)
+                        should_close = True
                         break
                     self.log_msg(f"خطای غیرمنتظره: {e}", "error")
+                    should_close = True
                     if sleep_with_stop(stop_event, 2):
                         break
 
@@ -380,8 +384,11 @@ class StatusBot:
             pass
         except BrowserLaunchError as exc:
             self.log_msg(f"Error: {exc.message}", "error")
+            should_close = True
         except Exception as e:
             self.log_msg(f"Error: {e}", "error")
+            should_close = True
         finally:
-            close_browser(playwright, browser, context, page)
-            self.log_msg("پایان عملیات.", "stopped")
+            if stop_event.is_set() or should_close:
+                close_browser(playwright, browser, context, page)
+                self.log_msg("پایان عملیات.", "stopped")
