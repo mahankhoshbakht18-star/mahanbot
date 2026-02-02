@@ -47,12 +47,14 @@ class StatusBot:
         os.makedirs(self.save_dir, exist_ok=True)
 
     def _load_user_data(self):
-        user = DBHandler.get_applicant(self.nid)
-        if user and user.get("data"):
-            try:
-                return json.loads(user["data"])
-            except Exception:
-                return {}
+        row = DBHandler.get_applicant(self.nid)
+        if row:
+            user = dict(row)
+            if user.get("data"):
+                try:
+                    return json.loads(user["data"])
+                except Exception:
+                    return {}
         return {}
 
     def log_msg(self, msg, level="info", meta=None):
