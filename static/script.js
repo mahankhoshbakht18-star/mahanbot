@@ -10,6 +10,8 @@ let wsClient = null;
 let logEvents = [];
 let browserProfile = null;
 let allowedDomainsState = { env: [], db: [], effective: [] };
+let currentViewId = 'dashboard';
+const jobIdByNid = new Map();
 const LOG_BUFFER_LIMIT = 500;
 const logFilters = {
     text: '',
@@ -60,6 +62,7 @@ function startClock() {
 }
 
 function switchView(viewId, navEl) {
+    currentViewId = viewId;
     document.querySelectorAll('.view-section').forEach(el => el.classList.remove('active-view'));
     const target = document.getElementById(`view-${viewId}`);
     if(target) target.classList.add('active-view');
@@ -133,6 +136,7 @@ function renderDashboard(users) {
             else if (!runningNid) runningNid = user.national_id;
 
             const tr = document.createElement('tr');
+            tr.dataset.nid = user.national_id;
             tr.innerHTML = `
                 <td><strong>${user.full_name}</strong><br><small>${user.national_id}</small></td>
                 <td><span class="badge ${getStatusBadge(user.status)}">${translateStatus(user.status)}</span></td>
@@ -167,7 +171,7 @@ async function fetchApplicants(mode) {
         allUsersData = data;
 
         if(mode === 'list') renderMainList(data);
-        else if(mode === 'bank-select') renderSimpleList(data, 'bankSelectListBody', 'openBankModal', 'انتخاب بانک', 'btn-primary');
+        else if(mode === 'bank-select') renderBankSelectList(data);
         else if(mode === 'status') renderStatusList(data);
         else if(mode === 'recover') renderSimpleList(data, 'recoverListBody', 'actionRecover', 'بازیابی کد', 'btn-warning text-dark');
         else if(mode === 'delete-req') renderSimpleList(data, 'deleteReqListBody', 'actionDeleteReq', 'حذف درخواست', 'btn-danger');
@@ -188,9 +192,15 @@ function renderStatusList(data) {
                 <td>${user.full_name}</td>
                 <td class="font-monospace">${user.national_id}</td>
                 <td class="font-monospace fw-bold text-success">${code}</td>
+                <td><span class="badge ${getStatusBadge(user.status)}">${translateStatus(user.status)}</span></td>
                 <td>
-                    <button class="btn btn-sm btn-info text-white shadow-sm" onclick="actionViewStatus('${user.national_id}')">
-                        <i class="fas fa-search me-1"></i> استعلام
+                    <button class="btn btn-sm btn-info text-white shadow-sm" onclick="startStatus('${user.national_id}')">
+                        <i class="fas fa-play me-1"></i> Start Status
+                    </button>
+                </td>
+                <td>
+                    <button class="btn btn-sm btn-danger shadow-sm" onclick="stopBot('${user.national_id}')">
+                        <i class="fas fa-stop me-1"></i> STOP Status
                     </button>
                 </td>
             </tr>
@@ -213,7 +223,25 @@ function renderMainList(data) {
                 <td class="font-monospace">${user.national_id}</td>
                 <td class="font-monospace text-success">${code}</td>
                 <td><span class="badge ${getStatusBadge(user.status)}">${translateStatus(user.status)}</span></td>
-                <td><button class="btn btn-sm btn-outline-success rounded-pill px-3" onclick="startRegister('${user.national_id}')"><i class="fas fa-play me-1"></i>شروع</button></td>
+                <td><button class="btn btn-sm btn-outline-success rounded-pill px-3" onclick="startRegister('${user.national_id}')"><i class="fas fa-play me-1"></i>Start Register</button></td>
+                <td><button class="btn btn-sm btn-outline-danger rounded-pill px-3" onclick="stopBot('${user.national_id}')"><i class="fas fa-stop me-1"></i>STOP Register</button></td>
+            </tr>
+        `;
+    });
+}
+
+function renderBankSelectList(data) {
+    const tbody = document.getElementById('bankSelectListBody');
+    if(!tbody) return;
+    tbody.innerHTML = '';
+    data.forEach(user => {
+        tbody.innerHTML += `
+            <tr>
+                <td>${user.full_name}</td>
+                <td class="font-monospace">${user.national_id}</td>
+                <td><span class="badge ${getStatusBadge(user.status)}">${translateStatus(user.status)}</span></td>
+                <td><button class="btn btn-sm btn-primary" onclick="openBankModal('${user.national_id}')">Start Select</button></td>
+                <td><button class="btn btn-sm btn-danger" onclick="stopBot('${user.national_id}')">STOP Select</button></td>
             </tr>
         `;
     });
@@ -228,12 +256,17 @@ function renderSimpleList(data, elId, actionFn, txt, cls) {
     });
 }
 
-async function actionViewStatus(nid) {
+async function startStatus(nid) {
     try {
-        await apiCall(`/jobs/start`, 'POST', {bot_name: 'status', nid: nid});
-        alert(getMessage('alerts.status_started', 'ربات مشاهده وضعیت شروع شد.'));
+        const response = await apiCall(`/jobs/start`, 'POST', {bot_name: 'status', nid: nid});
+        if (response?.status && response.status !== 'queued') {
+            console.warn('Unexpected status from status bot start:', response);
+        }
+        setUserStatus(nid, 'Running');
         switchView('dashboard');
-    } catch(e) { alert(getMessage('alerts.server_error', 'خطای ارتباط با سرور')); }
+    } catch(e) {
+        console.warn('Status bot start failed', e);
+    }
 }
 
 function actionRecover(nid) { alert(getMessage('alerts.recover_unavailable', 'بخش بازیابی هنوز فعال نیست')); }
@@ -626,14 +659,32 @@ async function confirmBankStart() {
         payload.browser_profile_override = {browser: override};
     }
     await apiCall('/jobs/start', 'POST', payload);
+    setUserStatus(selectedNidForBank, 'Running');
     bootstrap.Modal.getInstance(document.getElementById('bankActionModal')).hide();
     switchView('dashboard');
 }
 async function startRegister(nid) {
     await apiCall('/jobs/start', 'POST', {bot_name: 'register', nid: nid});
+    setUserStatus(nid, 'Running');
     switchView('dashboard');
 }
-async function stopBot(nid) { await apiCall(`/bot/stop/${nid}`, 'POST'); setTimeout(fetchDashboardData, 1000); }
+async function stopBot(nid) {
+    setUserStatus(nid, 'Stopped');
+    refreshCurrentView();
+    markDashboardStopped(nid);
+    const jobId = jobIdByNid.get(nid);
+    try {
+        if (jobId) {
+            await apiCall(`/jobs/cancel/${jobId}`, 'POST');
+        } else {
+            console.warn(`No job id tracked for ${nid}, falling back to legacy stop endpoint.`);
+            await apiCall(`/bot/stop/${nid}`, 'POST');
+        }
+    } catch (e) {
+        console.warn('Stop request failed', e);
+    }
+    setTimeout(fetchDashboardData, 1000);
+}
 async function apiCall(u, m, b) { return (await fetch(API_URL+u, {method:m, headers:{'Content-Type':'application/json'}, body:JSON.stringify(b)})).json(); }
 
 function setupLogFilters() {
@@ -675,11 +726,40 @@ function connectWebSocket() {
 
 function handleSocketEvent(payload) {
     if (!payload || !payload.type) return;
+    trackJobForNid(payload);
     logEvents.push(payload);
     if (logEvents.length > LOG_BUFFER_LIMIT) {
         logEvents.shift();
     }
     renderLogs();
+}
+
+function trackJobForNid(payload) {
+    const nid = payload.nid;
+    const jobId = payload.job_id;
+    if (!nid || !jobId) return;
+    jobIdByNid.set(nid, jobId);
+    if (payload.type === 'job_status') {
+        const status = (payload.status || '').toLowerCase();
+        if (['stopped', 'cancelled', 'failed'].includes(status)) {
+            jobIdByNid.delete(nid);
+        }
+    }
+}
+
+function setUserStatus(nid, status) {
+    if (!nid || !allUsersData.length) return;
+    const user = allUsersData.find(item => item.national_id === nid);
+    if (user) {
+        user.status = status;
+    }
+}
+
+function refreshCurrentView() {
+    if (!allUsersData.length) return;
+    if (currentViewId === 'list') renderMainList(allUsersData);
+    if (currentViewId === 'bank-select') renderBankSelectList(allUsersData);
+    if (currentViewId === 'status') renderStatusList(allUsersData);
 }
 
 function renderLogs(clearInitial = false) {
@@ -729,6 +809,21 @@ function renderLogs(clearInitial = false) {
     });
 
     term.scrollTop = term.scrollHeight;
+}
+
+function markDashboardStopped(nid) {
+    const row = document.querySelector(`#activeBotsBody tr[data-nid="${nid}"]`);
+    if (!row) return;
+    const badge = row.querySelector('.badge');
+    if (badge) {
+        badge.className = `badge ${getStatusBadge('stopped')}`;
+        badge.textContent = translateStatus('stopped');
+    }
+    const button = row.querySelector('button');
+    if (button) {
+        button.disabled = true;
+        button.classList.add('disabled');
+    }
 }
 
 function getLevelColor(level) {

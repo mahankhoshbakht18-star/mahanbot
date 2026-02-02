@@ -169,6 +169,8 @@ class BankSelectionBot(BotCore):
                         break
 
             except PlaywrightError as pe:
+                if self.close_browser_on_stop(stop_event, playwright, browser, context, page):
+                    return
                 if "Target closed" in str(pe):
                     self.log("🛑 مرورگر بسته شد.", "stopped")
                     stop_event.set()
@@ -176,10 +178,14 @@ class BankSelectionBot(BotCore):
                 if sleep_with_stop(stop_event, 2):
                     break
             except BrowserLaunchError as exc:
+                if self.close_browser_on_stop(stop_event, playwright, browser, context, page):
+                    return
                 self.log(f"خطا در مرورگر: {exc.message}", "error")
                 if sleep_with_stop(stop_event, 2):
                     break
             except Exception:
+                if self.close_browser_on_stop(stop_event, playwright, browser, context, page):
+                    return
                 if sleep_with_stop(stop_event, 2):
                     break
             finally:

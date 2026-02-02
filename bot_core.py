@@ -104,6 +104,16 @@ class BotCore:
         thread = threading.Thread(target=_watch, daemon=True)
         thread.start()
 
+    def close_browser_on_stop(self, stop_event, playwright, browser, context, page) -> bool:
+        if stop_event is None or not stop_event.is_set():
+            return False
+        try:
+            self.log("🛑 Stop detected - closing browser now.", "warning")
+        except Exception:
+            pass
+        close_browser(playwright, browser, context, page)
+        return True
+
     def solve_firewall(self, page):
         try:
             if page.locator("#ans").is_visible():
