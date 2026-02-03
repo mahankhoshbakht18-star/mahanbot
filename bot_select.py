@@ -5,6 +5,7 @@ import random
 from playwright.sync_api import Error as PlaywrightError
 from bot_core import BotCore
 from browser_launcher import BrowserLaunchError, close_browser, safe_goto
+from browser_actions import BrowserActions
 from database import DBHandler
 
 TARGET_URL = "https://ve.cbi.ir/SelectBnkShb.aspx"
@@ -54,15 +55,46 @@ class BankSelectionBot(BotCore):
                 captcha_mode = self.settings.get("captcha_mode", "human")
 
                 # ✅ DIRECT NAVIGATION (must happen immediately)
+                def handle_partial_navigation_error(exc):
+                    if "net::ERR_CONNECTION_CLOSED" in str(exc) and page.url.startswith(TARGET_URL):
+                        self.log("⚠️ Connection closed but page appears loaded; continuing.", "warning", page)
+                        return True
+                    return False
+
                 try:
                     safe_goto(page, TARGET_URL, timeout=60000, wait_until="domcontentloaded", log_callback=self.log)
-                except Exception:
-                    if sleep_with_stop(stop_event, 1.0):
+                except Exception as exc:
+                    if handle_partial_navigation_error(exc):
+                        pass
+                    else:
+                        if sleep_with_stop(stop_event, 1.0):
+                            return
+                        try:
+                            safe_goto(
+                                page,
+                                TARGET_URL,
+                                timeout=60000,
+                                wait_until="domcontentloaded",
+                                log_callback=self.log,
+                            )
+                        except Exception as exc_retry:
+                            if handle_partial_navigation_error(exc_retry):
+                                pass
+                            else:
+                                return
+                else:
+                    if sleep_with_stop(stop_event, 0.2):
                         return
+
+                def wait_for_state(selector, label, timeout=2000):
+                    if stop_event.is_set():
+                        return False
+                    self.log(f"🔍 Checking for {label}...", "info", page)
                     try:
-                        safe_goto(page, TARGET_URL, timeout=60000, wait_until="domcontentloaded", log_callback=self.log)
+                        page.wait_for_selector(selector, timeout=timeout, state="visible")
+                        return True
                     except Exception:
-                        return
+                        return False
 
                 while not stop_event.is_set():
                     if page.is_closed():
@@ -91,38 +123,44 @@ class BankSelectionBot(BotCore):
                         break
 
                     # مرحله ۱: ورود کد ملی
-                    if page.locator("#ctl00_ContentPlaceHolder1_btnSendConfirmCode").is_visible():
+                    if wait_for_state("input[name$='tbIDNo']", "Login Form"):
                         if stop_event.is_set():
                             break
-                        if not page.locator("#ctl00_ContentPlaceHolder1_tbIDNo").input_value():
-                            page.locator("#ctl00_ContentPlaceHolder1_tbIDNo").fill(self.nid)
+                        nid_locator = page.locator("input[name$='tbIDNo']")
+                        if not nid_locator.input_value():
+                            try:
+                                nid_locator.fill(self.nid)
+                            except Exception:
+                                pass
+                            if nid_locator.input_value() != self.nid:
+                                BrowserActions.force_fill(nid_locator, self.nid)
 
                         self._solve_captcha_wrapper(
                             page,
-                            "#ctl00_ContentPlaceHolder1_tbCaptcha1",
-                            "#ctl00_ContentPlaceHolder1_btnSendConfirmCode",
+                            "input[name$='tbCaptcha1']",
+                            "input[name$='btnSendConfirmCode']",
                             captcha_mode,
                         )
                         try:
-                            page.wait_for_selector("#ctl00_ContentPlaceHolder1_tbMobileConfCode", timeout=3000)
+                            page.wait_for_selector("input[name$='tbMobileConfCode']", timeout=3000)
                         except Exception:
                             pass
 
                     # مرحله ۲: OTP
-                    elif page.locator("#ctl00_ContentPlaceHolder1_tbMobileConfCode").is_visible():
+                    elif wait_for_state("input[name$='tbMobileConfCode']", "OTP Form"):
                         if stop_event.is_set():
                             break
 
                         otp_filled = False
                         while not stop_event.is_set():
-                            if not page.locator("#ctl00_ContentPlaceHolder1_tbMobileConfCode").is_visible():
+                            if not page.locator("input[name$='tbMobileConfCode']").is_visible():
                                 break
                             otp_code = self._get_otp_from_db_fresh()
                             if otp_code:
-                                current_val = page.locator("#ctl00_ContentPlaceHolder1_tbMobileConfCode").input_value()
+                                current_val = page.locator("input[name$='tbMobileConfCode']").input_value()
                                 if current_val != otp_code:
                                     self.log(f"✅ دریافت کد پیامک: {otp_code}", "success", page)
-                                    page.locator("#ctl00_ContentPlaceHolder1_tbMobileConfCode").fill(otp_code)
+                                    page.locator("input[name$='tbMobileConfCode']").fill(otp_code)
                                     if sleep_with_stop(stop_event, 0.5):
                                         break
                                 otp_filled = True
@@ -145,7 +183,7 @@ class BankSelectionBot(BotCore):
                                     break
 
                     # مرحله ۳: انتخاب بانک
-                    elif page.locator("#ctl00_ContentPlaceHolder1_ddlBankName").is_visible():
+                    elif wait_for_state("#ctl00_ContentPlaceHolder1_ddlBankName", "Bank Selection"):
                         if stop_event.is_set():
                             break
                         result = self._process_bank_selection_v2(page)
@@ -162,19 +200,19 @@ class BankSelectionBot(BotCore):
                                 break
 
                     # انتخاب شعبه
-                    elif page.locator("#ctl00_ContentPlaceHolder1_ddlBranch").is_visible():
+                    elif wait_for_state("#ctl00_ContentPlaceHolder1_ddlBranch", "Branch Selection"):
                         if stop_event.is_set():
                             break
                         self._process_branch_selection(page, stop_event)
 
                     # اگر به لاگین پرت شد
-                    elif page.locator("#ctl00_ContentPlaceHolder1_btnLogin").is_visible():
+                    elif wait_for_state("#ctl00_ContentPlaceHolder1_btnLogin", "Login Redirect"):
                         if stop_event.is_set():
                             break
                         self._perform_login_standard(page, captcha_mode)
 
                     # موفقیت نهایی
-                    elif page.locator("#ctl00_ContentPlaceHolder1_lblTrackingCode").is_visible():
+                    elif wait_for_state("#ctl00_ContentPlaceHolder1_lblTrackingCode", "Tracking Code"):
                         code = page.locator("#ctl00_ContentPlaceHolder1_lblTrackingCode").inner_text()
                         self.log(f"✅ کد رهگیری: {code}", "success")
                         DBHandler.save_success_data(self.nid, code)
