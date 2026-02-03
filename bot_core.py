@@ -57,7 +57,13 @@ class BotCore:
         try:
             user = DBHandler.get_applicant(self.nid)
             if user:
-                d = json.loads(user['data'])
+                raw_data = user['data']
+                if isinstance(raw_data, str):
+                    d = json.loads(raw_data)
+                elif isinstance(raw_data, dict):
+                    d = raw_data
+                else:
+                    d = {}
                 if 'otp_code' in d and d['otp_code']:
                     self.log(f"✅ استفاده از کد موجود در دیتابیس: {d['otp_code']}", "success")
                     return str(d['otp_code']).strip()

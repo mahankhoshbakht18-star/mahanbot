@@ -1,7 +1,6 @@
 const API_URL = "http://127.0.0.1:8000";
 const MESSAGES = window.MESSAGES_FA || {};
 const warnedMessageKeys = new Set();
-let activeBankList = [];
 let selectedNidForBank = null;
 let dashboardInterval = null;
 let editingUserId = null;
@@ -99,6 +98,21 @@ function parseUserData(userData) {
     if (typeof userData === 'object') return userData;
     try { return JSON.parse(userData); } 
     catch (e) { return {}; }
+}
+
+function parseBanksInput(rawValue) {
+    if (!rawValue) return [];
+    return rawValue
+        .split(/[\n,]+/)
+        .map((entry) => entry.trim())
+        .filter((entry) => entry.length > 0);
+}
+
+function formatBanksInput(banks) {
+    if (!banks) return '';
+    if (Array.isArray(banks)) return banks.join('\n');
+    if (typeof banks === 'string') return banks;
+    return '';
 }
 
 async function fetchDashboardData() {
@@ -300,8 +314,8 @@ function editUser(idx) {
     document.getElementById('md_m').value = d.marriage_m || ''; 
     document.getElementById('md_y').value = d.marriage_y || '';
     
-    activeBankList = d.banks || [];
-    renderPriorityList();
+    const banksInput = document.getElementById('inpBanks');
+    if (banksInput) banksInput.value = formatBanksInput(d.banks);
     
     switchView('add');
     document.getElementById('view-add').scrollIntoView({ behavior: 'smooth' });
@@ -312,8 +326,8 @@ function resetAddForm() {
     document.getElementById('addForm').reset();
     document.getElementById('formTitle').innerText = "ثبت متقاضی جدید";
     document.getElementById('btnResetForm').style.display = 'none';
-    activeBankList = [];
-    renderPriorityList();
+    const banksInput = document.getElementById('inpBanks');
+    if (banksInput) banksInput.value = '';
 }
 
 async function submitNewApplicant() {
@@ -337,7 +351,7 @@ async function submitNewApplicant() {
         marriage_d: document.getElementById('md_d').value,
         marriage_m: document.getElementById('md_m').value,
         marriage_y: document.getElementById('md_y').value,
-        banks: activeBankList
+        banks: parseBanksInput(document.getElementById('inpBanks').value)
     };
 
     const payload = {
@@ -352,29 +366,6 @@ async function submitNewApplicant() {
     if(editingUserId) resetAddForm();
     switchView('list');
 }
-
-function addBankPriority() { 
-    const n = document.getElementById('inpBankName').value;
-    const c = document.getElementById('inpBranch').value; 
-    if(n){
-        activeBankList.push({name:n, branch:c}); 
-        document.getElementById('inpBankName').value=''; 
-        document.getElementById('inpBranch').value=''; 
-        renderPriorityList();
-    } else { alert(getMessage('alerts.select_bank_required', 'لطفا نام بانک را انتخاب کنید')); }
-}
-
-function renderPriorityList() { 
-    document.getElementById('priorityList').innerHTML = activeBankList.map((b,i)=>`
-        <span class="badge bg-white text-dark border p-2 me-1">
-            ${i+1}. ${typeof b==='string'?b:b.name} 
-            ${(typeof b==='object' && b.branch) ? `<span class="text-muted small">(${b.branch})</span>` : ''}
-            <i onclick="removeBank(${i})" class="fas fa-times text-danger ms-1" style="cursor:pointer"></i>
-        </span>
-    `).join(''); 
-}
-
-function removeBank(i) { activeBankList.splice(i,1); renderPriorityList(); }
 
 // ==========================================
 // *** بخش تنظیمات اصلاح شده ***
