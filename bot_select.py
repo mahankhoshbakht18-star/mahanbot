@@ -113,15 +113,26 @@ class BankSelectionBot(BotCore):
                         if stop_event.is_set():
                             break
 
-                        otp_code = self._get_otp_from_db_fresh()
-                        if otp_code:
-                            current_val = page.locator("#ctl00_ContentPlaceHolder1_tbMobileConfCode").input_value()
-                            if current_val != otp_code:
-                                self.log(f"✅ دریافت کد پیامک: {otp_code}", "success", page)
-                                page.locator("#ctl00_ContentPlaceHolder1_tbMobileConfCode").fill(otp_code)
-                                if sleep_with_stop(stop_event, 0.5):
-                                    break
+                        otp_filled = False
+                        while not stop_event.is_set():
+                            if not page.locator("#ctl00_ContentPlaceHolder1_tbMobileConfCode").is_visible():
+                                break
+                            otp_code = self._get_otp_from_db_fresh()
+                            if otp_code:
+                                current_val = page.locator("#ctl00_ContentPlaceHolder1_tbMobileConfCode").input_value()
+                                if current_val != otp_code:
+                                    self.log(f"✅ دریافت کد پیامک: {otp_code}", "success", page)
+                                    page.locator("#ctl00_ContentPlaceHolder1_tbMobileConfCode").fill(otp_code)
+                                    if sleep_with_stop(stop_event, 0.5):
+                                        break
+                                otp_filled = True
+                                break
 
+                            self.log("📩 منتظر دریافت پیامک...", "waiting sms", page)
+                            if sleep_with_stop(stop_event, 2):
+                                break
+
+                        if otp_filled:
                             success = self._solve_captcha_wrapper(
                                 page,
                                 "#ctl00_ContentPlaceHolder1_tbCaptcha2",
@@ -132,19 +143,14 @@ class BankSelectionBot(BotCore):
                                 self.log("👆 تایید کد پیامک...", "info", page)
                                 if sleep_with_stop(stop_event, 3):
                                     break
-                        else:
-                            self.log("📩 منتظر دریافت پیامک...", "waiting sms", page)
-                            if sleep_with_stop(stop_event, 2):
-                                break
 
                     # مرحله ۳: انتخاب بانک
                     elif page.locator("#ctl00_ContentPlaceHolder1_ddlBankName").is_visible():
                         if stop_event.is_set():
                             break
                         result = self._process_bank_selection_v2(page)
-                        if result == "success":
-                            self.log("🎉 بانک رزرو شد! پایان عملیات.", "success", page)
-                            return
+                        if result == "selected":
+                            self.log("✅ بانک انتخاب شد.", "success", page)
                         elif result == "no_match":
                             self.log("❌ بانک مورد نظر یافت نشد. رفرش...", "warning", page)
                             try:
@@ -159,7 +165,7 @@ class BankSelectionBot(BotCore):
                     elif page.locator("#ctl00_ContentPlaceHolder1_ddlBranch").is_visible():
                         if stop_event.is_set():
                             break
-                        self._process_branch_selection(page)
+                        self._process_branch_selection(page, stop_event)
 
                     # اگر به لاگین پرت شد
                     elif page.locator("#ctl00_ContentPlaceHolder1_btnLogin").is_visible():
@@ -210,10 +216,14 @@ class BankSelectionBot(BotCore):
 
     def _get_otp_from_db_fresh(self):
         try:
-            row = DBHandler.get_applicant(self.nid)
-            if row and row["data"]:
-                data = json.loads(row["data"])
-                return data.get("otp_code")
+            with DBHandler._connect(row_factory=True) as conn:
+                cursor = conn.cursor()
+                cursor.execute("SELECT data FROM applicants WHERE national_id=?", (self.nid,))
+                row = cursor.fetchone()
+                if row and row["data"]:
+                    data = json.loads(row["data"])
+                    otp_code = data.get("otp_code")
+                    return str(otp_code).strip() if otp_code else None
         except Exception:
             pass
         return None
@@ -230,6 +240,14 @@ class BankSelectionBot(BotCore):
                 if val and val != "0":
                     available_banks[txt] = val
 
+            if not available_banks:
+                self.log("⚠️ لیست بانک‌ها خالی است. رفرش صفحه...", "warning", page)
+                try:
+                    page.reload()
+                except Exception:
+                    pass
+                return "waiting"
+
             user_priorities = self.user_data.get("banks", [])
             if not user_priorities:
                 self.log("⚠️ لیست اولویت بانک خالی است!", "error")
@@ -240,7 +258,7 @@ class BankSelectionBot(BotCore):
 
                 found_val = None
                 for b_text, b_val in available_banks.items():
-                    if target_name in b_text:
+                    if target_name and target_name in b_text:
                         found_val = b_val
                         break
 
@@ -248,29 +266,67 @@ class BankSelectionBot(BotCore):
                     self.log(f"🎯 بانک یافت شد: {target_name}", "selecting", page)
                     page.select_option(dropdown_id, value=found_val)
                     self.log("⏳ در حال بارگذاری شعب...", "info", page)
-                    try:
-                        page.wait_for_load_state("networkidle", timeout=5000)
-                    except Exception:
-                        time.sleep(3)
-                    return "success"
+                    self._wait_for_branch_ready(page)
+                    return "selected"
 
+            self.log("⚠️ بانک موردنظر پیدا نشد. رفرش صفحه...", "warning", page)
+            try:
+                page.reload()
+            except Exception:
+                pass
             return "no_match"
         except Exception:
             return "error"
 
-    def _process_branch_selection(self, page):
+    def _process_branch_selection(self, page, stop_event):
         try:
             branch_ddl = "#ctl00_ContentPlaceHolder1_ddlBranch"
+            branch_index = self.settings.get("branch_index", 1)
+            try:
+                branch_index = int(branch_index)
+            except (TypeError, ValueError):
+                branch_index = 1
+            if branch_index < 1:
+                branch_index = 1
+
             if page.locator(branch_ddl).input_value() == "0":
-                page.locator(branch_ddl).select_option(index=1)
+                page.locator(branch_ddl).select_option(index=branch_index)
                 if self.settings.get("final_submit", False):
                     self.log("🔥 ثبت نهایی...", "success", page)
-                    page.click("#ctl00_ContentPlaceHolder1_btnRegister")
+                    page.click("#ctl00_ContentPlaceHolder1_btnSave")
                 else:
+                    submit_btn = page.locator("#ctl00_ContentPlaceHolder1_btnSave")
+                    try:
+                        submit_btn.scroll_into_view_if_needed()
+                        page.evaluate(
+                            "btn => btn.style.border = '3px solid red'",
+                            submit_btn.element_handle(),
+                        )
+                    except Exception:
+                        pass
                     self.log("🛑 توقف قبل از ثبت نهایی (حالت تست)", "warning", page)
-                    time.sleep(5)
+                    while not stop_event.is_set():
+                        time.sleep(1)
         except Exception:
             pass
+
+    def _wait_for_branch_ready(self, page):
+        branch_ddl = "#ctl00_ContentPlaceHolder1_ddlBranch"
+        try:
+            page.wait_for_selector(branch_ddl, timeout=10000)
+            page.wait_for_function(
+                "(selector) => {"
+                "const el = document.querySelector(selector);"
+                "return el && !el.disabled && el.offsetParent !== null;"
+                "}",
+                branch_ddl,
+                timeout=10000,
+            )
+        except Exception:
+            try:
+                page.wait_for_load_state("networkidle", timeout=5000)
+            except Exception:
+                time.sleep(2)
 
     def _solve_captcha_wrapper(self, page, input_sel, btn_sel, mode):
         try:
