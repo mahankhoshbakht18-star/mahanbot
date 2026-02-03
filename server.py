@@ -357,7 +357,36 @@ def serve_index():
 # ✅ داشبورد شما این endpoint را لازم دارد
 @app.get("/applicants")
 def get_applicants():
-    return DBHandler.get_all_applicants()
+    try:
+        results = []
+        with DBHandler._connect(row_factory=True) as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT * FROM applicants ORDER BY id DESC")
+            rows = cursor.fetchall()
+            for row in rows:
+                record = dict(row)
+                try:
+                    record["data"] = json.loads(record["data"]) if record.get("data") else {}
+                except Exception:
+                    record["data"] = {}
+                results.append(record)
+        return results
+    except Exception as exc:
+        logger.warning("Failed to fetch applicants: %s", exc)
+        return []
+
+
+@app.post("/receive_sms")
+def receive_sms(req: SMSRequest):
+    if not req.nid or not req.code:
+        raise HTTPException(status_code=400, detail="Invalid payload")
+
+    success = DBHandler.save_otp(req.nid, req.code)
+    if not success:
+        raise HTTPException(status_code=404, detail="Applicant not found")
+
+    log_event(req.nid, None, f"OTP received: {req.code}", "success")
+    return {"status": "ok"}
 
 
 # ✅ ذخیره متقاضی
