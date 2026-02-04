@@ -1,7 +1,6 @@
 const API_URL = "http://127.0.0.1:8000";
 const MESSAGES = window.MESSAGES_FA || {};
 const warnedMessageKeys = new Set();
-let selectedNidForBank = null;
 let dashboardInterval = null;
 let editingUserId = null;
 let allUsersData = [];
@@ -254,7 +253,7 @@ function renderBankSelectList(data) {
                 <td>${user.full_name}</td>
                 <td class="font-monospace">${user.national_id}</td>
                 <td><span class="badge ${getStatusBadge(user.status)}">${translateStatus(user.status)}</span></td>
-                <td><button class="btn btn-sm btn-primary" onclick="openBankModal('${user.national_id}')">Start Select</button></td>
+                <td><button class="btn btn-sm btn-primary" onclick="startBankSelect('${user.national_id}')">Start Select</button></td>
                 <td><button class="btn btn-sm btn-danger" onclick="stopBot('${user.national_id}')">STOP Select</button></td>
             </tr>
         `;
@@ -635,23 +634,9 @@ function translateStatus(s) {
     return s;
 }
 function getStatusBadge(s) { if(!s) return 'bg-light text-muted'; s=s.toLowerCase(); if(s.includes('succ')) return 'bg-success'; if(s.includes('stop')) return 'bg-danger'; if(s.includes('wait')) return 'bg-warning text-dark'; if(s.includes('run')) return 'bg-primary'; return 'bg-secondary'; }
-function openBankModal(nid) {
-    selectedNidForBank = nid;
-    document.getElementById('modalNidDisplay').innerText = nid;
-    const overrideSelect = document.getElementById('runBrowserOverride');
-    if (overrideSelect) overrideSelect.value = '';
-    new bootstrap.Modal(document.getElementById('bankActionModal')).show();
-}
-async function confirmBankStart() {
-    const t = document.querySelector('input[name="loanType"]:checked').value;
-    const override = document.getElementById('runBrowserOverride')?.value;
-    const payload = {bot_name: 'select', nid: selectedNidForBank, loan_type: t};
-    if (override) {
-        payload.browser_profile_override = {browser: override};
-    }
-    await apiCall('/jobs/start', 'POST', payload);
-    setUserStatus(selectedNidForBank, 'Running');
-    bootstrap.Modal.getInstance(document.getElementById('bankActionModal')).hide();
+async function startBankSelect(nid) {
+    await apiCall('/jobs/start', 'POST', {bot_name: 'select', nid: nid});
+    setUserStatus(nid, 'Running');
     switchView('dashboard');
 }
 async function startRegister(nid) {

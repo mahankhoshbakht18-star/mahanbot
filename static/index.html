@@ -322,39 +322,6 @@
         </div>
     </main>
 
-    <div class="modal fade" id="bankActionModal" tabindex="-1">
-        <div class="modal-dialog modal-dialog-centered">
-            <div class="modal-content">
-                <div class="modal-header bg-primary text-white">
-                    <h5 class="modal-title">شروع ربات انتخاب بانک</h5>
-                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
-                </div>
-                <div class="modal-body text-center p-4">
-                    <p>نوع تسهیلات برای <strong id="modalNidDisplay" class="text-primary"></strong>:</p>
-                    <div class="btn-group w-100 mb-3">
-                        <input type="radio" class="btn-check" name="loanType" id="type1" value="rbtnNaghdi" checked>
-                        <label class="btn btn-outline-primary p-3" for="type1">نقدی</label>
-                        <input type="radio" class="btn-check" name="loanType" id="type2" value="rbtnKala">
-                        <label class="btn btn-outline-primary p-3" for="type2">کالا</label>
-                    </div>
-                    <div class="text-start">
-                        <label class="form-label">انتخاب مرورگر (اختیاری)</label>
-                        <select class="form-select" id="runBrowserOverride">
-                            <option value="">پیش‌فرض</option>
-                            <option value="chromium">Chromium</option>
-                            <option value="firefox">Firefox</option>
-                            <option value="webkit">WebKit</option>
-                        </select>
-                    </div>
-                </div>
-                <div class="modal-footer justify-content-center bg-light">
-                    <button type="button" class="btn btn-success px-5" onclick="confirmBankStart()">استارت</button>
-                </div>
-            </div>
-        </div>
-    </div>
-    <div class="modal fade" id="browserOverrideModal" tabindex="-1"></div>
-
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
     <script src="/static/messages_fa.js"></script>
     <script src="/static/script.js"></script>
