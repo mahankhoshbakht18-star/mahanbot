@@ -65,6 +65,43 @@ class StatusBot:
                 self.log(self.nid, msg, level)
         print(f"[{self.nid}] {msg}")
 
+    def _categorize_inquiry_error(self, exc=None, message=None):
+        text = str(exc).lower() if exc else ""
+        msg = (message or "").lower()
+        if "timeout" in text or "timed out" in text or "timeout" in msg:
+            return "timing"
+        if "target closed" in text or "browser" in text or "closed" in text:
+            return "client"
+        if "captcha" in text or "کد امنیتی" in msg:
+            return "data"
+        if "connection" in text or "network" in text:
+            return "timing"
+        if "server" in text or "خطای سرور" in msg or "در دسترس" in msg:
+            return "server"
+        return "server"
+
+    def _handle_inquiry_error(self, context, exc=None, message=None, extra=None):
+        category = self._categorize_inquiry_error(exc, message)
+        meta = {
+            "category": category,
+            "context": context,
+        }
+        if exc:
+            meta["error"] = str(exc)
+        if message:
+            meta["message"] = message
+        if extra:
+            meta["extra"] = extra
+        self.log_msg("⛔ خطای استعلام. وضعیت مسدود شد.", "blocked", meta)
+        try:
+            DBHandler.update_status(self.nid, "Blocked", "Inquiry blocked")
+        except Exception:
+            pass
+        try:
+            self._stop_event.set()
+        except Exception:
+            pass
+
     def _wrap_page_navigation(self, page):
         original_goto = page.goto
 
@@ -254,9 +291,17 @@ class StatusBot:
                 return "idle"
 
             captcha_value = str(solved).strip()
-            captcha_input.fill(captcha_value)
-            page.dispatch_event(captcha_selector, "change")
-            page.dispatch_event(captcha_selector, "blur")
+            try:
+                captcha_input.fill(captcha_value)
+                page.dispatch_event(captcha_selector, "change")
+                page.dispatch_event(captcha_selector, "blur")
+            except Exception as exc:
+                self._handle_inquiry_error(
+                    "captcha_fill",
+                    exc=exc,
+                    extra={"tracking_code": tracking_code},
+                )
+                return "blocked"
 
             previous_url = page.url or ""
             previous_captcha_src = None
@@ -309,8 +354,13 @@ class StatusBot:
 
             return "submitted"
 
-        except Exception:
-            return "idle"
+        except Exception as exc:
+            self._handle_inquiry_error(
+                "submit_form_with_captcha",
+                exc=exc,
+                extra={"tracking_code": tracking_code},
+            )
+            return "blocked"
 
     def run(self, stop_event):
         playwright = None
@@ -387,6 +437,14 @@ class StatusBot:
                         self.last_site_msg = msg_text
                         self.log_msg(f"⚠️ پیام سایت: {msg_text}", "warning")
 
+                        if "خطای سرور" in msg_text or "server error" in msg_text.lower():
+                            self._handle_inquiry_error(
+                                "site_message",
+                                message=msg_text,
+                                extra={"tracking_code": tracking_code},
+                            )
+                            break
+
                         if "یافت نشد" in msg_text:
                             self.log_msg("⛔ اطلاعات اشتباه است.", "error")
                             if sleep_with_stop(stop_event, 2):
@@ -405,6 +463,8 @@ class StatusBot:
                         continue
                     if submission_status == "submitted":
                         continue
+                    if submission_status == "blocked":
+                        break
 
                     if sleep_with_stop(stop_event, 1):
                         break
