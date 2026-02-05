@@ -1,5 +1,6 @@
 # bot_select.py
 import time
+import os
 import json
 import random
 from playwright.sync_api import Error as PlaywrightError
@@ -53,6 +54,8 @@ class BankSelectionBot(BotCore):
 
                 self.log(f"🚀 شروع عملیات (دور {attempt})...", "info", page)
                 captcha_mode = self.settings.get("captcha_mode", "human")
+                step1_timeout = 12000
+                otp_timeout = 8000
 
                 # ✅ DIRECT NAVIGATION (must happen immediately)
                 def handle_partial_navigation_error(exc):
@@ -61,10 +64,24 @@ class BankSelectionBot(BotCore):
                         return True
                     return False
 
+                def page_has_target_selectors():
+                    selectors = [
+                        "#ctl00_ContentPlaceHolder1_tbIDNo",
+                        "input[name$='tbIDNo']",
+                        "input[name$='tbMobileConfCode']",
+                    ]
+                    for selector in selectors:
+                        try:
+                            page.wait_for_selector(selector, timeout=2000, state="attached")
+                            return True
+                        except Exception:
+                            continue
+                    return False
+
                 try:
                     safe_goto(page, TARGET_URL, timeout=60000, wait_until="domcontentloaded", log_callback=self.log)
                 except Exception as exc:
-                    if handle_partial_navigation_error(exc):
+                    if handle_partial_navigation_error(exc) and page_has_target_selectors():
                         pass
                     else:
                         if sleep_with_stop(stop_event, 1.0):
@@ -78,7 +95,7 @@ class BankSelectionBot(BotCore):
                                 log_callback=self.log,
                             )
                         except Exception as exc_retry:
-                            if handle_partial_navigation_error(exc_retry):
+                            if handle_partial_navigation_error(exc_retry) and page_has_target_selectors():
                                 pass
                             else:
                                 return
@@ -86,10 +103,19 @@ class BankSelectionBot(BotCore):
                     if sleep_with_stop(stop_event, 0.2):
                         return
 
+                try:
+                    page.wait_for_load_state("domcontentloaded", timeout=15000)
+                    page.wait_for_function("document.readyState === 'complete'", timeout=15000)
+                except Exception:
+                    try:
+                        page.wait_for_load_state("networkidle", timeout=10000)
+                    except Exception:
+                        pass
+
                 def wait_for_state(selector, label, timeout=2000):
                     if stop_event.is_set():
                         return False
-                    self.log(f"🔍 Checking for {label}...", "info", page)
+                    self.log(f"🔍 Checking {label}...", "info", page)
                     try:
                         page.wait_for_selector(selector, timeout=timeout, state="visible")
                         return True
@@ -104,7 +130,7 @@ class BankSelectionBot(BotCore):
 
                     # Soft WAF / blocked message
                     try:
-                        if page.locator("body").get_by_text("درخواست شما رد شد").is_visible():
+                        if wait_for_state("text=درخواست شما رد شد", "CHECK_BLOCKERS/SOFT_WAF", timeout=1500):
                             self.log("⛔ مسدودی! رفرش...", "error", page)
                             if sleep_with_stop(stop_event, 2):
                                 break
@@ -123,37 +149,57 @@ class BankSelectionBot(BotCore):
                         break
 
                     # مرحله ۱: ورود کد ملی
-                    if wait_for_state("input[name$='tbIDNo']", "Login Form"):
+                    if wait_for_state("#ctl00_ContentPlaceHolder1_tbIDNo", "CHECK_STEP_1_ENTRY_FORM", timeout=step1_timeout) or wait_for_state(
+                        "input[name$='tbIDNo']",
+                        "CHECK_STEP_1_ENTRY_FORM_FALLBACK",
+                        timeout=step1_timeout,
+                    ):
                         if stop_event.is_set():
                             break
-                        nid_locator = page.locator("input[name$='tbIDNo']")
-                        if not nid_locator.input_value():
-                            try:
-                                nid_locator.fill(self.nid)
-                            except Exception:
-                                pass
-                            if nid_locator.input_value() != self.nid:
-                                BrowserActions.force_fill(nid_locator, self.nid)
-
-                        self._solve_captcha_wrapper(
+                        nid_locator = self._select_editable_input(
                             page,
-                            "input[name$='tbCaptcha1']",
-                            "input[name$='btnSendConfirmCode']",
-                            captcha_mode,
+                            ["#ctl00_ContentPlaceHolder1_tbIDNo", "input[name$='tbIDNo']"],
+                            "National ID",
                         )
+                        if not nid_locator:
+                            self.log("❌ Failed to locate National ID input.", "error", page)
+                            self._debug_step1_dump(page, "nid_not_found")
+                            if sleep_with_stop(stop_event, 1):
+                                break
+                            continue
+
+                        filled = self._fill_input_with_verification(page, nid_locator, self.nid, "National ID")
+                        if not filled:
+                            self._debug_step1_dump(page, "nid_fill_failed")
+                            if sleep_with_stop(stop_event, 1):
+                                break
+                            continue
+
+                        if captcha_mode == "human":
+                            self.log("🧩 CAPTCHA detected: manual required. Please solve and submit.", "warning", page)
+                        else:
+                            self._solve_captcha_wrapper(
+                                page,
+                                "input[name$='tbCaptcha1']",
+                                "input[name$='btnSendConfirmCode']",
+                                captcha_mode,
+                            )
+
                         try:
-                            page.wait_for_selector("input[name$='tbMobileConfCode']", timeout=3000)
+                            page.wait_for_selector("input[name$='tbMobileConfCode']", timeout=otp_timeout)
                         except Exception:
                             pass
 
                     # مرحله ۲: OTP
-                    elif wait_for_state("input[name$='tbMobileConfCode']", "OTP Form"):
+                    elif wait_for_state("input[name$='tbMobileConfCode']", "CHECK_STEP_2_OTP_FORM", timeout=otp_timeout):
                         if stop_event.is_set():
                             break
 
                         otp_filled = False
                         while not stop_event.is_set():
-                            if not page.locator("input[name$='tbMobileConfCode']").is_visible():
+                            try:
+                                page.wait_for_selector("input[name$='tbMobileConfCode']", timeout=1500, state="visible")
+                            except Exception:
                                 break
                             otp_code = self._get_otp_from_db_fresh()
                             if otp_code:
@@ -183,7 +229,7 @@ class BankSelectionBot(BotCore):
                                     break
 
                     # مرحله ۳: انتخاب بانک
-                    elif wait_for_state("#ctl00_ContentPlaceHolder1_ddlBankName", "Bank Selection"):
+                    elif wait_for_state("#ctl00_ContentPlaceHolder1_ddlBankName", "CHECK_STEP_3_BANK_SELECTION", timeout=5000):
                         if stop_event.is_set():
                             break
                         result = self._process_bank_selection_v2(page)
@@ -200,19 +246,19 @@ class BankSelectionBot(BotCore):
                                 break
 
                     # انتخاب شعبه
-                    elif wait_for_state("#ctl00_ContentPlaceHolder1_ddlBranch", "Branch Selection"):
+                    elif wait_for_state("#ctl00_ContentPlaceHolder1_ddlBranch", "CHECK_STEP_4_BRANCH_SELECTION", timeout=5000):
                         if stop_event.is_set():
                             break
                         self._process_branch_selection(page, stop_event)
 
                     # اگر به لاگین پرت شد
-                    elif wait_for_state("#ctl00_ContentPlaceHolder1_btnLogin", "Login Redirect"):
+                    elif wait_for_state("#ctl00_ContentPlaceHolder1_btnLogin", "CHECK_STEP_LOGIN_REDIRECT", timeout=5000):
                         if stop_event.is_set():
                             break
                         self._perform_login_standard(page, captcha_mode)
 
                     # موفقیت نهایی
-                    elif wait_for_state("#ctl00_ContentPlaceHolder1_lblTrackingCode", "Tracking Code"):
+                    elif wait_for_state("#ctl00_ContentPlaceHolder1_lblTrackingCode", "CHECK_DONE_TRACKING_CODE", timeout=5000):
                         code = page.locator("#ctl00_ContentPlaceHolder1_lblTrackingCode").inner_text()
                         self.log(f"✅ کد رهگیری: {code}", "success")
                         DBHandler.save_success_data(self.nid, code)
@@ -265,6 +311,148 @@ class BankSelectionBot(BotCore):
         except Exception:
             pass
         return None
+
+    def _select_editable_input(self, page, selectors, label):
+        for selector in selectors:
+            try:
+                locator = page.locator(selector)
+                count = locator.count()
+            except Exception:
+                continue
+            for index in range(count):
+                candidate = locator.nth(index)
+                try:
+                    is_visible = candidate.is_visible()
+                    is_enabled = candidate.is_enabled()
+                    readonly = candidate.get_attribute("readonly")
+                    disabled = candidate.get_attribute("disabled")
+                    handle = candidate.element_handle()
+                    bounding_box = handle.bounding_box() if handle else None
+                    if (
+                        is_visible
+                        and is_enabled
+                        and not readonly
+                        and not disabled
+                        and bounding_box
+                    ):
+                        self.log(f"✅ Selected {label} input via {selector} (index {index}).", "info", page)
+                        return candidate
+                except Exception:
+                    continue
+        return None
+
+    def _fill_input_with_verification(self, page, locator, value, label):
+        try:
+            locator.fill(value)
+        except Exception:
+            pass
+        try:
+            current_val = locator.input_value()
+        except Exception:
+            current_val = ""
+        if current_val == value:
+            self.log(f"✅ Filled {label} successfully.", "success", page)
+            return True
+
+        try:
+            BrowserActions.force_fill(locator, value)
+        except Exception:
+            pass
+        try:
+            current_val = locator.input_value()
+        except Exception:
+            current_val = ""
+        if current_val == value:
+            self.log(f"✅ Filled {label} successfully (force_fill).", "success", page)
+            return True
+
+        try:
+            handle = locator.element_handle()
+            if handle:
+                page.evaluate(
+                    "(el, val) => {"
+                    "el.value = val;"
+                    "el.dispatchEvent(new Event('input', { bubbles: true }));"
+                    "el.dispatchEvent(new Event('change', { bubbles: true }));"
+                    "}",
+                    handle,
+                    value,
+                )
+        except Exception:
+            pass
+
+        try:
+            current_val = locator.input_value()
+        except Exception:
+            current_val = ""
+        if current_val == value:
+            self.log(f"✅ Filled {label} successfully (js injection).", "success", page)
+            return True
+
+        self.log(f"❌ Failed to fill {label}.", "error", page)
+        return False
+
+    def _collect_selector_debug(self, page, selector):
+        info = []
+        try:
+            locator = page.locator(selector)
+            count = locator.count()
+        except Exception:
+            return info
+        for index in range(count):
+            candidate = locator.nth(index)
+            try:
+                handle = candidate.element_handle()
+                bounding_box = handle.bounding_box() if handle else None
+                entry = {
+                    "selector": selector,
+                    "index": index,
+                    "id": candidate.get_attribute("id"),
+                    "name": candidate.get_attribute("name"),
+                    "type": candidate.get_attribute("type"),
+                    "disabled": candidate.get_attribute("disabled"),
+                    "readonly": candidate.get_attribute("readonly"),
+                    "visible": candidate.is_visible(),
+                    "enabled": candidate.is_enabled(),
+                    "bounding_box": bounding_box,
+                    "value": candidate.input_value(),
+                }
+                info.append(entry)
+            except Exception:
+                continue
+        return info
+
+    def _debug_step1_dump(self, page, reason):
+        timestamp = time.strftime("%Y%m%d_%H%M%S")
+        screenshot_dir = "screenshots"
+        screenshot_path = f"{screenshot_dir}/select_{self.nid}_{timestamp}_{reason}.png"
+        try:
+            os.makedirs(screenshot_dir, exist_ok=True)
+        except Exception:
+            pass
+        try:
+            page.evaluate("() => console.log('debug dump triggered')")
+        except Exception:
+            pass
+        try:
+            page.screenshot(path=screenshot_path, full_page=True)
+        except Exception:
+            screenshot_path = "screenshot_failed"
+
+        debug_data = {
+            "reason": reason,
+            "url": page.url,
+            "selectors": [],
+            "screenshot": screenshot_path,
+        }
+        selectors = ["#ctl00_ContentPlaceHolder1_tbIDNo", "input[name$='tbIDNo']", "input[name$='tbCaptcha1']"]
+        for selector in selectors:
+            debug_data["selectors"].extend(self._collect_selector_debug(page, selector))
+
+        try:
+            self.log(f"🧾 Step1 debug dump: {json.dumps(debug_data, ensure_ascii=False)}", "error", page)
+        except Exception:
+            pass
 
     def _process_bank_selection_v2(self, page):
         try:
@@ -370,6 +558,14 @@ class BankSelectionBot(BotCore):
         try:
             captcha_img = page.locator(".BDC_CaptchaImage").first
             if not captcha_img.is_visible():
+                return False
+
+            if mode == "human":
+                if page.locator(input_sel).input_value():
+                    self.log("🧩 CAPTCHA filled by operator; submitting.", "info", page)
+                    page.locator(btn_sel).click()
+                    return True
+                self.log("🧩 CAPTCHA detected: manual required.", "warning", page)
                 return False
 
             if page.locator(input_sel).input_value() and mode == "robot":
