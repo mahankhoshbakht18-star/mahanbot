@@ -56,6 +56,9 @@ class BankSelectionBot(BotCore):
                 captcha_mode = self.settings.get("captcha_mode", "human")
                 step1_timeout = 12000
                 otp_timeout = 8000
+                firewall_solved_count = 0
+                max_firewall_solves = int(self.settings.get("max_firewall_solves_per_attempt", 6))
+                next_state_sweep_at = 0.0
 
                 # ✅ DIRECT NAVIGATION (must happen immediately)
                 def handle_partial_navigation_error(exc):
@@ -128,6 +131,11 @@ class BankSelectionBot(BotCore):
                         stop_event.set()
                         return
 
+                    now = time.time()
+                    if now >= next_state_sweep_at:
+                        self._log_state_sweep(page)
+                        next_state_sweep_at = now + 3.0
+
                     # Soft WAF / blocked message
                     try:
                         if wait_for_state("text=درخواست شما رد شد", "CHECK_BLOCKERS/SOFT_WAF", timeout=1500):
@@ -139,24 +147,25 @@ class BankSelectionBot(BotCore):
                     except Exception:
                         pass
 
-                    # firewall
-                    if self.solve_firewall(page):
-                        if sleep_with_stop(stop_event, 0.8):
-                            break
-                        continue
-
-                    if stop_event.is_set():
-                        break
-
                     # مرحله ۱: ورود کد ملی
-                    if wait_for_state("#ctl00_ContentPlaceHolder1_tbIDNo", "CHECK_STEP_1_ENTRY_FORM", timeout=step1_timeout) or wait_for_state(
-                        "input[name$='tbIDNo']",
-                        "CHECK_STEP_1_ENTRY_FORM_FALLBACK",
+                    step1_found = self._wait_for_state_any_scope(
+                        page,
+                        "#ctl00_ContentPlaceHolder1_tbIDNo",
+                        "CHECK_STEP_1_ENTRY_FORM",
                         timeout=step1_timeout,
-                    ):
+                    )
+                    if not step1_found:
+                        step1_found = self._wait_for_state_any_scope(
+                            page,
+                            "input[name$='tbIDNo']",
+                            "CHECK_STEP_1_ENTRY_FORM_FALLBACK",
+                            timeout=step1_timeout,
+                        )
+
+                    if step1_found:
                         if stop_event.is_set():
                             break
-                        nid_locator = self._select_editable_input(
+                        nid_locator, _ = self._select_editable_input(
                             page,
                             ["#ctl00_ContentPlaceHolder1_tbIDNo", "input[name$='tbIDNo']"],
                             "National ID",
@@ -191,7 +200,12 @@ class BankSelectionBot(BotCore):
                             pass
 
                     # مرحله ۲: OTP
-                    elif wait_for_state("input[name$='tbMobileConfCode']", "CHECK_STEP_2_OTP_FORM", timeout=otp_timeout):
+                    elif self._wait_for_state_any_scope(
+                        page,
+                        "input[name$='tbMobileConfCode']",
+                        "CHECK_STEP_2_OTP_FORM",
+                        timeout=otp_timeout,
+                    ):
                         if stop_event.is_set():
                             break
 
@@ -264,6 +278,23 @@ class BankSelectionBot(BotCore):
                         DBHandler.save_success_data(self.nid, code)
                         return
 
+                    # firewall (after step checks to avoid starving state machine)
+                    elif self._has_firewall_signal(page):
+                        if self.solve_firewall(page):
+                            firewall_solved_count += 1
+                            if firewall_solved_count > max_firewall_solves:
+                                self.log(
+                                    f"⛔ Firewall loop detected (> {max_firewall_solves} resolves in one attempt). Marking blocked.",
+                                    "error",
+                                    page,
+                                )
+                                self._debug_step1_dump(page, "firewall_stuck_blocked")
+                                DBHandler.update_status(self.nid, "Blocked", "Firewall loop detected")
+                                break
+                            if sleep_with_stop(stop_event, 0.8):
+                                break
+                            continue
+
                     if sleep_with_stop(stop_event, 0.5):
                         break
 
@@ -313,33 +344,94 @@ class BankSelectionBot(BotCore):
         return None
 
     def _select_editable_input(self, page, selectors, label):
-        for selector in selectors:
-            try:
-                locator = page.locator(selector)
-                count = locator.count()
-            except Exception:
-                continue
-            for index in range(count):
-                candidate = locator.nth(index)
+        scopes = [("page", page)] + [(f"frame[{idx}]", frame) for idx, frame in enumerate(page.frames)]
+        for scope_name, scope in scopes:
+            for selector in selectors:
                 try:
-                    is_visible = candidate.is_visible()
-                    is_enabled = candidate.is_enabled()
-                    readonly = candidate.get_attribute("readonly")
-                    disabled = candidate.get_attribute("disabled")
-                    handle = candidate.element_handle()
-                    bounding_box = handle.bounding_box() if handle else None
-                    if (
-                        is_visible
-                        and is_enabled
-                        and not readonly
-                        and not disabled
-                        and bounding_box
-                    ):
-                        self.log(f"✅ Selected {label} input via {selector} (index {index}).", "info", page)
-                        return candidate
+                    locator = scope.locator(selector)
+                    count = locator.count()
                 except Exception:
                     continue
-        return None
+                for index in range(count):
+                    candidate = locator.nth(index)
+                    try:
+                        is_visible = candidate.is_visible()
+                        is_enabled = candidate.is_enabled()
+                        readonly = candidate.get_attribute("readonly")
+                        disabled = candidate.get_attribute("disabled")
+                        handle = candidate.element_handle()
+                        bounding_box = handle.bounding_box() if handle else None
+                        if (
+                            is_visible
+                            and is_enabled
+                            and not readonly
+                            and not disabled
+                            and bounding_box
+                        ):
+                            self.log(
+                                f"✅ Selected {label} input via {selector} ({scope_name}, index {index}).",
+                                "info",
+                                page,
+                            )
+                            return candidate, scope
+                    except Exception:
+                        continue
+        return None, None
+
+    def _wait_for_state_any_scope(self, page, selector, label, timeout=2000):
+        self.log(f"🔍 Checking {label}...", "info", page)
+        scopes = [("page", page)] + [(f"frame[{idx}]", frame) for idx, frame in enumerate(page.frames)]
+        for scope_name, scope in scopes:
+            try:
+                scope.wait_for_selector(selector, timeout=timeout, state="visible")
+                self.log(f"✅ {label} detected in {scope_name}.", "info", page)
+                return True
+            except Exception:
+                continue
+        return False
+
+    def _has_firewall_signal(self, page):
+        selectors = ["#ans", "#jar", "text=در حال بررسی مرورگر شما", "text=cloudflare", "text=firewall"]
+        for selector in selectors:
+            try:
+                loc = page.locator(selector)
+                if loc.count() > 0 and loc.first.is_visible():
+                    return True
+            except Exception:
+                continue
+        return False
+
+    def _log_state_sweep(self, page):
+        selectors = [
+            "#ctl00_ContentPlaceHolder1_tbIDNo",
+            "input[name$='tbIDNo']",
+            "input[name$='tbMobileConfCode']",
+            "#ctl00_ContentPlaceHolder1_ddlBankName",
+        ]
+        counts = {}
+        for selector in selectors:
+            try:
+                counts[selector] = page.locator(selector).count()
+            except Exception:
+                counts[selector] = -1
+        frame_urls = []
+        try:
+            for frame in page.frames:
+                try:
+                    frame_urls.append(frame.url)
+                except Exception:
+                    frame_urls.append("<unavailable>")
+        except Exception:
+            frame_urls = ["<unavailable>"]
+
+        try:
+            self.log(
+                f"🧭 STATE_SWEEP url={page.url} title={page.title()} counts={counts} frames={len(frame_urls)} frame_urls={frame_urls}",
+                "info",
+                page,
+            )
+        except Exception:
+            pass
 
     def _fill_input_with_verification(self, page, locator, value, label):
         try:

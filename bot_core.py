@@ -127,16 +127,36 @@ class BotCore:
         return True
 
     def solve_firewall(self, page):
+        self.log("🛡 solve_firewall: entered", "info", page)
         try:
-            if page.locator("#ans").is_visible():
+            detected = "none"
+            action = "none"
+
+            firewall_input = page.locator("#ans")
+            if firewall_input.count() > 0 and firewall_input.first.is_visible():
+                detected = "#ans_visible"
                 self.log("🛡️ حل فایروال...", "warning", page)
                 imgs = page.locator("img[src^='data:image']").all()
                 if imgs:
                     code = self.captcha_service.solve(imgs[0].screenshot(), mode='firewall')
                     if code:
-                        page.locator("#ans").fill(code)
-                        page.locator("#jar").click()
+                        firewall_input.first.fill(code)
+                        page.locator("#jar").first.click()
+                        action = "captcha_submitted"
                         time.sleep(1.5)
+                        self.log(
+                            f"🛡 solve_firewall: detected={detected}, action={action}, returning=True",
+                            "info",
+                            page,
+                        )
                         return True
-            return True
-        except: return False
+
+            self.log(
+                f"🛡 solve_firewall: detected={detected}, action={action}, returning=False",
+                "info",
+                page,
+            )
+            return False
+        except Exception as exc:
+            self.log(f"🛡 solve_firewall: detected=error, action=exception:{exc}, returning=False", "warning", page)
+            return False
