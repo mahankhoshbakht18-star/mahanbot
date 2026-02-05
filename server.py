@@ -6,12 +6,12 @@ import json
 import asyncio
 import logging
 from collections import deque
-from typing import Deque, Dict, Any, Optional, List
+from typing import Deque, Dict, Any, Optional, List, Tuple
 
 import aiosqlite
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Depends, Header, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import HTMLResponse, Response
+from fastapi.responses import HTMLResponse, Response, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
@@ -236,6 +236,8 @@ class Job:
 
 
 class JobQueue:
+    ACTIVE_STATUSES = {"queued", "running", "cancelling"}
+
     def __init__(self, max_concurrency: int):
         self._max_concurrency = max_concurrency
         self._jobs: Dict[str, Job] = {}
@@ -250,17 +252,24 @@ class JobQueue:
             t.start()
             self._workers.append(t)
 
-    def enqueue(self, bot_name: str, nid: str, payload: Dict[str, Any]) -> Job:
+    def find_active(self, bot_name: str, nid: str) -> Optional[Job]:
+        with self._lock:
+            for job in self._jobs.values():
+                if job.bot_name == bot_name and job.nid == nid and job.status in self.ACTIVE_STATUSES:
+                    return job
+        return None
+
+    def enqueue(self, bot_name: str, nid: str, payload: Dict[str, Any]) -> Tuple[Job, bool]:
         with self._condition:
             for job in self._jobs.values():
-                if job.bot_name == bot_name and job.nid == nid and job.status in {"queued", "running", "cancelling"}:
-                    raise ValueError("duplicate")
+                if job.bot_name == bot_name and job.nid == nid and job.status in self.ACTIVE_STATUSES:
+                    return job, False
             job = Job(bot_name, nid, payload)
             self._jobs[job.id] = job
             self._queue.append(job.id)
             self._condition.notify()
         job_status_event(nid, job.id, "queued")
-        return job
+        return job, True
 
     def cancel(self, job_id: str) -> Optional[Job]:
         with self._condition:
@@ -447,7 +456,12 @@ def start_job(req: JobStartRequest, _: bool = Depends(require_api_key)):
     if req.browser_profile_override:
         payload["browser_profile_override"] = normalize_browser_profile(req.browser_profile_override)
 
-    job = JOB_QUEUE.enqueue(req.bot_name.lower(), req.nid, payload)
+    job, enqueued = JOB_QUEUE.enqueue(req.bot_name.lower(), req.nid, payload)
+    if not enqueued:
+        return JSONResponse(
+            status_code=status.HTTP_409_CONFLICT,
+            content={"status": "already_running", "job_id": job.id},
+        )
     return {"status": "queued", "job": job.to_dict()}
 
 
