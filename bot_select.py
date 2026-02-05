@@ -132,9 +132,12 @@ class BankSelectionBot(BotCore):
                         stop_event.set()
                         return
 
+                    # High-priority state gate: firewall challenge must short-circuit all other states.
                     if self.is_firewall_challenge(page):
-                        self.handle_firewall_challenge(page, stop_event)
+                        resumed = self.handle_firewall_challenge(page, stop_event)
                         if stop_event.is_set():
+                            break
+                        if not resumed:
                             break
                         DBHandler.update_status(self.nid, "Ready", "Firewall challenge cleared")
                         if sleep_with_stop(stop_event, random.uniform(0.5, 0.8)):
@@ -361,12 +364,12 @@ class BankSelectionBot(BotCore):
             return False
 
     def handle_firewall_challenge(self, page, stop_event):
-        self.log("🛡️ Network Security Challenge - Manual Action Required.", "warning", page)
+        self.log("🛡️ Network Security Challenge Detected - Local Pause for Manual Action.", "warning", page)
 
         support_id = None
         try:
             body_text = page.inner_text("body") or ""
-            match = re.search(r"support\s*id\s*[:#-]?\s*([A-Za-z0-9-]+)", body_text, re.IGNORECASE)
+            match = re.search(r"Your support ID is:\s*(\d+)", body_text, re.IGNORECASE)
             if match:
                 support_id = match.group(1)
         except Exception:
@@ -382,10 +385,11 @@ class BankSelectionBot(BotCore):
         while not stop_event.is_set():
             try:
                 challenge_still_present = self.is_firewall_challenge(page)
-                entry_ready = page.locator("#ctl00_ContentPlaceHolder1_tbIDNo").is_visible()
+                nid_input = page.locator("#ctl00_ContentPlaceHolder1_tbIDNo")
+                entry_ready = nid_input.is_visible() and nid_input.is_enabled()
                 if (not challenge_still_present) and entry_ready:
                     self.log("✅ Firewall challenge cleared by operator. Resuming automation.", "success", page)
-                    return
+                    return True
             except Exception:
                 pass
 
@@ -395,7 +399,9 @@ class BankSelectionBot(BotCore):
                 next_wait_log_at = now + 15.0
 
             if sleep_with_stop(stop_event, 3.0):
-                return
+                return False
+
+        return False
 
     def _get_otp_from_db_fresh(self):
         try:
