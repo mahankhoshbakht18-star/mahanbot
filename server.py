@@ -235,6 +235,12 @@ class Job:
         }
 
 
+
+class DuplicateJobError(ValueError):
+    def __init__(self, job):
+        super().__init__("Job already queued or running")
+        self.job = job
+
 class JobQueue:
     ACTIVE_STATUSES = {"queued", "running", "cancelling"}
 
@@ -259,17 +265,17 @@ class JobQueue:
                     return job
         return None
 
-    def enqueue(self, bot_name: str, nid: str, payload: Dict[str, Any]) -> Tuple[Job, bool]:
+    def enqueue(self, bot_name: str, nid: str, payload: Dict[str, Any]) -> Job:
         with self._condition:
             for job in self._jobs.values():
                 if job.bot_name == bot_name and job.nid == nid and job.status in self.ACTIVE_STATUSES:
-                    return job, False
+                    raise DuplicateJobError(job)
             job = Job(bot_name, nid, payload)
             self._jobs[job.id] = job
             self._queue.append(job.id)
             self._condition.notify()
         job_status_event(nid, job.id, "queued")
-        return job, True
+        return job
 
     def cancel(self, job_id: str) -> Optional[Job]:
         with self._condition:
@@ -456,11 +462,12 @@ def start_job(req: JobStartRequest, _: bool = Depends(require_api_key)):
     if req.browser_profile_override:
         payload["browser_profile_override"] = normalize_browser_profile(req.browser_profile_override)
 
-    job, enqueued = JOB_QUEUE.enqueue(req.bot_name.lower(), req.nid, payload)
-    if not enqueued:
+    try:
+        job = JOB_QUEUE.enqueue(req.bot_name.lower(), req.nid, payload)
+    except DuplicateJobError as exc:
         return JSONResponse(
             status_code=status.HTTP_409_CONFLICT,
-            content={"status": "already_running", "job_id": job.id},
+            content={"status": "already_running", "job_id": exc.job.id},
         )
     return {"status": "queued", "job": job.to_dict()}
 

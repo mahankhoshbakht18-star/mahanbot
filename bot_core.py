@@ -40,14 +40,20 @@ class BotCore:
     def _load_user_data(self):
         row = DBHandler.get_applicant(self.nid)
         data = {}
-        if row and row['data']:
-            if isinstance(row['data'], str):
-                data = json.loads(row['data'])
-            else:
-                data = row['data']
+        row_data = {}
         if row:
-            data.setdefault("full_name", row.get("full_name"))
-            data.setdefault("national_id", row.get("national_id"))
+            try:
+                row_data = dict(row)
+            except Exception:
+                row_data = row if isinstance(row, dict) else {}
+        if row_data and row_data.get('data'):
+            if isinstance(row_data['data'], str):
+                data = json.loads(row_data['data'])
+            else:
+                data = row_data['data']
+        if row_data:
+            data.setdefault("full_name", row_data.get("full_name"))
+            data.setdefault("national_id", row_data.get("national_id"))
         return data or {}
 
     def get_otp_code(self):
