@@ -3,6 +3,7 @@ import time
 import os
 import json
 import random
+import re
 from playwright.sync_api import Error as PlaywrightError
 from bot_core import BotCore
 from browser_launcher import BrowserLaunchError, close_browser, safe_goto
@@ -130,6 +131,15 @@ class BankSelectionBot(BotCore):
                         self.log("🛑 مرورگر توسط کاربر بسته شد.", "stopped")
                         stop_event.set()
                         return
+
+                    if self.is_firewall_challenge(page):
+                        self.handle_firewall_challenge(page, stop_event)
+                        if stop_event.is_set():
+                            break
+                        DBHandler.update_status(self.nid, "Ready", "Firewall challenge cleared")
+                        if sleep_with_stop(stop_event, random.uniform(0.5, 0.8)):
+                            break
+                        continue
 
                     now = time.time()
                     if now >= next_state_sweep_at:
@@ -278,7 +288,7 @@ class BankSelectionBot(BotCore):
                         DBHandler.save_success_data(self.nid, code)
                         return
 
-                    # firewall (after step checks to avoid starving state machine)
+                    # legacy fallback firewall solver (non-manual page flows)
                     elif self._has_firewall_signal(page):
                         if self.solve_firewall(page):
                             firewall_solved_count += 1
@@ -291,11 +301,11 @@ class BankSelectionBot(BotCore):
                                 self._debug_step1_dump(page, "firewall_stuck_blocked")
                                 DBHandler.update_status(self.nid, "Blocked", "Firewall loop detected")
                                 break
-                            if sleep_with_stop(stop_event, 0.8):
+                            if sleep_with_stop(stop_event, random.uniform(0.5, 0.8)):
                                 break
                             continue
 
-                    if sleep_with_stop(stop_event, 0.5):
+                    if sleep_with_stop(stop_event, random.uniform(0.5, 0.8)):
                         break
 
             except PlaywrightError as pe:
@@ -327,7 +337,65 @@ class BankSelectionBot(BotCore):
                 close_browser(playwright, browser, context, page)
 
             if not stop_event.is_set():
-                sleep_with_stop(stop_event, 2)
+                sleep_with_stop(stop_event, random.uniform(0.5, 0.8))
+
+    def is_firewall_challenge(self, page) -> bool:
+        selectors = ["#ans", "#jar"]
+        for selector in selectors:
+            try:
+                locator = page.locator(selector)
+                if locator.count() > 0 and locator.first.is_visible():
+                    return True
+            except Exception:
+                continue
+
+        challenge_markers = [
+            "human visitor",
+            "support id",
+            "prevent automated",
+        ]
+        try:
+            body_text = (page.inner_text("body") or "").lower()
+            return any(marker in body_text for marker in challenge_markers)
+        except Exception:
+            return False
+
+    def handle_firewall_challenge(self, page, stop_event):
+        self.log("🛡️ Network Security Challenge - Manual Action Required.", "warning", page)
+
+        support_id = None
+        try:
+            body_text = page.inner_text("body") or ""
+            match = re.search(r"support\s*id\s*[:#-]?\s*([A-Za-z0-9-]+)", body_text, re.IGNORECASE)
+            if match:
+                support_id = match.group(1)
+        except Exception:
+            pass
+
+        if support_id:
+            self.log(f"🧾 Firewall Support ID: {support_id}", "info", page)
+            DBHandler.update_status(self.nid, "BLOCKED_FIREWALL_MANUAL", f"Support ID: {support_id}")
+        else:
+            DBHandler.update_status(self.nid, "BLOCKED_FIREWALL_MANUAL", "Manual firewall challenge")
+
+        next_wait_log_at = 0.0
+        while not stop_event.is_set():
+            try:
+                challenge_still_present = self.is_firewall_challenge(page)
+                entry_ready = page.locator("#ctl00_ContentPlaceHolder1_tbIDNo").is_visible()
+                if (not challenge_still_present) and entry_ready:
+                    self.log("✅ Firewall challenge cleared by operator. Resuming automation.", "success", page)
+                    return
+            except Exception:
+                pass
+
+            now = time.time()
+            if now >= next_wait_log_at:
+                self.log("⏳ Waiting for operator...", "warning", page)
+                next_wait_log_at = now + 15.0
+
+            if sleep_with_stop(stop_event, 3.0):
+                return
 
     def _get_otp_from_db_fresh(self):
         try:
