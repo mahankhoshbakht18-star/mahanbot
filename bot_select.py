@@ -127,6 +127,9 @@ class BankSelectionBot(BotCore):
                         return False
 
                 while not stop_event.is_set():
+                    if stop_event.is_set():
+                        break
+
                     if page.is_closed():
                         self.log("🛑 مرورگر توسط کاربر بسته شد.", "stopped")
                         stop_event.set()
@@ -355,7 +358,6 @@ class BankSelectionBot(BotCore):
         challenge_markers = [
             "human visitor",
             "support id",
-            "prevent automated",
         ]
         try:
             body_text = (page.inner_text("body") or "").lower()
@@ -364,7 +366,7 @@ class BankSelectionBot(BotCore):
             return False
 
     def handle_firewall_challenge(self, page, stop_event):
-        self.log("🛡️ Network Security Challenge Detected - Local Pause for Manual Action.", "warning", page)
+        self.log("🛡️ FIREWALL challenge detected - manual action required.", "warning", page)
 
         support_id = None
         try:
@@ -384,10 +386,9 @@ class BankSelectionBot(BotCore):
         next_wait_log_at = 0.0
         while not stop_event.is_set():
             try:
-                challenge_still_present = self.is_firewall_challenge(page)
                 nid_input = page.locator("#ctl00_ContentPlaceHolder1_tbIDNo")
                 entry_ready = nid_input.is_visible() and nid_input.is_enabled()
-                if (not challenge_still_present) and entry_ready:
+                if entry_ready:
                     self.log("✅ Firewall challenge cleared by operator. Resuming automation.", "success", page)
                     return True
             except Exception:
@@ -395,7 +396,7 @@ class BankSelectionBot(BotCore):
 
             now = time.time()
             if now >= next_wait_log_at:
-                self.log("⏳ Waiting for operator...", "warning", page)
+                self.log("Waiting for operator...", "warning", page)
                 next_wait_log_at = now + 15.0
 
             if sleep_with_stop(stop_event, 3.0):
