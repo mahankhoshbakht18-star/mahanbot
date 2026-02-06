@@ -2,6 +2,7 @@ import sqlite3
 import json
 import os
 import sys
+import time
 from contextlib import contextmanager
 from typing import Any, Dict, Optional
 
@@ -62,6 +63,7 @@ class DBHandler:
 
                 # WAL must be set before heavy write contention begins
                 c.execute("PRAGMA journal_mode=WAL;")
+                c.execute("PRAGMA synchronous=NORMAL;")
 
                 c.execute(
                     """CREATE TABLE IF NOT EXISTS applicants (
@@ -188,12 +190,13 @@ class DBHandler:
             pass
 
     @staticmethod
-    def save_otp(nid: str, code: str) -> bool:
+    def save_otp(nid: str, code: str, status: str = "received") -> bool:
         user = DBHandler.get_applicant(nid)
         if user:
             try:
                 d = json.loads(user["data"]) if user["data"] else {}
                 d["otp_code"] = str(code).strip()
+                d["otp_status"] = status
                 with DBHandler._connect() as conn:
                     c = conn.cursor()
                     c.execute("UPDATE applicants SET data=? WHERE national_id=?", (json.dumps(d, ensure_ascii=False), nid))
@@ -204,6 +207,18 @@ class DBHandler:
         return False
 
     @staticmethod
+    def get_otp(nid: str) -> Optional[str]:
+        user = DBHandler.get_applicant(nid)
+        if user:
+            try:
+                d = json.loads(user["data"]) if user["data"] else {}
+                code = d.get("otp_code")
+                return str(code).strip() if code else None
+            except Exception:
+                return None
+        return None
+
+    @staticmethod
     def clear_otp(nid: str) -> None:
         user = DBHandler.get_applicant(nid)
         if user:
@@ -211,12 +226,75 @@ class DBHandler:
                 d = json.loads(user["data"]) if user["data"] else {}
                 if "otp_code" in d:
                     del d["otp_code"]
+                if "otp_status" in d:
+                    del d["otp_status"]
                     with DBHandler._connect() as conn:
                         c = conn.cursor()
                         c.execute("UPDATE applicants SET data=? WHERE national_id=?", (json.dumps(d, ensure_ascii=False), nid))
                         conn.commit()
             except Exception:
                 pass
+
+    @staticmethod
+    def update_applicant_data(nid: str, updates: Dict[str, Any]) -> bool:
+        user = DBHandler.get_applicant(nid)
+        if not user:
+            return False
+        try:
+            d = json.loads(user["data"]) if user["data"] else {}
+            d.update(updates)
+            with DBHandler._connect() as conn:
+                c = conn.cursor()
+                c.execute("UPDATE applicants SET data=? WHERE national_id=?", (json.dumps(d, ensure_ascii=False), nid))
+                conn.commit()
+            return True
+        except Exception:
+            return False
+
+    @staticmethod
+    def append_captcha_attempt(nid: str, predicted_text: str, result: str, source: Optional[str] = None) -> None:
+        user = DBHandler.get_applicant(nid)
+        if not user:
+            return
+        try:
+            d = json.loads(user["data"]) if user["data"] else {}
+            attempts = d.get("captcha_attempts", [])
+            attempts.append(
+                {
+                    "predicted_text": predicted_text,
+                    "result": result,
+                    "source": source or "general",
+                    "ts": time.time(),
+                }
+            )
+            if len(attempts) > 200:
+                attempts = attempts[-200:]
+            d["captcha_attempts"] = attempts
+            with DBHandler._connect() as conn:
+                c = conn.cursor()
+                c.execute("UPDATE applicants SET data=? WHERE national_id=?", (json.dumps(d, ensure_ascii=False), nid))
+                conn.commit()
+        except Exception:
+            pass
+
+    @staticmethod
+    def add_stopped_bank(nid: str, bank_name: str) -> bool:
+        user = DBHandler.get_applicant(nid)
+        if not user:
+            return False
+        try:
+            d = json.loads(user["data"]) if user["data"] else {}
+            stopped = d.get("stopped_banks", [])
+            if bank_name not in stopped:
+                stopped.append(bank_name)
+            d["stopped_banks"] = stopped
+            with DBHandler._connect() as conn:
+                c = conn.cursor()
+                c.execute("UPDATE applicants SET data=? WHERE national_id=?", (json.dumps(d, ensure_ascii=False), nid))
+                conn.commit()
+            return True
+        except Exception:
+            return False
 
     @staticmethod
     def save_success_data(nid: str, tracking_code: str) -> bool:

@@ -60,6 +60,8 @@ DBHandler.init_db()
 MAIN_LOOP: Optional[asyncio.AbstractEventLoop] = None
 CAPTCHA_SERVICE: Optional[CaptchaService] = None
 JOB_QUEUE: Optional["JobQueue"] = None
+OTP_EVENTS: Dict[str, asyncio.Event] = {}
+OTP_EVENT_LOCK = asyncio.Lock()
 
 
 # ------------------------- Helpers -------------------------
@@ -100,6 +102,20 @@ async def _open_aiosqlite():
     await conn.execute("PRAGMA busy_timeout=5000;")
     await conn.execute("PRAGMA foreign_keys=ON;")
     return conn
+
+
+async def _get_otp_event(nid: str) -> asyncio.Event:
+    async with OTP_EVENT_LOCK:
+        event = OTP_EVENTS.get(nid)
+        if not event:
+            event = asyncio.Event()
+            OTP_EVENTS[nid] = event
+        return event
+
+
+async def _signal_otp_event(nid: str) -> None:
+    event = await _get_otp_event(nid)
+    event.set()
 
 
 def _check_uvicorn_ws_backend():
@@ -396,12 +412,52 @@ def receive_sms(req: SMSRequest):
     if not req.nid or not req.code:
         raise HTTPException(status_code=400, detail="Invalid payload")
 
-    success = DBHandler.save_otp(req.nid, req.code)
+    success = DBHandler.save_otp(req.nid, req.code, status="received")
     if not success:
         raise HTTPException(status_code=404, detail="Applicant not found")
 
     log_event(req.nid, None, f"OTP received: {req.code}", "success")
+    if MAIN_LOOP:
+        asyncio.run_coroutine_threadsafe(_signal_otp_event(req.nid), MAIN_LOOP)
     return {"status": "ok"}
+
+
+@app.post("/otp/manual")
+def manual_otp(req: SMSRequest):
+    if not req.nid or not req.code:
+        raise HTTPException(status_code=400, detail="Invalid payload")
+
+    success = DBHandler.save_otp(req.nid, req.code, status="pending")
+    if not success:
+        raise HTTPException(status_code=404, detail="Applicant not found")
+
+    log_event(req.nid, None, f"OTP manual override: {req.code}", "warning")
+    if MAIN_LOOP:
+        asyncio.run_coroutine_threadsafe(_signal_otp_event(req.nid), MAIN_LOOP)
+    return {"status": "ok"}
+
+
+@app.get("/wait_otp/{nid}")
+async def wait_otp(nid: str):
+    if not nid:
+        raise HTTPException(status_code=400, detail="Invalid NID")
+
+    existing = DBHandler.get_otp(nid)
+    if existing:
+        return {"otp": existing}
+
+    event = await _get_otp_event(nid)
+    try:
+        await asyncio.wait_for(event.wait(), timeout=60)
+    except asyncio.TimeoutError:
+        raise HTTPException(status_code=408, detail="OTP timeout")
+    finally:
+        event.clear()
+
+    code = DBHandler.get_otp(nid)
+    if not code:
+        raise HTTPException(status_code=404, detail="OTP not found")
+    return {"otp": code}
 
 
 # ✅ ذخیره متقاضی
@@ -433,6 +489,18 @@ async def delete_applicant(nid: str, _: bool = Depends(require_api_key)):
         await conn.execute("DELETE FROM applicants WHERE national_id=?", (nid,))
         await conn.commit()
     return {"status": "deleted"}
+
+
+@app.post("/applicants/{nid}/banks/stop")
+def stop_bank(nid: str, payload: Dict[str, Any], _: bool = Depends(require_api_key)):
+    bank_name = (payload.get("bank") or "").strip()
+    if not bank_name:
+        raise HTTPException(status_code=400, detail="Bank name required")
+    success = DBHandler.add_stopped_bank(nid, bank_name)
+    if not success:
+        raise HTTPException(status_code=404, detail="Applicant not found")
+    log_event(nid, None, f"⛔ توقف بانک: {bank_name}", "warning")
+    return {"status": "ok", "bank": bank_name}
 
 
 # ✅ این endpoint را داشبورد شما لازم دارد

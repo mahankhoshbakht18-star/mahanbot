@@ -9,6 +9,7 @@ from bot_core import BotCore
 from browser_launcher import BrowserLaunchError, close_browser, safe_goto
 from browser_actions import BrowserActions
 from database import DBHandler
+from event_logger import EVENT_BROADCASTER, build_event
 
 TARGET_URL = "https://ve.cbi.ir/SelectBnkShb.aspx"
 
@@ -33,6 +34,7 @@ class BankSelectionBot(BotCore):
             captcha_service=captcha_service,
             browser_profile=browser_profile,
         )
+        self._favorite_notified = set()
 
     def run(self, stop_event, loan_type="rbtnNaghdi"):
         attempt = 0
@@ -51,7 +53,21 @@ class BankSelectionBot(BotCore):
                 if stop_event.is_set():
                     return
 
-                page.on("dialog", lambda dialog: dialog.accept())
+                otp_attempted = False
+
+                def handle_dialog(dialog):
+                    nonlocal otp_attempted
+                    try:
+                        msg = dialog.message()
+                        if any(x in msg for x in ["منقضی", "نامعتبر", "اشتباه", "صحیح نمی باشد"]):
+                            DBHandler.clear_otp(self.nid)
+                            self.log("♻️ کد نامعتبر پاک شد. انتظار برای پیامک جدید...", "warning")
+                            otp_attempted = False
+                        dialog.accept()
+                    except Exception:
+                        pass
+
+                page.on("dialog", handle_dialog)
 
                 self.log(f"🚀 شروع عملیات (دور {attempt})...", "info", page)
                 captcha_mode = self.settings.get("captcha_mode", "human")
@@ -152,6 +168,14 @@ class BankSelectionBot(BotCore):
                         self._log_state_sweep(page)
                         next_state_sweep_at = now + 3.0
 
+                    if otp_attempted and self._detect_otp_failure(page):
+                        DBHandler.clear_otp(self.nid)
+                        self.log("♻️ کد منقضی/نامعتبر شد؛ انتظار برای پیامک جدید.", "warning", page)
+                        otp_attempted = False
+                        if sleep_with_stop(stop_event, 1.0):
+                            break
+                        continue
+
                     # Soft WAF / blocked message
                     try:
                         if wait_for_state("text=درخواست شما رد شد", "CHECK_BLOCKERS/SOFT_WAF", timeout=1500):
@@ -181,6 +205,11 @@ class BankSelectionBot(BotCore):
                     if step1_found:
                         if stop_event.is_set():
                             break
+                        if otp_attempted:
+                            DBHandler.clear_otp(self.nid)
+                            self.log("♻️ بازگشت به مرحله اول؛ کد قبلی پاک شد.", "warning", page)
+                            otp_attempted = False
+
                         nid_locator, _ = self._select_editable_input(
                             page,
                             ["#ctl00_ContentPlaceHolder1_tbIDNo", "input[name$='tbIDNo']"],
@@ -254,6 +283,7 @@ class BankSelectionBot(BotCore):
                                 captcha_mode,
                             )
                             if success:
+                                otp_attempted = True
                                 self.log("👆 تایید کد پیامک...", "info", page)
                                 if sleep_with_stop(stop_event, 3):
                                     break
@@ -262,7 +292,7 @@ class BankSelectionBot(BotCore):
                     elif wait_for_state("#ctl00_ContentPlaceHolder1_ddlBankName", "CHECK_STEP_3_BANK_SELECTION", timeout=5000):
                         if stop_event.is_set():
                             break
-                        result = self._process_bank_selection_v2(page)
+                        result = self._process_bank_selection_v2(page, stop_event)
                         if result == "selected":
                             self.log("✅ بانک انتخاب شد.", "success", page)
                         elif result == "no_match":
@@ -285,6 +315,10 @@ class BankSelectionBot(BotCore):
                     elif wait_for_state("#ctl00_ContentPlaceHolder1_btnLogin", "CHECK_STEP_LOGIN_REDIRECT", timeout=5000):
                         if stop_event.is_set():
                             break
+                        if otp_attempted:
+                            DBHandler.clear_otp(self.nid)
+                            self.log("♻️ نشست منقضی شد؛ بازگشت به مرحله اول و انتظار پیامک جدید.", "warning", page)
+                            otp_attempted = False
                         self._perform_login_standard(page, captcha_mode)
 
                     # موفقیت نهایی
@@ -621,53 +655,67 @@ class BankSelectionBot(BotCore):
         except Exception:
             pass
 
-    def _process_bank_selection_v2(self, page):
+    def _process_bank_selection_v2(self, page, stop_event):
         try:
             dropdown_id = "#ctl00_ContentPlaceHolder1_ddlBankName"
-            options = page.locator(f"{dropdown_id} option").all()
-            available_banks = {}
+            while not stop_event.is_set():
+                options = page.locator(f"{dropdown_id} option").all()
+                available_banks = {}
 
-            for opt in options:
-                val = opt.get_attribute("value")
-                txt = opt.inner_text().strip()
-                if val and val != "0":
-                    available_banks[txt] = val
+                for opt in options:
+                    val = opt.get_attribute("value")
+                    txt = opt.inner_text().strip()
+                    if val and val != "0":
+                        available_banks[txt] = val
 
-            if not available_banks:
-                self.log("⚠️ لیست بانک‌ها خالی است. رفرش صفحه...", "warning", page)
+                if not available_banks:
+                    self.log("⚠️ لیست بانک‌ها خالی است. رفرش صفحه...", "warning", page)
+                    if sleep_with_stop(stop_event, 3):
+                        return "stopped"
+                    try:
+                        page.reload()
+                    except Exception:
+                        pass
+                    continue
+
+                runtime_data = self._load_runtime_data()
+                user_priorities = runtime_data.get("priority_banks") or runtime_data.get("banks", [])
+                favorite_banks = runtime_data.get("favorite_banks", [])
+                stopped_banks = set(runtime_data.get("stopped_banks", []))
+
+                if favorite_banks:
+                    self._notify_favorite_banks(available_banks, favorite_banks, user_priorities)
+
+                if not user_priorities:
+                    self.log("⚠️ لیست اولویت بانک خالی است!", "error")
+                    return "error"
+
+                for priority in user_priorities:
+                    target_name = priority["name"] if isinstance(priority, dict) else priority
+                    if target_name in stopped_banks:
+                        continue
+
+                    found_val = None
+                    for b_text, b_val in available_banks.items():
+                        if target_name and target_name in b_text:
+                            found_val = b_val
+                            break
+
+                    if found_val:
+                        self.log(f"🎯 بانک یافت شد: {target_name}", "selecting", page)
+                        page.select_option(dropdown_id, value=found_val)
+                        self.log("⏳ در حال بارگذاری شعب...", "info", page)
+                        self._wait_for_branch_ready(page)
+                        return "selected"
+
+                self.log("⚠️ بانک موردنظر پیدا نشد. رفرش صفحه...", "warning", page)
+                if sleep_with_stop(stop_event, 3):
+                    return "stopped"
                 try:
                     page.reload()
                 except Exception:
                     pass
-                return "waiting"
-
-            user_priorities = self.user_data.get("banks", [])
-            if not user_priorities:
-                self.log("⚠️ لیست اولویت بانک خالی است!", "error")
-                return "error"
-
-            for priority in user_priorities:
-                target_name = priority["name"] if isinstance(priority, dict) else priority
-
-                found_val = None
-                for b_text, b_val in available_banks.items():
-                    if target_name and target_name in b_text:
-                        found_val = b_val
-                        break
-
-                if found_val:
-                    self.log(f"🎯 بانک یافت شد: {target_name}", "selecting", page)
-                    page.select_option(dropdown_id, value=found_val)
-                    self.log("⏳ در حال بارگذاری شعب...", "info", page)
-                    self._wait_for_branch_ready(page)
-                    return "selected"
-
-            self.log("⚠️ بانک موردنظر پیدا نشد. رفرش صفحه...", "warning", page)
-            try:
-                page.reload()
-            except Exception:
-                pass
-            return "no_match"
+            return "stopped"
         except Exception:
             return "error"
 
@@ -721,6 +769,61 @@ class BankSelectionBot(BotCore):
             except Exception:
                 time.sleep(2)
 
+    def _load_runtime_data(self):
+        row = DBHandler.get_applicant(self.nid)
+        if not row:
+            return {}
+        try:
+            row_data = dict(row) if not isinstance(row, dict) else row
+            data = json.loads(row_data["data"]) if row_data.get("data") else {}
+        except Exception:
+            data = {}
+        return data
+
+    def _notify_favorite_banks(self, available_banks, favorite_banks, user_priorities):
+        priority_names = [
+            p["name"] if isinstance(p, dict) else p for p in (user_priorities or [])
+        ]
+        for fav in favorite_banks:
+            for b_text in available_banks.keys():
+                if fav and fav in b_text and fav not in priority_names:
+                    if fav in self._favorite_notified:
+                        break
+                    self._favorite_notified.add(fav)
+                    EVENT_BROADCASTER.emit_event(
+                        build_event("favorite_found", nid=self.nid, bank=fav, detail=b_text)
+                    )
+                    self.log(f"⭐ بانک مورد علاقه پیدا شد: {fav}", "info")
+                    break
+
+    def _detect_otp_failure(self, page) -> bool:
+        phrases = [
+            "کد منقضی",
+            "منقضی شده",
+            "کد تایید اشتباه",
+            "کد تایید صحیح نمی باشد",
+            "کد تایید نامعتبر",
+            "session expired",
+        ]
+        try:
+            content = page.content()
+        except Exception:
+            return False
+        return any(phrase in content for phrase in phrases)
+
+    def _detect_captcha_failure(self, page) -> bool:
+        phrases = [
+            "کد امنیتی اشتباه",
+            "کد امنیتی صحیح",
+            "کد امنیتی نادرست",
+            "security code",
+        ]
+        try:
+            content = page.content()
+        except Exception:
+            return False
+        return any(phrase in content for phrase in phrases)
+
     def _solve_captcha_wrapper(self, page, input_sel, btn_sel, mode):
         try:
             captcha_img = page.locator(".BDC_CaptchaImage").first
@@ -753,6 +856,9 @@ class BankSelectionBot(BotCore):
                 else:
                     inp.fill(code)
                     page.locator(btn_sel).click()
+                time.sleep(1)
+                result = "failed" if self._detect_captcha_failure(page) else "success"
+                DBHandler.append_captcha_attempt(self.nid, code, result, source="select")
                 return True
             else:
                 self.log("❌ خطا در خواندن. رفرش...", "warning", page)
@@ -761,6 +867,8 @@ class BankSelectionBot(BotCore):
                 except Exception:
                     pass
                 time.sleep(1.5)
+                if code:
+                    DBHandler.append_captcha_attempt(self.nid, code, "failed", source="select")
                 return False
         except Exception:
             return False

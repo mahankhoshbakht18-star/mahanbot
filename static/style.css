@@ -153,6 +153,70 @@ body {
     box-shadow: 0 2px 5px rgba(0,0,0,0.02);
 }
 
+.bank-options,
+.bank-favorite-list {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+}
+
+.bank-chip {
+    padding: 6px 12px;
+    border-radius: 999px;
+    border: 1px solid #cbd5e1;
+    background: #fff;
+    cursor: pointer;
+    font-size: 0.85rem;
+    transition: all 0.2s;
+}
+
+.bank-chip.active {
+    background: #4f46e5;
+    color: #fff;
+    border-color: #4f46e5;
+}
+
+.bank-priority-list {
+    min-height: 120px;
+    background: #f8fafc;
+    border: 1px dashed #cbd5e1;
+    border-radius: 12px;
+    padding: 10px;
+}
+
+.bank-priority-item {
+    background: #fff;
+    border-radius: 10px;
+    border: 1px solid #e2e8f0;
+    padding: 8px 12px;
+    margin-bottom: 8px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    cursor: grab;
+}
+
+.bank-priority-item.dragging {
+    opacity: 0.6;
+}
+
+.bank-stop-chip {
+    border: 1px solid #ef4444;
+    color: #ef4444;
+    padding: 4px 10px;
+    border-radius: 999px;
+    font-size: 0.75rem;
+    background: #fff;
+    cursor: pointer;
+}
+
+.bank-stop-chip.stopped {
+    background: #fee2e2;
+    border-color: #fca5a5;
+    color: #b91c1c;
+    cursor: default;
+}
+
 /* Responsive */
 @media (max-width: 992px) {
     .sidebar { width: 80px; padding: 15px 10px; }
