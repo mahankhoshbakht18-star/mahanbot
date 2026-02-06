@@ -18,6 +18,14 @@ const logFilters = {
     level: '',
     type: ''
 };
+const BANK_OPTIONS = [
+    'ملت', 'ملی', 'تجارت', 'صادرات', 'پارسیان', 'پاسارگاد',
+    'رفاه', 'کشاورزی', 'مسکن', 'سامان', 'اقتصاد نوین', 'سینا',
+    'ایران زمین', 'دی', 'گردشگری', 'آینده', 'شهر', 'مهر ایران',
+    'انصار', 'قوامین', 'پست بانک', 'صنعت و معدن'
+];
+let priorityBanks = [];
+let favoriteBanks = [];
 
 document.addEventListener("DOMContentLoaded", () => {
     switchView('dashboard');
@@ -25,6 +33,7 @@ document.addEventListener("DOMContentLoaded", () => {
     setupLogFilters();
     connectWebSocket();
     loadBrowserProfile();
+    initBankSelectors();
     if(document.getElementById('otpInput')){
         document.getElementById('otpInput').addEventListener('keypress', function (e) {
             if (e.key === 'Enter') sendOtp(this.value);
@@ -114,6 +123,127 @@ function formatBanksInput(banks) {
     return '';
 }
 
+function initBankSelectors() {
+    const optionsEl = document.getElementById('bankOptions');
+    const priorityEl = document.getElementById('priorityBanksList');
+    const favoriteEl = document.getElementById('favoriteBanksList');
+    if (!optionsEl || !priorityEl || !favoriteEl) return;
+    renderBankOptions();
+    renderPriorityBanks();
+    renderFavoriteBanks();
+    setupDragAndDrop(priorityEl);
+}
+
+function renderBankOptions() {
+    const optionsEl = document.getElementById('bankOptions');
+    if (!optionsEl) return;
+    optionsEl.innerHTML = '';
+    BANK_OPTIONS.forEach((bank) => {
+        const chip = document.createElement('button');
+        chip.type = 'button';
+        chip.className = `bank-chip ${priorityBanks.includes(bank) ? 'active' : ''}`;
+        chip.textContent = bank;
+        chip.addEventListener('click', () => {
+            if (!priorityBanks.includes(bank)) {
+                priorityBanks.push(bank);
+                renderPriorityBanks();
+            }
+            renderBankOptions();
+        });
+        optionsEl.appendChild(chip);
+    });
+}
+
+function renderPriorityBanks() {
+    const priorityEl = document.getElementById('priorityBanksList');
+    if (!priorityEl) return;
+    priorityEl.innerHTML = '';
+    priorityBanks.forEach((bank) => {
+        const item = document.createElement('li');
+        item.className = 'bank-priority-item list-group-item';
+        item.draggable = true;
+        item.dataset.bank = bank;
+        item.innerHTML = `
+            <span>${bank}</span>
+            <button class="btn btn-sm btn-outline-danger">حذف</button>
+        `;
+        item.querySelector('button').addEventListener('click', () => {
+            priorityBanks = priorityBanks.filter((b) => b !== bank);
+            renderPriorityBanks();
+            renderBankOptions();
+        });
+        priorityEl.appendChild(item);
+    });
+}
+
+function renderFavoriteBanks() {
+    const favoriteEl = document.getElementById('favoriteBanksList');
+    if (!favoriteEl) return;
+    favoriteEl.innerHTML = '';
+    BANK_OPTIONS.forEach((bank) => {
+        const chip = document.createElement('button');
+        chip.type = 'button';
+        chip.className = `bank-chip ${favoriteBanks.includes(bank) ? 'active' : ''}`;
+        chip.textContent = bank;
+        chip.addEventListener('click', () => {
+            if (favoriteBanks.includes(bank)) {
+                favoriteBanks = favoriteBanks.filter((b) => b !== bank);
+            } else {
+                favoriteBanks.push(bank);
+            }
+            renderFavoriteBanks();
+        });
+        favoriteEl.appendChild(chip);
+    });
+}
+
+function setupDragAndDrop(container) {
+    if (!container) return;
+    container.addEventListener('dragstart', (event) => {
+        const target = event.target;
+        if (target && target.classList.contains('bank-priority-item')) {
+            target.classList.add('dragging');
+        }
+    });
+    container.addEventListener('dragend', (event) => {
+        const target = event.target;
+        if (target && target.classList.contains('bank-priority-item')) {
+            target.classList.remove('dragging');
+        }
+    });
+    container.addEventListener('dragover', (event) => {
+        event.preventDefault();
+        const dragging = container.querySelector('.dragging');
+        if (!dragging) return;
+        const afterElement = getDragAfterElement(container, event.clientY);
+        if (afterElement == null) {
+            container.appendChild(dragging);
+        } else {
+            container.insertBefore(dragging, afterElement);
+        }
+    });
+    container.addEventListener('drop', () => {
+        const newOrder = [];
+        container.querySelectorAll('.bank-priority-item').forEach((item) => {
+            if (item.dataset.bank) newOrder.push(item.dataset.bank);
+        });
+        priorityBanks = newOrder;
+        renderBankOptions();
+    });
+}
+
+function getDragAfterElement(container, y) {
+    const draggableElements = [...container.querySelectorAll('.bank-priority-item:not(.dragging)')];
+    return draggableElements.reduce((closest, child) => {
+        const box = child.getBoundingClientRect();
+        const offset = y - box.top - box.height / 2;
+        if (offset < 0 && offset > closest.offset) {
+            return { offset, element: child };
+        }
+        return closest;
+    }, { offset: Number.NEGATIVE_INFINITY }).element;
+}
+
 async function fetchDashboardData() {
     try {
         const res = await fetch(`${API_URL}/applicants`);
@@ -136,6 +266,7 @@ function renderDashboard(users) {
     if(!tbody) return;
     tbody.innerHTML = '';
     let runningCount = 0, successCount = 0, codeCount = 0, runningNid = null;
+    let activeUser = null;
 
     users.forEach(user => {
         let d = parseUserData(user.data);
@@ -147,6 +278,9 @@ function renderDashboard(users) {
             runningCount++;
             if(user.status.includes('Wait')) runningNid = user.national_id;
             else if (!runningNid) runningNid = user.national_id;
+            if (!activeUser || user.status.includes('Running')) {
+                activeUser = user;
+            }
 
             const tr = document.createElement('tr');
             tr.dataset.nid = user.national_id;
@@ -161,11 +295,58 @@ function renderDashboard(users) {
 
     if(runningCount===0) tbody.innerHTML = `<tr><td colspan="3" class="text-muted small py-3">${getMessage('labels.inactive', 'غیرفعال')}</td></tr>`;
     window.currentActiveBotNid = runningNid;
+    renderActiveApplicantCard(activeUser);
 
     if(document.getElementById('stat-total')) document.getElementById('stat-total').innerText = users.length;
     if(document.getElementById('stat-active')) document.getElementById('stat-active').innerText = runningCount;
     if(document.getElementById('stat-success')) document.getElementById('stat-success').innerText = successCount;
     if(document.getElementById('stat-codes')) document.getElementById('stat-codes').innerText = codeCount;
+}
+
+function renderActiveApplicantCard(user) {
+    const nameEl = document.getElementById('activeApplicantName');
+    const metaEl = document.getElementById('activeApplicantMeta');
+    const statusEl = document.getElementById('activeApplicantStatus');
+    const bankListEl = document.getElementById('activeBankList');
+    const manualStatusEl = document.getElementById('manualOtpStatus');
+    if (!nameEl || !metaEl || !statusEl || !bankListEl) return;
+
+    bankListEl.innerHTML = '';
+    if (!user) {
+        nameEl.textContent = 'متقاضی فعال موجود نیست';
+        metaEl.textContent = '---';
+        statusEl.textContent = '---';
+        statusEl.className = 'badge bg-secondary';
+        if (manualStatusEl) manualStatusEl.textContent = '';
+        return;
+    }
+
+    const data = parseUserData(user.data);
+    const priority = data.priority_banks || data.banks || [];
+    const stopped = data.stopped_banks || [];
+    const mobile = data.mobile || '-';
+
+    nameEl.textContent = user.full_name || '---';
+    metaEl.textContent = `کدملی: ${user.national_id || '-'} | موبایل: ${mobile}`;
+    statusEl.textContent = translateStatus(user.status);
+    statusEl.className = `badge ${getStatusBadge(user.status)}`;
+
+    if (!priority.length) {
+        bankListEl.innerHTML = '<span class="text-muted small">اولویتی ثبت نشده است.</span>';
+        return;
+    }
+
+    priority.forEach((bank) => {
+        const bankName = bank?.name || bank;
+        const chip = document.createElement('span');
+        const isStopped = stopped.includes(bankName);
+        chip.className = `bank-stop-chip ${isStopped ? 'stopped' : ''}`;
+        chip.textContent = isStopped ? `${bankName} (متوقف)` : `Stop ${bankName}`;
+        if (!isStopped) {
+            chip.addEventListener('click', () => stopBank(user.national_id, bankName));
+        }
+        bankListEl.appendChild(chip);
+    });
 }
 
 async function sendOtp(code) {
@@ -175,6 +356,19 @@ async function sendOtp(code) {
     await apiCall(`/receive_sms`, 'POST', {nid: nid, code: code});
     document.getElementById('otpStatus').innerHTML = `<span class="text-success">${getMessage('alerts.otp_sent', 'ارسال شد')}</span>`;
     document.getElementById('otpInput').value = "";
+}
+
+async function sendManualOtp() {
+    const nid = window.currentActiveBotNid;
+    const input = document.getElementById('manualOtpInput');
+    const statusEl = document.getElementById('manualOtpStatus');
+    if (!nid || !input) return;
+    const code = input.value.trim();
+    if (!code) return;
+    if (statusEl) statusEl.textContent = 'در حال ارسال...';
+    await apiCall(`/otp/manual`, 'POST', {nid: nid, code: code});
+    if (statusEl) statusEl.textContent = 'کد دستی ثبت شد.';
+    input.value = '';
 }
 
 async function fetchApplicants(mode) {
@@ -313,8 +507,11 @@ function editUser(idx) {
     document.getElementById('md_m').value = d.marriage_m || ''; 
     document.getElementById('md_y').value = d.marriage_y || '';
     
-    const banksInput = document.getElementById('inpBanks');
-    if (banksInput) banksInput.value = formatBanksInput(d.banks);
+    priorityBanks = d.priority_banks || d.banks || [];
+    favoriteBanks = d.favorite_banks || [];
+    renderBankOptions();
+    renderPriorityBanks();
+    renderFavoriteBanks();
     
     switchView('add');
     document.getElementById('view-add').scrollIntoView({ behavior: 'smooth' });
@@ -325,8 +522,11 @@ function resetAddForm() {
     document.getElementById('addForm').reset();
     document.getElementById('formTitle').innerText = "ثبت متقاضی جدید";
     document.getElementById('btnResetForm').style.display = 'none';
-    const banksInput = document.getElementById('inpBanks');
-    if (banksInput) banksInput.value = '';
+    priorityBanks = [];
+    favoriteBanks = [];
+    renderBankOptions();
+    renderPriorityBanks();
+    renderFavoriteBanks();
 }
 
 async function submitNewApplicant() {
@@ -350,7 +550,9 @@ async function submitNewApplicant() {
         marriage_d: document.getElementById('md_d').value,
         marriage_m: document.getElementById('md_m').value,
         marriage_y: document.getElementById('md_y').value,
-        banks: parseBanksInput(document.getElementById('inpBanks').value)
+        priority_banks: priorityBanks,
+        favorite_banks: favoriteBanks,
+        banks: priorityBanks
     };
 
     const payload = {
@@ -661,6 +863,14 @@ async function stopBot(nid) {
     }
     setTimeout(fetchDashboardData, 1000);
 }
+async function stopBank(nid, bankName) {
+    try {
+        await apiCall(`/applicants/${nid}/banks/stop`, 'POST', {bank: bankName});
+        fetchDashboardData();
+    } catch (e) {
+        console.warn('Stop bank failed', e);
+    }
+}
 async function apiCall(u, m, b) { return (await fetch(API_URL+u, {method:m, headers:{'Content-Type':'application/json'}, body:JSON.stringify(b)})).json(); }
 
 function setupLogFilters() {
@@ -708,6 +918,10 @@ function handleSocketEvent(payload) {
         logEvents.shift();
     }
     renderLogs();
+    if (payload.type === 'favorite_found') {
+        showFavoriteToast(payload);
+        playAlertSound();
+    }
 }
 
 function trackJobForNid(payload) {
@@ -785,6 +999,49 @@ function renderLogs(clearInitial = false) {
     });
 
     term.scrollTop = term.scrollHeight;
+}
+
+function showFavoriteToast(payload) {
+    const container = document.getElementById('toastContainer');
+    if (!container) return;
+    const bankName = payload.bank || payload.detail || 'بانک مورد علاقه';
+    const toastEl = document.createElement('div');
+    toastEl.className = 'toast align-items-center text-bg-warning border-0 mb-2';
+    toastEl.setAttribute('role', 'alert');
+    toastEl.setAttribute('aria-live', 'assertive');
+    toastEl.setAttribute('aria-atomic', 'true');
+    toastEl.innerHTML = `
+        <div class="d-flex">
+            <div class="toast-body">
+                ⭐ بانک مورد علاقه پیدا شد: ${bankName}
+            </div>
+            <button type="button" class="btn-close btn-close-white me-2 m-auto" data-bs-dismiss="toast" aria-label="Close"></button>
+        </div>
+    `;
+    container.appendChild(toastEl);
+    const toast = new bootstrap.Toast(toastEl, { delay: 5000 });
+    toast.show();
+    toastEl.addEventListener('hidden.bs.toast', () => toastEl.remove());
+}
+
+function playAlertSound() {
+    try {
+        const ctx = new (window.AudioContext || window.webkitAudioContext)();
+        const oscillator = ctx.createOscillator();
+        const gain = ctx.createGain();
+        oscillator.type = 'sine';
+        oscillator.frequency.value = 880;
+        gain.gain.value = 0.2;
+        oscillator.connect(gain);
+        gain.connect(ctx.destination);
+        oscillator.start();
+        setTimeout(() => {
+            oscillator.stop();
+            ctx.close();
+        }, 300);
+    } catch (e) {
+        console.warn('Audio alert blocked', e);
+    }
 }
 
 function markDashboardStopped(nid) {

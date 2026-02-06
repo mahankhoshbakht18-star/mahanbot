@@ -67,6 +67,32 @@
                     <button class="btn btn-primary shadow-sm" onclick="fetchDashboardData()"><i class="fas fa-sync-alt me-2"></i>بروزرسانی</button>
                 </div>
             </div>
+            <div class="card border-0 shadow-sm mb-4" id="activeApplicantCard">
+                <div class="card-body">
+                    <div class="d-flex flex-wrap justify-content-between align-items-center gap-3">
+                        <div>
+                            <div class="text-muted small">متقاضی فعال</div>
+                            <h5 class="fw-bold mb-1" id="activeApplicantName">---</h5>
+                            <div class="small text-muted" id="activeApplicantMeta">---</div>
+                            <div class="mt-2">
+                                <span class="badge bg-primary" id="activeApplicantStatus">---</span>
+                            </div>
+                        </div>
+                        <div class="d-flex flex-column gap-2 align-items-end">
+                            <div class="d-flex gap-2 align-items-center">
+                                <input type="text" id="manualOtpInput" class="form-control text-center" maxlength="6" placeholder="کد دستی ۶ رقمی">
+                                <button class="btn btn-warning" onclick="sendManualOtp()">ارسال دستی کد</button>
+                            </div>
+                            <div class="small text-muted" id="manualOtpStatus"></div>
+                        </div>
+                    </div>
+                    <hr>
+                    <div>
+                        <div class="text-muted small mb-2">بانک‌های در حال پردازش</div>
+                        <div id="activeBankList" class="d-flex flex-wrap gap-2"></div>
+                    </div>
+                </div>
+            </div>
             <div class="row g-3 mb-4">
                 <div class="col-md-3"><div class="card stat-card bg-gradient-blue p-3 h-100"><div class="icon-bg"><i class="fas fa-users"></i></div><h3>کل متقاضیان</h3><h1 class="fw-bold m-0" id="stat-total">0</h1></div></div>
                 <div class="col-md-3"><div class="card stat-card bg-gradient-orange p-3 h-100"><div class="icon-bg"><i class="fas fa-robot"></i></div><h3>ربات‌های فعال</h3><h1 class="fw-bold m-0" id="stat-active">0</h1></div></div>
@@ -160,9 +186,20 @@
                         <div class="col-md-6"><h5 class="text-primary fw-bold border-bottom pb-2 mb-3">۳. تاریخ ازدواج</h5><div class="input-group"><input type="number" class="form-control text-center" id="md_d" placeholder="DD"><input type="number" class="form-control text-center" id="md_m" placeholder="MM"><input type="number" class="form-control text-center" id="md_y" placeholder="YYYY"></div></div>
                         <div class="col-md-12">
                             <h5 class="text-primary fw-bold border-bottom pb-2 mb-3">۴. اولویت بانک‌ها</h5>
-                            <label class="form-label small text-muted" for="inpBanks">Banks (Priority) / بانک های مورد نظر</label>
-                            <textarea class="form-control" id="inpBanks" rows="3" placeholder="مثال: رسالت, ملت, ملی یا هر بانک در یک خط"></textarea>
-                            <div class="form-text">بانک‌ها را با ویرگول یا خط جدید جدا کنید.</div>
+                            <div class="row g-3">
+                                <div class="col-md-6">
+                                    <label class="form-label small text-muted">بانک‌های موجود</label>
+                                    <div id="bankOptions" class="bank-options"></div>
+                                </div>
+                                <div class="col-md-6">
+                                    <label class="form-label small text-muted">اولویت بانک‌ها (Drag & Drop)</label>
+                                    <ul id="priorityBanksList" class="bank-priority-list list-group"></ul>
+                                </div>
+                                <div class="col-md-12">
+                                    <label class="form-label small text-muted">بانک‌های مورد علاقه</label>
+                                    <div id="favoriteBanksList" class="bank-favorite-list"></div>
+                                </div>
+                            </div>
                         </div>
                         <div class="col-md-12 mt-3"><div class="bg-success bg-opacity-10 border border-success rounded p-3 d-flex justify-content-between align-items-center"><div><h6 class="fw-bold text-success m-0">کد رهگیری</h6></div><input type="text" class="form-control border-success text-center fw-bold fs-5" id="inpTrackingCode" style="max-width: 250px;" placeholder="---"></div></div>
                     </div>
@@ -325,5 +362,6 @@
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
     <script src="/static/messages_fa.js"></script>
     <script src="/static/script.js"></script>
+    <div class="toast-container position-fixed top-0 start-0 p-3" id="toastContainer"></div>
 </body>
 </html>

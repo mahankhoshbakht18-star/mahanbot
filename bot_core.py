@@ -33,7 +33,8 @@ class BotCore:
             except TypeError:
                 self.log_callback(self.nid, message, level)
         else: print(f"[{level.upper()}] {self.nid}: {message}")
-        if page:
+        show_on_page = os.getenv("MAHANBOT_SHOW_LOG_ON_PAGE", "false").lower() in {"1", "true", "yes"}
+        if page and show_on_page:
             color = "red" if level == "error" else ("green" if level == "success" else "blue")
             BrowserActions.show_log_on_page(page, message, color)
 

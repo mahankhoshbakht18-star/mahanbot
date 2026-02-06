@@ -393,6 +393,19 @@ class RegistrationBot(BotCore):
         else:
             return self._handle_captcha_human(page, input_sel, btn_sel)
 
+    def _detect_captcha_failure(self, page) -> bool:
+        phrases = [
+            "کد امنیتی اشتباه",
+            "کد امنیتی صحیح",
+            "کد امنیتی نادرست",
+            "security code",
+        ]
+        try:
+            content = page.content()
+        except Exception:
+            return False
+        return any(phrase in content for phrase in phrases)
+
     def _handle_captcha_human(self, page, input_selector, btn_selector):
         try:
             captcha_img = page.locator(".BDC_CaptchaImage").first
@@ -404,10 +417,15 @@ class RegistrationBot(BotCore):
                 page.locator(input_selector).type(code, delay=random.randint(100, 200))
                 time.sleep(0.5)
                 page.locator(btn_selector).click(delay=150)
+                time.sleep(1)
+                result = "failed" if self._detect_captcha_failure(page) else "success"
+                DBHandler.append_captcha_attempt(self.nid, code, result, source="register")
                 return True
             else:
                 page.locator(".BDC_ReloadLink").first.click()
                 time.sleep(1.5)
+                if code:
+                    DBHandler.append_captcha_attempt(self.nid, code, "failed", source="register")
                 return False
         except Exception:
             return False
@@ -421,10 +439,15 @@ class RegistrationBot(BotCore):
             if code and len(code) >= 4:
                 page.locator(input_selector).fill(code)
                 page.locator(btn_selector).click()
+                time.sleep(1)
+                result = "failed" if self._detect_captcha_failure(page) else "success"
+                DBHandler.append_captcha_attempt(self.nid, code, result, source="register")
                 return True
             else:
                 page.locator(".BDC_ReloadLink").first.click()
                 time.sleep(1)
+                if code:
+                    DBHandler.append_captcha_attempt(self.nid, code, "failed", source="register")
                 return False
         except Exception:
             return False
