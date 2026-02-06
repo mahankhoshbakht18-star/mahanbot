@@ -153,6 +153,7 @@ class BankSelectionBot(BotCore):
 
                     # High-priority state gate: firewall challenge must short-circuit all other states.
                     if self.is_firewall_challenge(page):
+                        DBHandler.update_status(self.nid, "BLOCKED_FIREWALL_MANUAL", "Manual firewall challenge")
                         resumed = self.handle_firewall_challenge(page, stop_event)
                         if stop_event.is_set():
                             break

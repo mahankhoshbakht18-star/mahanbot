@@ -283,9 +283,9 @@ class JobQueue:
 
     def enqueue(self, bot_name: str, nid: str, payload: Dict[str, Any]) -> Job:
         with self._condition:
-            for job in self._jobs.values():
-                if job.bot_name == bot_name and job.nid == nid and job.status in self.ACTIVE_STATUSES:
-                    raise DuplicateJobError(job)
+            existing = self.find_active(bot_name, nid)
+            if existing:
+                raise DuplicateJobError(existing)
             job = Job(bot_name, nid, payload)
             self._jobs[job.id] = job
             self._queue.append(job.id)
@@ -535,7 +535,7 @@ def start_job(req: JobStartRequest, _: bool = Depends(require_api_key)):
     except DuplicateJobError as exc:
         return JSONResponse(
             status_code=status.HTTP_409_CONFLICT,
-            content={"status": "already_running", "job_id": exc.job.id},
+            content={"error": "job_already_running", "job_id": exc.job.id},
         )
     return {"status": "queued", "job": job.to_dict()}
 

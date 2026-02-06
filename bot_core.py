@@ -40,22 +40,24 @@ class BotCore:
 
     def _load_user_data(self):
         row = DBHandler.get_applicant(self.nid)
-        data = {}
-        row_data = {}
+        data: dict = {}
+        row_data: dict = {}
         if row:
             try:
                 row_data = dict(row)
             except Exception:
                 row_data = row if isinstance(row, dict) else {}
-        if row_data and row_data.get('data'):
-            if isinstance(row_data['data'], str):
-                data = json.loads(row_data['data'])
+        if row_data and row_data.get("data"):
+            if isinstance(row_data["data"], str):
+                data = json.loads(row_data["data"])
             else:
-                data = row_data['data']
+                data = row_data["data"]
+        if not isinstance(data, dict):
+            data = {}
         if row_data:
             data.setdefault("full_name", row_data.get("full_name"))
             data.setdefault("national_id", row_data.get("national_id"))
-        return data or {}
+        return dict(data)
 
     def get_otp_code(self):
         """دریافت کد تایید (ابتدا لوکال/دستی، سپس سرور چابکان)"""
