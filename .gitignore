@@ -14,3 +14,7 @@ cbi_ultimate.db
 .env
 venv/
 mahanscripts.zip
+screenshots/
+Debug Script.py
+mahan/
+*.png
