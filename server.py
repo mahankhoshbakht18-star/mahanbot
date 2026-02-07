@@ -123,6 +123,11 @@ async def _signal_otp_event(nid: str) -> None:
     event.set()
 
 
+async def _clear_otp_event(nid: str) -> None:
+    async with OTP_EVENT_LOCK:
+        OTP_EVENTS.pop(nid, None)
+
+
 def _check_uvicorn_ws_backend():
     has_backend = False
     try:
@@ -232,6 +237,7 @@ def _handle_receive_sms(nid: str, code: str, status_label: str = "received") -> 
     if not success:
         return False
     log_event(nid, None, f"OTP received: {code}", "success")
+    logger.info("OTP received for %s; notifying waiters", nid)
     if MAIN_LOOP:
         asyncio.run_coroutine_threadsafe(_signal_otp_event(nid), MAIN_LOOP)
     return True
@@ -511,15 +517,18 @@ async def wait_otp(nid: str):
 
     event = await _get_otp_event(nid)
     try:
-        await asyncio.wait_for(event.wait(), timeout=60)
+        await asyncio.wait_for(event.wait(), timeout=120)
     except asyncio.TimeoutError:
+        await _clear_otp_event(nid)
         raise HTTPException(status_code=408, detail="OTP timeout")
     finally:
         event.clear()
+        await _clear_otp_event(nid)
 
     code = DBHandler.get_otp(nid)
     if not code:
         raise HTTPException(status_code=404, detail="OTP not found")
+    logger.info("wait_otp released for %s", nid)
     return {"otp": code}
 
 
@@ -699,6 +708,7 @@ def cancel_job(job_id: str, _: bool = Depends(require_api_key)):
 async def websocket_endpoint(websocket: WebSocket):
     websocket.state.send_lock = asyncio.Lock()
     await EVENT_BROADCASTER.connect(websocket)
+    logger.info("WebSocket connected: %s", websocket.client)
 
     async def _safe_send(payload: Dict[str, Any]) -> bool:
         try:
@@ -741,6 +751,7 @@ async def websocket_endpoint(websocket: WebSocket):
         logger.exception("WebSocket error")
     finally:
         EVENT_BROADCASTER.disconnect(websocket)
+        logger.info("WebSocket disconnected: %s", websocket.client)
 
 
 if __name__ == "__main__":

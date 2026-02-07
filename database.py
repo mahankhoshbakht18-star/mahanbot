@@ -158,6 +158,21 @@ class DBHandler:
             return None
 
     @staticmethod
+    def _load_applicant_data(conn: sqlite3.Connection, nid: str) -> Optional[Dict[str, Any]]:
+        try:
+            cursor = conn.cursor()
+            cursor.execute("SELECT data FROM applicants WHERE national_id=?", (nid,))
+            row = cursor.fetchone()
+            if not row:
+                return None
+            raw = row[0] if isinstance(row, tuple) else row["data"]
+            if not raw:
+                return {}
+            return json.loads(raw)
+        except Exception:
+            return None
+
+    @staticmethod
     def get_all_applicants():
         try:
             with DBHandler._connect(row_factory=True) as conn:
@@ -191,49 +206,50 @@ class DBHandler:
 
     @staticmethod
     def save_otp(nid: str, code: str, status: str = "received") -> bool:
-        user = DBHandler.get_applicant(nid)
-        if user:
-            try:
-                d = json.loads(user["data"]) if user["data"] else {}
-                d["otp_code"] = str(code).strip()
-                d["otp_status"] = status
-                with DBHandler._connect() as conn:
-                    c = conn.cursor()
-                    c.execute("UPDATE applicants SET data=? WHERE national_id=?", (json.dumps(d, ensure_ascii=False), nid))
-                    conn.commit()
+        try:
+            with DBHandler._connect() as conn:
+                data = DBHandler._load_applicant_data(conn, nid)
+                if data is None:
+                    return False
+                data["otp_code"] = str(code).strip()
+                data["otp_status"] = status
+                conn.execute(
+                    "UPDATE applicants SET data=? WHERE national_id=?",
+                    (json.dumps(data, ensure_ascii=False), nid),
+                )
+                conn.commit()
                 return True
-            except Exception:
-                pass
-        return False
+        except Exception:
+            return False
 
     @staticmethod
     def get_otp(nid: str) -> Optional[str]:
-        user = DBHandler.get_applicant(nid)
-        if user:
-            try:
-                d = json.loads(user["data"]) if user["data"] else {}
-                code = d.get("otp_code")
+        try:
+            with DBHandler._connect() as conn:
+                data = DBHandler._load_applicant_data(conn, nid)
+                if data is None:
+                    return None
+                code = data.get("otp_code")
                 return str(code).strip() if code else None
-            except Exception:
-                return None
-        return None
+        except Exception:
+            return None
 
     @staticmethod
     def clear_otp(nid: str) -> None:
-        user = DBHandler.get_applicant(nid)
-        if user:
-            try:
-                d = json.loads(user["data"]) if user["data"] else {}
-                if "otp_code" in d:
-                    del d["otp_code"]
-                if "otp_status" in d:
-                    del d["otp_status"]
-                    with DBHandler._connect() as conn:
-                        c = conn.cursor()
-                        c.execute("UPDATE applicants SET data=? WHERE national_id=?", (json.dumps(d, ensure_ascii=False), nid))
-                        conn.commit()
-            except Exception:
-                pass
+        try:
+            with DBHandler._connect() as conn:
+                data = DBHandler._load_applicant_data(conn, nid)
+                if data is None:
+                    return
+                data.pop("otp_code", None)
+                data.pop("otp_status", None)
+                conn.execute(
+                    "UPDATE applicants SET data=? WHERE national_id=?",
+                    (json.dumps(data, ensure_ascii=False), nid),
+                )
+                conn.commit()
+        except Exception:
+            pass
 
     @staticmethod
     def update_applicant_data(nid: str, updates: Dict[str, Any]) -> bool:

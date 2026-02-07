@@ -171,7 +171,18 @@ class BankSelectionBot(BotCore):
                     ):
                         continue
 
+                    if self.otp_retry_exceeded():
+                        self.log("⛔ OTP retry limit reached; stopping job.", "error", page)
+                        DBHandler.update_status(self.nid, "Stopped", "OTP retry limit reached")
+                        stop_event.set()
+                        break
+
                     if self.consume_recovery_flag("otp_expired"):
+                        if self.otp_retry_exceeded():
+                            self.log("⛔ OTP retry limit reached; stopping job.", "error", page)
+                            DBHandler.update_status(self.nid, "Stopped", "OTP retry limit reached")
+                            stop_event.set()
+                            break
                         otp_attempted = False
                         self._nid_filled = False
                         try:
@@ -257,6 +268,11 @@ class BankSelectionBot(BotCore):
                         set_state("ENTRY_FORM")
 
                     if otp_attempted and self._detect_otp_failure(page):
+                        if not self.register_otp_failure("page_otp_invalid"):
+                            self.log("⛔ OTP retry limit reached; stopping job.", "error", page)
+                            DBHandler.update_status(self.nid, "Stopped", "OTP retry limit reached")
+                            stop_event.set()
+                            break
                         DBHandler.clear_otp(self.nid)
                         self.log("♻️ کد منقضی/نامعتبر شد؛ انتظار برای پیامک جدید.", "warning", page)
                         otp_attempted = False
@@ -377,6 +393,11 @@ class BankSelectionBot(BotCore):
                                 break
 
                             if self._detect_otp_failure(page):
+                                if not self.register_otp_failure("page_otp_invalid"):
+                                    self.log("⛔ OTP retry limit reached; stopping job.", "error", page)
+                                    DBHandler.update_status(self.nid, "Stopped", "OTP retry limit reached")
+                                    stop_event.set()
+                                    break
                                 DBHandler.clear_otp(self.nid)
                                 self.log("?? ?? ?????/??????? ??? ??????? ???? ?????.", "warning", page)
                                 try:
@@ -556,6 +577,9 @@ class BankSelectionBot(BotCore):
 
     def handle_firewall_challenge(self, page, stop_event):
         self.log("🛡️ FIREWALL challenge detected - manual action required.", "warning", page)
+        EVENT_BROADCASTER.emit_event(
+            build_event("waf_manual_required", nid=self.nid, reason="firewall_challenge")
+        )
         timeout_seconds = int(self.settings.get("firewall_manual_timeout", 300))
         deadline = time.time() + timeout_seconds
 
@@ -904,6 +928,18 @@ class BankSelectionBot(BotCore):
             while not stop_event.is_set():
                 if self._firewall_gate(page, stop_event):
                     return "stopped"
+
+                try:
+                    page.wait_for_function(
+                        "(selector) => {"
+                        "const el = document.querySelector(selector);"
+                        "return el && el.options && el.options.length > 1;"
+                        "}",
+                        dropdown_id,
+                        timeout=8000,
+                    )
+                except Exception:
+                    pass
 
                 options = page.locator(f"{dropdown_id} option").all()
                 available_banks = {}

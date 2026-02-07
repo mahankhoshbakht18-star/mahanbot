@@ -3,7 +3,7 @@ const wsBase = `${location.protocol === "https:" ? "wss" : "ws"}://${location.ho
 const WS_RECONNECT_MIN_MS = 1000;
 const WS_RECONNECT_MAX_MS = 10000;
 const WS_PING_INTERVAL_MS = 25000;
-const POLL_INTERVAL_DISCONNECTED_MS = 4000;
+const POLL_INTERVAL_DISCONNECTED_MS = 5000;
 const MESSAGES = window.MESSAGES_FA || {};
 const warnedMessageKeys = new Set();
 
@@ -1897,6 +1897,10 @@ function connectWebSocket() {
         if (wsHeartbeatTimer) clearInterval(wsHeartbeatTimer);
         wsHeartbeatTimer = setInterval(() => {
             if (!isWebSocketOpen()) return;
+            const now = Date.now();
+            if (lastWsEventAt && now - lastWsEventAt > WS_PING_INTERVAL_MS * 2) {
+                setConnectionState('DEGRADED');
+            }
             try {
                 wsClient.send(JSON.stringify({ type: 'ping', ts: Date.now() }));
             } catch (e) {}
@@ -1915,6 +1919,7 @@ function connectWebSocket() {
             }
             if (payload?.type === 'pong') return;
             lastWsEventAt = Date.now();
+            if (connectionState !== 'CONNECTED') setConnectionState('CONNECTED');
             handleSocketEvent(payload);
         } catch (e) {
             console.warn('Invalid WS payload', e);
@@ -2295,5 +2300,4 @@ function getLevelColor(level) {
     return palette[level.toLowerCase()] || '#cfd8dc';
 
 }
-
 
