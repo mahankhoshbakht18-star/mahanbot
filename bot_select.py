@@ -406,7 +406,7 @@ class BankSelectionBot(BotCore):
                                     pass
                                 continue
 
-                            otp_code = self.wait_for_otp(stop_event, timeout=65)
+                            otp_code = self.wait_for_otp(stop_event, timeout=45)
                             if not otp_code:
                                 continue
                             while self._dialog_handling and not stop_event.is_set():
@@ -418,13 +418,28 @@ class BankSelectionBot(BotCore):
                                 self.log("⚠️ OTP length invalid; waiting for a 6-digit code.", "warning", page)
                                 continue
 
-                            otp_input = page.locator("input[name$='tbMobileConfCode']")
+                            otp_selector = "input[name$='tbMobileConfCode']"
+                            otp_input = page.locator(otp_selector)
                             current_val = otp_input.input_value()
                             if current_val != otp_code:
                                 self.log(f"? ?????? ?? ?????: {otp_code}", "success", page)
-                                otp_input.fill(otp_code)
                                 try:
-                                    page.wait_for_timeout(800)
+                                    page.evaluate(
+                                        "(selector, value) => {"
+                                        "const el = document.querySelector(selector);"
+                                        "if (!el) return false;"
+                                        "el.value = value;"
+                                        "el.dispatchEvent(new Event('input', { bubbles: true }));"
+                                        "el.dispatchEvent(new Event('change', { bubbles: true }));"
+                                        "return true;"
+                                        "}",
+                                        otp_selector,
+                                        otp_code,
+                                    )
+                                except Exception:
+                                    pass
+                                try:
+                                    page.wait_for_timeout(200)
                                 except Exception:
                                     pass
                                 try:
@@ -925,6 +940,7 @@ class BankSelectionBot(BotCore):
     def _process_bank_selection_v2(self, page, stop_event):
         try:
             dropdown_id = "#ctl00_ContentPlaceHolder1_ddlBankName"
+            branch_ddl = "#ctl00_ContentPlaceHolder1_ddlBranch"
             while not stop_event.is_set():
                 if self._firewall_gate(page, stop_event):
                     return "stopped"
@@ -952,8 +968,8 @@ class BankSelectionBot(BotCore):
 
                 if not available_banks:
                     self.log("?? ???? ??????? ???? ???. ???????? ????...", "warning", page)
-                    self._refresh_captcha_or_reload(page)
-                    return "no_match"
+                    self._return_to_bank_field(page, dropdown_id)
+                    return "waiting"
 
                 self.log(f"[NID: {self.nid}] Available Banks: {list(available_banks.keys())}", "info", page)
                 runtime_data = self._load_runtime_data()
@@ -987,16 +1003,32 @@ class BankSelectionBot(BotCore):
                         self.log(f"?? ???? ???? ??: {target_name}", "selecting", page)
                         page.select_option(dropdown_id, value=found_val)
                         self.log("? ?? ??? ???????? ???...", "info", page)
-                        self._wait_for_branch_ready(page)
+                        self._wait_for_branch_fully_loaded(page, branch_ddl)
                         self._select_first_available_branch(page)
                         return "selected"
 
                 self.log("?? ???? ??????? ???? ???. ???????? ????...", "warning", page)
-                self._refresh_captcha_or_reload(page)
-                return "no_match"
+                self._return_to_bank_field(page, dropdown_id)
+                return "waiting"
             return "stopped"
         except Exception:
             return "error"
+
+    def _return_to_bank_field(self, page, dropdown_id):
+        try:
+            page.evaluate(
+                "(selector) => {"
+                "const el = document.querySelector(selector);"
+                "if (!el) return false;"
+                "el.selectedIndex = 0;"
+                "el.dispatchEvent(new Event('change', { bubbles: true }));"
+                "el.focus();"
+                "return true;"
+                "}",
+                dropdown_id,
+            )
+        except Exception:
+            pass
 
     def _select_first_available_branch(self, page):
         branch_ddl = "#ctl00_ContentPlaceHolder1_ddlBranch"
@@ -1053,14 +1085,15 @@ class BankSelectionBot(BotCore):
         except Exception:
             pass
 
-    def _wait_for_branch_ready(self, page):
-        branch_ddl = "#ctl00_ContentPlaceHolder1_ddlBranch"
+    def _wait_for_branch_fully_loaded(self, page, branch_ddl):
         try:
             page.wait_for_selector(branch_ddl, timeout=10000)
             page.wait_for_function(
                 "(selector) => {"
                 "const el = document.querySelector(selector);"
-                "return el && !el.disabled && el.offsetParent !== null;"
+                "if (!el || el.disabled || el.offsetParent === null) return false;"
+                "const options = Array.from(el.options || []);"
+                "return options.length > 1 && options.some(opt => opt.value && opt.value !== '0');"
                 "}",
                 branch_ddl,
                 timeout=10000,
