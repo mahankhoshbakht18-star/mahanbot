@@ -28,6 +28,13 @@ class BotCore:
         self.browser_profile = browser_profile or {}
         self._cancel_watcher_thread = None
         self._cancel_watcher_stop_event = None
+        self._dialog_handlers_attached = set()
+        self._recovery_flags = {"otp_expired": False, "captcha_invalid": False, "generic_error": False}
+        self._captcha_retry = 0
+        self._captcha_retry_limit = int(self.settings.get("captcha_retry_limit", 5))
+        self._last_progress_time = time.time()
+        self._watchdog_timeout = int(self.settings.get("watchdog_timeout", 45))
+        self._last_watchdog_dump = 0.0
 
     def log(self, message, level="info", page=None, meta=None):
         if self.log_callback:
@@ -125,6 +132,7 @@ class BotCore:
         except BrowserLaunchError as exc:
             self.log(f"❌ خطا در راه‌اندازی مرورگر: {exc.message}", "error")
             raise
+        self.attach_dialog_handler(page)
         if stop_event is not None:
             self._start_cancel_watcher(stop_event, playwright, browser, context, page)
         open_healthcheck_page(page, log_callback=self.log)
@@ -198,3 +206,179 @@ class BotCore:
         except Exception as exc:
             self.log(f"🛡 solve_firewall: detected=error, action=exception:{exc}, returning=False", "warning", page)
             return False
+
+
+    def mark_progress(self, reason=None):
+        self._last_progress_time = time.time()
+        if self._captcha_retry:
+            self._captcha_retry = 0
+
+    def _set_recovery_flag(self, key):
+        if key in self._recovery_flags:
+            self._recovery_flags[key] = True
+
+    def consume_recovery_flag(self, key):
+        if self._recovery_flags.get(key):
+            self._recovery_flags[key] = False
+            return True
+        return False
+
+    def _classify_dialog(self, msg):
+        msg = msg or ""
+        otp_phrases = [
+            "\u06a9\u062f \u062a\u0627\u06cc\u06cc\u062f \u062a\u0644\u0641\u0646 \u0647\u0645\u0631\u0627\u0647",
+            "\u06a9\u062f \u062a\u0627\u06cc\u06cc\u062f",
+            "\u06a9\u062f \u062a\u0623\u06cc\u06cc\u062f",
+            "\u0645\u0646\u0642\u0636\u06cc",
+        ]
+        captcha_phrases = [
+            "\u06a9\u062f \u0627\u0645\u0646\u06cc\u062a\u06cc",
+            "\u0646\u0627\u0645\u0639\u062a\u0628\u0631 \u0627\u0633\u062a",
+        ]
+        if any(p in msg for p in otp_phrases):
+            return "otp_expired"
+        if any(p in msg for p in captcha_phrases):
+            return "captcha_invalid"
+        if msg:
+            return "generic_error"
+        return None
+
+    def attach_dialog_handler(self, page):
+        if not page:
+            return
+        page_id = id(page)
+        if page_id in self._dialog_handlers_attached:
+            return
+        self._dialog_handlers_attached.add(page_id)
+
+        def _handler(dialog):
+            msg = ""
+            dtype = "unknown"
+            try:
+                dtype = dialog.type()
+            except Exception:
+                pass
+            try:
+                msg = dialog.message() or ""
+            except Exception:
+                pass
+
+            try:
+                action = self._classify_dialog(msg)
+                if action == "otp_expired":
+                    DBHandler.clear_otp(self.nid)
+                    self._set_recovery_flag("otp_expired")
+                    self.log("RECOVERY otp_expired -> restart_otp", "warning", page)
+                elif action == "captcha_invalid":
+                    self._captcha_retry += 1
+                    self._set_recovery_flag("captcha_invalid")
+                    self.log(
+                        f"RECOVERY captcha_invalid -> retry {self._captcha_retry}/{self._captcha_retry_limit}",
+                        "warning",
+                        page,
+                    )
+                elif action == "generic_error":
+                    self._set_recovery_flag("generic_error")
+                    self.log("RECOVERY generic_error -> soft_reload", "warning", page)
+            except Exception:
+                pass
+
+            try:
+                self.log(f"DIALOG_ACCEPTED type={dtype} msg={msg}", "warning", page)
+            except Exception:
+                pass
+            try:
+                dialog.accept()
+            except Exception:
+                pass
+
+        page.on("dialog", _handler)
+
+    def dismiss_modals(self, page):
+        if not page:
+            return False
+        modal_selectors = [
+            ".modal.show",
+            ".swal2-container",
+            "#dlg",
+            ".ui-dialog",
+        ]
+        for selector in modal_selectors:
+            try:
+                modal = page.locator(selector)
+                if modal.count() == 0:
+                    continue
+                target = modal.first
+                if not target.is_visible():
+                    continue
+                btns = target.locator(
+                    "button:has-text('OK'), button:has-text('\u062a\u0627\u06cc\u06cc\u062f'), button:has-text('\u062a\u0623\u06cc\u06cc\u062f'), button:has-text('\u0628\u0633\u062a\u0646'), .swal2-confirm, .ui-dialog-buttonset button"
+                )
+                if btns.count() > 0:
+                    btns.first.click(timeout=500)
+                    self.log("RECOVERY modal_dismiss -> clicked", "warning", page)
+                    return True
+                close_btn = target.locator("[data-bs-dismiss='modal'], .btn-close, .close")
+                if close_btn.count() > 0:
+                    close_btn.first.click(timeout=500)
+                    self.log("RECOVERY modal_dismiss -> closed", "warning", page)
+                    return True
+            except Exception:
+                continue
+        return False
+
+    def _dump_state(self, page, selectors=None, reason="state_dump"):
+        try:
+            url = page.url
+        except Exception:
+            url = "unknown"
+        try:
+            title = page.title()
+        except Exception:
+            title = "unknown"
+        counts = {}
+        if selectors:
+            for selector in selectors:
+                try:
+                    counts[selector] = page.locator(selector).count()
+                except Exception:
+                    counts[selector] = -1
+        try:
+            self.log(
+                f"WATCHDOG dump reason={reason} url={url} title={title} counts={counts}",
+                "warning",
+                page,
+            )
+        except Exception:
+            pass
+        try:
+            os.makedirs("screenshots", exist_ok=True)
+            timestamp = time.strftime("%Y%m%d_%H%M%S")
+            page.screenshot(path=f"screenshots/watchdog_{self.nid}_{timestamp}.png", full_page=True)
+        except Exception:
+            pass
+
+    def watchdog_check(self, page, stop_event=None, selectors=None):
+        if stop_event is not None and stop_event.is_set():
+            return False
+        now = time.time()
+        if now - self._last_progress_time < self._watchdog_timeout:
+            return False
+        self._last_progress_time = now
+        try:
+            self._dump_state(page, selectors=selectors, reason="watchdog")
+        except Exception:
+            pass
+        try:
+            self.log("WATCHDOG triggered -> recovery step dismiss_modals", "warning", page)
+            self.dismiss_modals(page)
+        except Exception:
+            pass
+        if stop_event is not None and stop_event.is_set():
+            return True
+        try:
+            self.log("WATCHDOG triggered -> recovery step reload", "warning", page)
+            page.reload()
+        except Exception:
+            pass
+        return True

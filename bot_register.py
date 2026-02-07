@@ -49,19 +49,6 @@ class RegistrationBot(BotCore):
             # ============================================================
             # Dialog handler (dashboard-only logging)
             # ============================================================
-            def handle_dialog(dialog):
-                try:
-                    msg = dialog.message()
-                    self.log(f"❌ پیام سایت: {msg}", "error")
-                    if any(x in msg for x in ["منقضی", "نامعتبر", "اشتباه", "صحیح نمی باشد"]):
-                        DBHandler.clear_otp(self.nid)
-                        self.log("♻️ کد نامعتبر از دیتابیس پاک شد.", "warning")
-                    dialog.accept()
-                except Exception as e:
-                    print(f"Dialog Error: {e}")
-
-            page.on("dialog", handle_dialog)
-
             # ✅ DIRECT NAVIGATION (must happen immediately)
             try:
                 safe_goto(page, TARGET_URL, timeout=60000, wait_until="domcontentloaded", log_callback=self.log)
@@ -101,6 +88,60 @@ class RegistrationBot(BotCore):
                     if stop_event.is_set():
                         break
 
+                    if self.watchdog_check(
+                        page,
+                        stop_event,
+                        selectors=[
+                            "#ctl00_ContentPlaceHolder1_tbIDNo",
+                            "#ctl00_ContentPlaceHolder1_tbMobileConfCode",
+                            "#ctl00_ContentPlaceHolder1_btnContinue1",
+                        ],
+                    ):
+                        continue
+
+                    if self.consume_recovery_flag("otp_expired"):
+                        try:
+                            page.reload()
+                        except Exception:
+                            pass
+                        continue
+
+                    if self.consume_recovery_flag("captcha_invalid"):
+                        if self._captcha_retry <= self._captcha_retry_limit:
+                            try:
+                                page.reload()
+                            except Exception:
+                                pass
+                        else:
+                            self.log("RECOVERY captcha_invalid -> retry limit reached; reload", "warning", page)
+                            self._captcha_retry = 0
+                            try:
+                                page.reload()
+                            except Exception:
+                                pass
+                        continue
+
+                    if self.consume_recovery_flag("generic_error"):
+                        try:
+                            self._dump_state(
+                                page,
+                                selectors=[
+                                    "#ctl00_ContentPlaceHolder1_tbIDNo",
+                                    "#ctl00_ContentPlaceHolder1_tbMobileConfCode",
+                                    "#ctl00_ContentPlaceHolder1_btnContinue1",
+                                ],
+                                reason="dialog_generic",
+                            )
+                        except Exception:
+                            pass
+                        try:
+                            page.reload()
+                        except Exception:
+                            pass
+                        continue
+
+                    self.dismiss_modals(page)
+
                     self.solve_firewall(page)
                     if stop_event.is_set():
                         break
@@ -113,6 +154,7 @@ class RegistrationBot(BotCore):
                     # STEP 1: فرم هویتی
                     # ==========================
                     if self._is_visible(page, "#ctl00_ContentPlaceHolder1_btnSendConfirmCode"):
+                        self.mark_progress("step1_form")
                         if stop_event.is_set():
                             break
 
@@ -164,6 +206,7 @@ class RegistrationBot(BotCore):
                     # STEP 2: کد تایید
                     # ==========================
                     if self._is_visible(page, "#ctl00_ContentPlaceHolder1_btnContinue1"):
+                        self.mark_progress("step2_otp")
                         if stop_event.is_set():
                             break
 
@@ -192,6 +235,7 @@ class RegistrationBot(BotCore):
                     # STEP 3: اطلاعات سکونت
                     # ==========================
                     if self._is_visible(page, "#ctl00_ContentPlaceHolder1_btnContinue2"):
+                        self.mark_progress("step3_residence")
                         if stop_event.is_set():
                             break
 

@@ -18,7 +18,7 @@
 
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.rtl.min.css" rel="stylesheet">
 
-    <link rel="stylesheet" href="/static/style.css?v=1">
+    <link rel="stylesheet" href="/static/style.css">
 
     <style>
 
@@ -102,14 +102,6 @@
 
         <div class="server-status text-center mt-auto mb-3 pt-2 border-top border-secondary">
 
-            <div class="debug-panel text-start mt-3 px-3">
-                <div class="small text-muted">Debug</div>
-                <div class="small">WS: <span id="debugWsState">-</span></div>
-                <div class="small">Last WS: <span id="debugLastWs">-</span></div>
-                <div class="small">HTTP Err: <span id="debugLastHttp">-</span></div>
-            </div>
-
-
             <span id="connectionStatus" class="badge bg-secondary">در حال اتصال...</span>
 
         </div>
@@ -143,57 +135,27 @@
                 </div>
 
             </div>
-
-            <div class="card border-0 shadow-sm mb-4" id="activeApplicantCard">
-
-                <div class="card-body">
-
-                    <div class="d-flex flex-wrap justify-content-between align-items-center gap-3">
-
-                        <div>
-
-                            <div class="text-muted small">متقاضی فعال</div>
-
-                            <h5 class="fw-bold mb-1" id="activeApplicantName">---</h5>
-
-                            <div class="small text-muted" id="activeApplicantMeta">---</div>
-
-                            <div class="mt-2">
-
-                                <span class="badge bg-primary" id="activeApplicantStatus">---</span>
-
-                            </div>
-
+            <div class="card border-0 shadow-sm mb-4 active-app-card">
+                <div class="card-body d-flex flex-wrap gap-4 align-items-center">
+                    <div class="flex-grow-1">
+                        <div class="small text-muted mb-1">متقاضی فعال</div>
+                        <div class="fw-bold fs-5" id="activeApplicantName">--</div>
+                        <div class="text-muted small">
+                            <span id="activeApplicantNid">--</span> 
+                            <span id="activeApplicantMobile">--</span> 
+                            <span id="activeApplicantStatus">--</span>
                         </div>
-
-                        <div class="d-flex flex-column gap-2 align-items-end">
-
-                            <div class="d-flex gap-2 align-items-center">
-
-                                <input type="text" id="manualOtpInput" class="form-control text-center" maxlength="6" placeholder="کد دستی ۶ رقمی">
-
-                                <button class="btn btn-warning" onclick="sendManualOtp()">ارسال دستی کد</button>
-
-                            </div>
-
-                            <div class="small text-muted" id="manualOtpStatus"></div>
-
-                        </div>
-
                     </div>
-
-                    <hr>
-
-                    <div>
-
-                        <div class="text-muted small mb-2">بانک‌های در حال پردازش</div>
-
-                        <div id="activeBankList" class="d-flex flex-wrap gap-2"></div>
-
+                    <div class="d-flex align-items-center gap-2">
+                        <input type="text" id="manualOtpInput" class="form-control text-center" maxlength="6" placeholder="کد ۶ رقمی">
+                        <button class="btn btn-warning" onclick="sendManualOtp()">ارسال کد دستی</button>
+                        <span id="manualOtpStatus" class="small text-muted"></span>
                     </div>
-
                 </div>
-
+                <div class="card-footer bg-white border-top">
+                    <div class="small text-muted mb-2">بانک‌های در حال انتخاب</div>
+                    <div id="activeBankList" class="d-flex flex-wrap gap-2"></div>
+                </div>
             </div>
 
             <div class="row g-3 mb-4">
@@ -382,33 +344,29 @@
 
                             <h5 class="text-primary fw-bold border-bottom pb-2 mb-3">۴. اولویت بانک‌ها</h5>
 
-                            <div class="row g-3">
-
-                                <div class="col-md-6">
-
-                                    <label class="form-label small text-muted">بانک‌های موجود</label>
-
-                                    <div id="bankOptions" class="bank-options"></div>
-
-                                </div>
-
-                                <div class="col-md-6">
-
-                                    <label class="form-label small text-muted">اولویت بانک‌ها (Drag & Drop)</label>
-
-                                    <ul id="priorityBanksList" class="bank-priority-list list-group"></ul>
-
-                                </div>
-
-                                <div class="col-md-12">
-
-                                    <label class="form-label small text-muted">بانک‌های مورد علاقه</label>
-
-                                    <div id="favoriteBanksList" class="bank-favorite-list"></div>
-
-                                </div>
-
+                            <label class="form-label small text-muted">بانک‌های منتخب (Drag & Drop)</label>
+                            <div class="d-flex flex-wrap gap-2 mb-2">
+                                <select id="bankSelectInput" class="form-select w-auto">
+                                    <option value="">انتخاب بانک...</option>
+                                    <option value="ملی">ملی</option>
+                                    <option value="ملت">ملت</option>
+                                    <option value="صادرات">صادرات</option>
+                                    <option value="تجارت">تجارت</option>
+                                    <option value="سپه">سپه</option>
+                                    <option value="پارسیان">پارسیان</option>
+                                    <option value="پاسارگاد">پاسارگاد</option>
+                                    <option value="سامان">سامان</option>
+                                    <option value="دی">دی</option>
+                                    <option value="اقتصاد نوین">اقتصاد نوین</option>
+                                </select>
+                                <button type="button" class="btn btn-outline-primary" onclick="addPriorityBank()">افزودن</button>
                             </div>
+                            <div id="priorityBanksList" class="priority-list"></div>
+                            <div class="form-text">بانک‌ها را به ترتیب اولویت با درگ و دراپ مرتب کنید.</div>
+                        </div>
+                        <div class="col-md-12">
+                            <label class="form-label small text-muted">بانک‌های مورد علاقه</label>
+                            <div id="favoriteBanksList" class="favorite-list"></div>
 
                         </div>
 
@@ -725,16 +683,15 @@
         </div>
 
     </main>
+    <div id="toastContainer" class="toast-container position-fixed bottom-0 start-0 p-3"></div>
 
 
 
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
 
-    <script src="/static/messages_fa.js?v=1"></script>
+    <script src="/static/messages_fa.js"></script>
 
-    <script src="/static/script.js?v=1"></script>
-
-    <div class="toast-container position-fixed top-0 start-0 p-3" id="toastContainer"></div>
+    <script src="/static/script.js"></script>
 
 </body>
 

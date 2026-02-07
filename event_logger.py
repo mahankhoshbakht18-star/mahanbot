@@ -41,7 +41,7 @@ class EventBroadcaster:
         stale_connections = []
         for connection in list(self.active_connections):
             try:
-                await connection.send_text(json.dumps(event, ensure_ascii=False))
+                await self._safe_send(connection, event)
             except Exception:
                 stale_connections.append(connection)
         for connection in stale_connections:
@@ -63,9 +63,18 @@ class EventBroadcaster:
     async def _send_history(self, websocket: WebSocket) -> None:
         for event in list(self.event_history):
             try:
-                await websocket.send_text(json.dumps(event, ensure_ascii=False))
+                await self._safe_send(websocket, event)
             except Exception:
                 break
+
+    async def _safe_send(self, websocket: WebSocket, event: Dict[str, Any]) -> None:
+        payload = json.dumps(event, ensure_ascii=False)
+        send_lock = getattr(websocket.state, "send_lock", None)
+        if send_lock:
+            async with send_lock:
+                await websocket.send_text(payload)
+        else:
+            await websocket.send_text(payload)
 
 
 EVENT_BROADCASTER = EventBroadcaster()

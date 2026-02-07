@@ -57,35 +57,11 @@ class BankSelectionBot(BotCore):
             page = None
             try:
                 playwright, browser, context, page = self.setup_browser(stop_event)
-                page.on("dialog", lambda dialog: self._handle_otp_dialog(dialog))
                 if stop_event.is_set():
                     return
 
                 otp_attempted = False
                 self._nid_filled = False
-
-                def handle_dialog(dialog):
-                    nonlocal otp_attempted
-                    try:
-                        msg = dialog.message()
-                        security_code_wrong = "کد امنیتی اشتباه است" in msg
-                        if security_code_wrong:
-                            try:
-                                page.reload()
-                            except Exception:
-                                pass
-                        if (
-                            not security_code_wrong
-                            and any(x in msg for x in ["منقضی", "نامعتبر", "اشتباه", "صحیح نمی باشد"])
-                        ):
-                            DBHandler.clear_otp(self.nid)
-                            self.log("♻️ کد نامعتبر پاک شد. انتظار برای پیامک جدید...", "warning")
-                            otp_attempted = False
-                        dialog.accept()
-                    except Exception:
-                        pass
-
-                page.on("dialog", handle_dialog)
 
                 self.log(f"🚀 شروع عملیات (دور {attempt})...", "info", page)
                 captcha_mode = self.settings.get("captcha_mode", "human")
@@ -103,6 +79,7 @@ class BankSelectionBot(BotCore):
                     if state != new_state:
                         state = new_state
                         state_since = time.time()
+                        self.mark_progress(f"state:{new_state}")
 
                 def state_timed_out(seconds: float) -> bool:
                     return (time.time() - state_since) > seconds
@@ -182,6 +159,59 @@ class BankSelectionBot(BotCore):
                         self.log("🛑 مرورگر توسط کاربر بسته شد.", "stopped")
                         stop_event.set()
                         return
+
+                    if self.watchdog_check(
+                        page,
+                        stop_event,
+                        selectors=[
+                            "#ctl00_ContentPlaceHolder1_tbIDNo",
+                            "input[name$='tbMobileConfCode']",
+                            "#ctl00_ContentPlaceHolder1_ddlBankName",
+                        ],
+                    ):
+                        continue
+
+                    if self.consume_recovery_flag("otp_expired"):
+                        otp_attempted = False
+                        self._nid_filled = False
+                        try:
+                            page.reload()
+                        except Exception:
+                            pass
+                        continue
+
+                    if self.consume_recovery_flag("captcha_invalid"):
+                        if self._captcha_retry <= self._captcha_retry_limit:
+                            self._refresh_captcha_or_reload(page)
+                        else:
+                            self.log("RECOVERY captcha_invalid -> retry limit reached; reload", "warning", page)
+                            self._captcha_retry = 0
+                            try:
+                                page.reload()
+                            except Exception:
+                                pass
+                        continue
+
+                    if self.consume_recovery_flag("generic_error"):
+                        try:
+                            self._dump_state(
+                                page,
+                                selectors=[
+                                    "#ctl00_ContentPlaceHolder1_tbIDNo",
+                                    "input[name$='tbMobileConfCode']",
+                                    "#ctl00_ContentPlaceHolder1_ddlBankName",
+                                ],
+                                reason="dialog_generic",
+                            )
+                        except Exception:
+                            pass
+                        try:
+                            page.reload()
+                        except Exception:
+                            pass
+                        continue
+
+                    self.dismiss_modals(page)
 
                     # High-priority state gate: firewall challenge must short-circuit all other states.
                     if self.is_firewall_challenge(page):

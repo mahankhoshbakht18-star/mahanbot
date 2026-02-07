@@ -1,5 +1,9 @@
 const httpBase = `${location.protocol}//${location.host}`;
 const wsBase = `${location.protocol === "https:" ? "wss" : "ws"}://${location.host}`;
+const WS_RECONNECT_MIN_MS = 1000;
+const WS_RECONNECT_MAX_MS = 10000;
+const WS_PING_INTERVAL_MS = 25000;
+const POLL_INTERVAL_DISCONNECTED_MS = 4000;
 const MESSAGES = window.MESSAGES_FA || {};
 const warnedMessageKeys = new Set();
 
@@ -39,13 +43,16 @@ const logFilters = {
 
 const BANK_OPTIONS = [
 
-    '', '', '', '', '', '',
-
-    '', '', '', '', ' ', '',
-
-    ' ', '', '', '', '', ' ',
-
-    '', '', ' ', '  '
+    'ملی',
+    'ملت',
+    'صادرات',
+    'تجارت',
+    'سپه',
+    'پارسیان',
+    'پاسارگاد',
+    'سامان',
+    'دی',
+    'اقتصاد نوین',
 
 ];
 
@@ -53,13 +60,14 @@ let priorityBanks = [];
 
 let favoriteBanks = [];
 let connectionState = 'DISCONNECTED'; // DISCONNECTED | CONNECTING | CONNECTED | DEGRADED
-let wsReconnectDelay = 1000;
+let wsReconnectDelay = WS_RECONNECT_MIN_MS;
 let wsReconnectTimer = null;
 let wsHeartbeatTimer = null;
 let lastWsEventAt = null;
 let lastHttpError = null;
 let applicantsHash = null;
 let pollTimer = null;
+let pollIntervalMs = null;
 let pollAbortController = null;
 let pollInFlight = false;
 let renderDebounceTimer = null;
@@ -143,15 +151,19 @@ function startClock() {
     }, 1000);
 }
 
+function isWebSocketOpen() {
+    return wsClient && wsClient.readyState === WebSocket.OPEN;
+}
+
 function setConnectionState(state) {
     connectionState = state;
     const badge = document.getElementById('connectionStatus');
     if (badge) {
         const map = {
-            CONNECTED: { cls: 'bg-success', text: getMessage('connection.connected', '????') },
-            CONNECTING: { cls: 'bg-warning text-dark', text: getMessage('connection.connecting', '?? ??? ?????...') },
-            DEGRADED: { cls: 'bg-warning text-dark', text: getMessage('connection.degraded', '????? ????') },
-            DISCONNECTED: { cls: 'bg-danger', text: getMessage('connection.disconnected', '??? ??????') },
+            CONNECTED: { cls: 'bg-success', text: getMessage('connection.connected', 'Connected') },
+            CONNECTING: { cls: 'bg-warning text-dark', text: getMessage('connection.connecting', 'Connecting...') },
+            DEGRADED: { cls: 'bg-warning text-dark', text: getMessage('connection.degraded', 'Degraded') },
+            DISCONNECTED: { cls: 'bg-danger', text: getMessage('connection.disconnected', 'Disconnected') },
         };
         const meta = map[state] || map.DISCONNECTED;
         badge.className = `badge ${meta.cls}`;
@@ -161,7 +173,7 @@ function setConnectionState(state) {
     if (state === 'CONNECTED') {
         stopPolling();
     } else if (currentViewId === 'dashboard') {
-        startPolling(15000);
+        startPolling(POLL_INTERVAL_DISCONNECTED_MS);
     }
     updateDebugPanel();
 }
@@ -181,9 +193,11 @@ function updateDebugPanel() {
     if (httpEl) httpEl.textContent = lastHttpError || '-';
 }
 
-function startPolling(intervalMs = 15000) {
-    if (connectionState === 'CONNECTED') return;
-    if (pollTimer) return;
+function startPolling(intervalMs = POLL_INTERVAL_DISCONNECTED_MS) {
+    if (isWebSocketOpen()) return;
+    if (pollTimer && pollIntervalMs === intervalMs) return;
+    stopPolling();
+    pollIntervalMs = intervalMs;
     pollTimer = setInterval(() => pollApplicants(), intervalMs);
     pollApplicants();
     updateDebugPanel();
@@ -194,6 +208,7 @@ function stopPolling() {
         clearInterval(pollTimer);
         pollTimer = null;
     }
+    pollIntervalMs = null;
     if (pollAbortController) {
         pollAbortController.abort();
         pollAbortController = null;
@@ -217,10 +232,13 @@ async function pollApplicants() {
             allUsersData = data;
             renderDashboard(data);
         }
-        if (connectionState !== 'CONNECTED') setConnectionState('DEGRADED');
+        if (!isWebSocketOpen()) setConnectionState('DEGRADED');
     } catch (err) {
+        if (err && err.name === 'AbortError') {
+            return;
+        }
         lastHttpError = String(err);
-        if (connectionState === 'CONNECTED') setConnectionState('DEGRADED');
+        if (!isWebSocketOpen()) setConnectionState('DEGRADED');
     } finally {
         pollInFlight = false;
         updateDebugPanel();
@@ -252,7 +270,7 @@ function switchView(viewId, navEl) {
 
     if(viewId === 'dashboard') {
         if (connectionState !== 'CONNECTED') {
-            startPolling(15000);
+            startPolling(POLL_INTERVAL_DISCONNECTED_MS);
         } else {
             stopPolling();
         }
@@ -1852,28 +1870,50 @@ function connectWebSocket() {
         clearTimeout(wsReconnectTimer);
         wsReconnectTimer = null;
     }
+    if (wsClient) {
+        try {
+            wsClient.onopen = null;
+            wsClient.onmessage = null;
+            wsClient.onerror = null;
+            wsClient.onclose = null;
+        } catch (e) {}
+        try {
+            if (wsClient.readyState === WebSocket.OPEN || wsClient.readyState === WebSocket.CONNECTING) {
+                wsClient.close(1000, 'reconnect');
+            }
+        } catch (e) {}
+    }
+
     setConnectionState('CONNECTING');
     wsClient = new WebSocket(`${wsBase}/ws`);
+    const socketRef = wsClient;
 
     wsClient.onopen = () => {
+        if (wsClient !== socketRef) return;
         setConnectionState('CONNECTED');
-        wsReconnectDelay = 1000;
+        wsReconnectDelay = WS_RECONNECT_MIN_MS;
         lastWsEventAt = Date.now();
         stopPolling();
         if (wsHeartbeatTimer) clearInterval(wsHeartbeatTimer);
         wsHeartbeatTimer = setInterval(() => {
+            if (!isWebSocketOpen()) return;
             try {
-                wsClient?.send(JSON.stringify({ type: 'ping', ts: Date.now() }));
-            } catch (e) {
-                // ignore
-            }
-        }, 25000);
+                wsClient.send(JSON.stringify({ type: 'ping', ts: Date.now() }));
+            } catch (e) {}
+        }, WS_PING_INTERVAL_MS);
     };
 
     wsClient.onmessage = (event) => {
+        if (wsClient !== socketRef) return;
         try {
             const payload = JSON.parse(event.data);
-            if (payload?.type === 'ping') return;
+            if (payload?.type === 'ping') {
+                try {
+                    wsClient.send(JSON.stringify({ type: 'pong', ts: Date.now() }));
+                } catch (e) {}
+                return;
+            }
+            if (payload?.type === 'pong') return;
             lastWsEventAt = Date.now();
             handleSocketEvent(payload);
         } catch (e) {
@@ -1883,22 +1923,23 @@ function connectWebSocket() {
         }
     };
 
-    wsClient.onerror = (event) => {
-        console.warn('WS error', event);
+    wsClient.onerror = () => {
+        if (wsClient !== socketRef) return;
         try { wsClient.close(); } catch (e) {}
     };
 
     wsClient.onclose = (event) => {
+        if (wsClient !== socketRef) return;
         if (wsHeartbeatTimer) {
             clearInterval(wsHeartbeatTimer);
             wsHeartbeatTimer = null;
         }
+        wsClient = null;
         setConnectionState('DISCONNECTED');
-        startPolling(15000);
-        console.warn(`WS closed code=${event.code} reason=${event.reason}`);
-        const delay = Math.min(wsReconnectDelay, 15000);
+        startPolling(POLL_INTERVAL_DISCONNECTED_MS);
+        const delay = Math.min(wsReconnectDelay, WS_RECONNECT_MAX_MS);
         wsReconnectTimer = setTimeout(connectWebSocket, delay);
-        wsReconnectDelay = Math.min(wsReconnectDelay * 2, 15000);
+        wsReconnectDelay = Math.min(wsReconnectDelay * 2, WS_RECONNECT_MAX_MS);
     };
 }
 

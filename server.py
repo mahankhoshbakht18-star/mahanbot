@@ -697,26 +697,40 @@ def cancel_job(job_id: str, _: bool = Depends(require_api_key)):
 # ✅ WebSocket پایدار (بدون اسپم لاگ)
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
+    websocket.state.send_lock = asyncio.Lock()
     await EVENT_BROADCASTER.connect(websocket)
-    try:
+
+    async def _safe_send(payload: Dict[str, Any]) -> bool:
         try:
-            await websocket.send_text(
-                json.dumps(build_event("applicants_snapshot", applicants=_serialize_applicants()), ensure_ascii=False)
-            )
+            async with websocket.state.send_lock:
+                await websocket.send_text(json.dumps(payload, ensure_ascii=False))
+            return True
         except Exception:
-            pass
+            return False
+
+    try:
+        await _safe_send(build_event("applicants_snapshot", applicants=_serialize_applicants()))
         while True:
             try:
-                message = await asyncio.wait_for(websocket.receive_text(), timeout=30)
-                if message and "ping" in message:
-                    continue
+                message = await asyncio.wait_for(websocket.receive_text(), timeout=25)
             except asyncio.TimeoutError:
-                try:
-                    await websocket.send_text(json.dumps({"type": "ping", "ts": time.time()}))
-                except Exception:
+                if not await _safe_send({"type": "ping", "ts": time.time()}):
                     break
-    except WebSocketDisconnect:
-        pass
+                continue
+            except WebSocketDisconnect:
+                break
+
+            payload: Optional[Dict[str, Any]] = None
+            try:
+                payload = json.loads(message)
+            except Exception:
+                payload = None
+
+            if payload and payload.get("type") == "ping":
+                await _safe_send({"type": "pong", "ts": time.time()})
+                continue
+            if payload and payload.get("type") == "pong":
+                continue
     except ConnectionResetError:
         # قطع ناگهانی مرورگر/کلاینت
         pass
