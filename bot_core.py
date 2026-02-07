@@ -22,9 +22,12 @@ class BotCore:
         self.user_data = self._load_user_data()
         self.retry_limit = int(self.settings.get('retry_count', 1000))
         self.api_base_url = "https://python-ke7tg2.chbk.dev"
+        self.local_api_base = os.getenv("MAHANBOT_LOCAL_API", "http://127.0.0.1:8000")
         self.user_dir = os.path.join(os.getcwd(), "chrome_profiles", nid)
         if not os.path.exists(self.user_dir): os.makedirs(self.user_dir)
         self.browser_profile = browser_profile or {}
+        self._cancel_watcher_thread = None
+        self._cancel_watcher_stop_event = None
 
     def log(self, message, level="info", page=None, meta=None):
         if self.log_callback:
@@ -40,57 +43,77 @@ class BotCore:
 
     def _load_user_data(self):
         row = DBHandler.get_applicant(self.nid)
-        data: dict = {}
-        row_data: dict = {}
-        if row:
+        if not row:
+            return {}
+
+        try:
+            user_dict = dict(row)
+        except Exception:
+            user_dict = row if isinstance(row, dict) else {}
+
+        data = user_dict.get("data")
+        if isinstance(data, str):
             try:
-                row_data = dict(row)
+                data = json.loads(data)
             except Exception:
-                row_data = row if isinstance(row, dict) else {}
-        if row_data and row_data.get("data"):
-            if isinstance(row_data["data"], str):
-                data = json.loads(row_data["data"])
-            else:
-                data = row_data["data"]
+                data = {}
         if not isinstance(data, dict):
             data = {}
-        if row_data:
-            data.setdefault("full_name", row_data.get("full_name"))
-            data.setdefault("national_id", row_data.get("national_id"))
+
+        data.setdefault("full_name", user_dict.get("full_name"))
+        data.setdefault("national_id", user_dict.get("national_id"))
         return dict(data)
 
     def get_otp_code(self):
-        """دریافت کد تایید (ابتدا لوکال/دستی، سپس سرور چابکان)"""
-        
-        # 1. اولویت اول: چک کردن دیتابیس داخلی (ورود دستی یا دریافت قبلی)
+        """???????????? ???? ?????????? (?????????? ??????????/?????????? ?????? ???????? ????????????)"""
+
+        # 1) Local DB cache (otp_code in data JSON)
         try:
             user = DBHandler.get_applicant(self.nid)
             if user:
-                raw_data = user['data']
+                raw_data = user.get("data")
                 if isinstance(raw_data, str):
                     d = json.loads(raw_data)
                 elif isinstance(raw_data, dict):
                     d = raw_data
                 else:
                     d = {}
-                if 'otp_code' in d and d['otp_code']:
-                    self.log(f"✅ استفاده از کد موجود در دیتابیس: {d['otp_code']}", "success")
-                    return str(d['otp_code']).strip()
-        except: pass
+                code = d.get("otp_code")
+                if code and str(code).strip():
+                    self.log(f"??? ?????????????? ???? ???? ?????????? ???? ??????????????: {code}", "success")
+                    return str(code).strip()
+        except Exception:
+            pass
 
-        # 2. اولویت دوم: استعلام از سرور چابکان
+        # 2) Remote API (map `otp` -> otp_code, persist immediately)
         try:
             response = requests.get(f"{self.api_base_url}/get_otp/{self.nid}", timeout=3)
             if response.status_code == 200:
                 data = response.json()
-                code = data.get('otp')
-                if code and str(code).strip():
-                    self.log(f"☁️ دریافت کد از سرور آنلاین: {code}", "success")
-                    # ذخیره در دیتابیس لوکال برای استفاده‌های بعدی
+                code = data.get("otp")
+                if code is not None:
+                    code = str(code).strip()
+                if code:
                     DBHandler.save_otp(self.nid, code)
+                    self.log(f"[NID: {self.nid}] ?? OTP successfully retrieved from API and synced to DB: {code}", "success")
+                    return code
+        except Exception:
+            pass
+
+        return None
+
+    def wait_for_otp(self, stop_event=None, timeout: int = 65):
+        if stop_event is not None and stop_event.is_set():
+            return None
+        try:
+            response = requests.get(f"{self.local_api_base}/wait_otp/{self.nid}", timeout=timeout)
+            if response.status_code == 200:
+                data = response.json()
+                code = data.get("otp")
+                if code and str(code).strip():
                     return str(code).strip()
-        except: pass
-        
+        except Exception:
+            pass
         return None
 
     def setup_browser(self, stop_event=None):
@@ -114,6 +137,10 @@ class BotCore:
         return playwright, browser, context, page
 
     def _start_cancel_watcher(self, stop_event, playwright, browser, context, page):
+        if self._cancel_watcher_stop_event is stop_event and self._cancel_watcher_thread:
+            if self._cancel_watcher_thread.is_alive():
+                return
+
         def _watch():
             stop_event.wait()
             try:
@@ -124,6 +151,8 @@ class BotCore:
 
         thread = threading.Thread(target=_watch, daemon=True)
         thread.start()
+        self._cancel_watcher_thread = thread
+        self._cancel_watcher_stop_event = stop_event
 
     def close_browser_on_stop(self, stop_event, playwright, browser, context, page) -> bool:
         if stop_event is None or not stop_event.is_set():

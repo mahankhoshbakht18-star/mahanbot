@@ -105,6 +105,17 @@ def log_event(
     if meta:
         event["meta"] = meta
     EVENT_BROADCASTER.emit_event(event)
+    try:
+        applicant = DBHandler.get_applicant(nid)
+        if applicant:
+            record = dict(applicant)
+            try:
+                record["data"] = json.loads(record["data"]) if record.get("data") else {}
+            except Exception:
+                record["data"] = {}
+            EVENT_BROADCASTER.emit_event(build_event("applicant_updated", **record))
+    except Exception:
+        pass
 
 
 def job_status_event(nid: str, job_id: Optional[str], status: str, detail: Optional[str] = None) -> None:

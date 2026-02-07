@@ -1,367 +1,742 @@
 <!DOCTYPE html>
+
 <html lang="fa" dir="rtl">
+
 <head>
+
     <meta charset="UTF-8">
+
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
     <title>پنل هوشمند CBI TURBO</title>
+
     
+
     <link href="https://cdn.jsdelivr.net/gh/rastikerdar/vazirmatn@v33.003/Vazirmatn-font-face.css" rel="stylesheet">
+
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.rtl.min.css" rel="stylesheet">
-    <link rel="stylesheet" href="/static/style.css">
+
+    <link rel="stylesheet" href="/static/style.css?v=1">
+
     <style>
+
         /* استایل‌های اختصاصی داشبورد */
+
         .stat-card { border: none; border-radius: 15px; color: white; transition: transform 0.3s; overflow: hidden; position: relative; }
+
         .stat-card:hover { transform: translateY(-5px); }
+
         .stat-card .icon-bg { position: absolute; left: 10px; bottom: 10px; font-size: 4rem; opacity: 0.2; }
+
         .bg-gradient-blue { background: linear-gradient(45deg, #4facfe 0%, #00f2fe 100%); }
+
         .bg-gradient-green { background: linear-gradient(45deg, #43e97b 0%, #38f9d7 100%); }
+
         .bg-gradient-orange { background: linear-gradient(45deg, #fa709a 0%, #fee140 100%); }
+
         .bg-gradient-dark { background: linear-gradient(45deg, #30cfd0 0%, #330867 100%); }
+
         
+
         .terminal-window { background-color: #1e1e1e; border-radius: 10px; box-shadow: 0 10px 30px rgba(0,0,0,0.3); border: 1px solid #333; }
+
         .terminal-header { background-color: #2d2d2d; padding: 10px 15px; border-top-left-radius: 10px; border-top-right-radius: 10px; display: flex; align-items: center; }
+
         .terminal-dots { display: flex; gap: 6px; }
+
         .dot { width: 12px; height: 12px; border-radius: 50%; }
+
         .dot-red { background: #ff5f56; }
+
         .dot-yellow { background: #ffbd2e; }
+
         .dot-green { background: #27c93f; }
+
     </style>
+
 </head>
+
 <body>
 
+
+
     <nav class="sidebar">
+
         <div class="sidebar-header">
+
             <i class="fas fa-space-shuttle text-warning fa-2x mb-2"></i>
+
             <h4>CBI TURBO <span class="badge bg-white text-dark shadow-sm" style="font-size: 0.6em;">ULTIMATE</span></h4>
+
         </div>
+
         <ul class="nav flex-column mt-3 w-100 px-2" style="overflow-y: auto; max-height: 80vh;">
+
             <li class="nav-divider text-muted small my-2 pe-3">مدیریت</li>
+
             <li class="nav-item" onclick="switchView('dashboard', this)"><a class="nav-link active"><i class="fas fa-tachometer-alt"></i> داشبورد فرماندهی</a></li>
+
             <li class="nav-item" onclick="switchView('add', this)"><a class="nav-link"><i class="fas fa-user-plus"></i> ثبت متقاضی جدید</a></li>
+
             <li class="nav-item" onclick="switchView('list', this)"><a class="nav-link"><i class="fas fa-list-ol"></i> لیست کل متقاضیان</a></li>
+
             <li class="nav-divider text-muted small my-2 pe-3">عملیات بانکی</li>
+
             <li class="nav-item" onclick="switchView('list', this)"><a class="nav-link"><i class="fas fa-user-check"></i> ثبت نام اولیه</a></li>
+
             <li class="nav-item" onclick="switchView('bank-select', this)"><a class="nav-link"><i class="fas fa-university"></i> انتخاب بانک و شعبه</a></li>
+
             <li class="nav-item" onclick="switchView('delete-req', this)"><a class="nav-link text-danger"><i class="fas fa-user-times"></i> حذف درخواست</a></li>
+
             <li class="nav-item" onclick="switchView('status', this)"><a class="nav-link"><i class="fas fa-search-location"></i> مشاهده وضعیت</a></li>
+
             <li class="nav-item" onclick="switchView('recover', this)"><a class="nav-link text-warning"><i class="fas fa-barcode"></i> بازیابی و چاپ کد رهگیری</a></li>
+
             <li class="nav-divider text-muted small my-2 pe-3">سیستم</li>
+
             <li class="nav-item" onclick="switchView('settings', this)"><a class="nav-link"><i class="fas fa-cogs"></i> تنظیمات پیشرفته</a></li>
+
         </ul>
+
         <div class="server-status text-center mt-auto mb-3 pt-2 border-top border-secondary">
+
+            <div class="debug-panel text-start mt-3 px-3">
+                <div class="small text-muted">Debug</div>
+                <div class="small">WS: <span id="debugWsState">-</span></div>
+                <div class="small">Last WS: <span id="debugLastWs">-</span></div>
+                <div class="small">HTTP Err: <span id="debugLastHttp">-</span></div>
+            </div>
+
+
             <span id="connectionStatus" class="badge bg-secondary">در حال اتصال...</span>
+
         </div>
+
     </nav>
 
+
+
     <main class="main-content">
+
         <div id="view-dashboard" class="view-section active-view">
+
             <div class="d-flex justify-content-between align-items-center mb-4">
+
                 <div><h2 class="fw-bold m-0">داشبورد وضعیت</h2><small class="text-muted">نمای کلی عملکرد ربات‌ها</small></div>
+
                 <div class="d-flex gap-3 align-items-center">
+
                     <div class="bg-white px-3 py-2 rounded shadow-sm">
+
                         <div class="small text-muted">مرورگر فعلی</div>
+
                         <div class="fw-bold" id="currentBrowserLabel">--</div>
+
                     </div>
+
                     <div class="bg-white px-3 py-2 rounded shadow-sm fw-bold font-monospace" id="clock">00:00:00</div>
+
                     <button class="btn btn-primary shadow-sm" onclick="fetchDashboardData()"><i class="fas fa-sync-alt me-2"></i>بروزرسانی</button>
+
                 </div>
+
             </div>
+
             <div class="card border-0 shadow-sm mb-4" id="activeApplicantCard">
+
                 <div class="card-body">
+
                     <div class="d-flex flex-wrap justify-content-between align-items-center gap-3">
+
                         <div>
+
                             <div class="text-muted small">متقاضی فعال</div>
+
                             <h5 class="fw-bold mb-1" id="activeApplicantName">---</h5>
+
                             <div class="small text-muted" id="activeApplicantMeta">---</div>
+
                             <div class="mt-2">
+
                                 <span class="badge bg-primary" id="activeApplicantStatus">---</span>
+
                             </div>
+
                         </div>
+
                         <div class="d-flex flex-column gap-2 align-items-end">
+
                             <div class="d-flex gap-2 align-items-center">
+
                                 <input type="text" id="manualOtpInput" class="form-control text-center" maxlength="6" placeholder="کد دستی ۶ رقمی">
+
                                 <button class="btn btn-warning" onclick="sendManualOtp()">ارسال دستی کد</button>
+
                             </div>
+
                             <div class="small text-muted" id="manualOtpStatus"></div>
+
                         </div>
+
                     </div>
+
                     <hr>
+
                     <div>
+
                         <div class="text-muted small mb-2">بانک‌های در حال پردازش</div>
+
                         <div id="activeBankList" class="d-flex flex-wrap gap-2"></div>
+
                     </div>
+
                 </div>
+
             </div>
+
             <div class="row g-3 mb-4">
+
                 <div class="col-md-3"><div class="card stat-card bg-gradient-blue p-3 h-100"><div class="icon-bg"><i class="fas fa-users"></i></div><h3>کل متقاضیان</h3><h1 class="fw-bold m-0" id="stat-total">0</h1></div></div>
+
                 <div class="col-md-3"><div class="card stat-card bg-gradient-orange p-3 h-100"><div class="icon-bg"><i class="fas fa-robot"></i></div><h3>ربات‌های فعال</h3><h1 class="fw-bold m-0" id="stat-active">0</h1></div></div>
+
                 <div class="col-md-3"><div class="card stat-card bg-gradient-green p-3 h-100"><div class="icon-bg"><i class="fas fa-check-circle"></i></div><h3>ثبت نهایی</h3><h1 class="fw-bold m-0" id="stat-success">0</h1></div></div>
+
                 <div class="col-md-3"><div class="card stat-card bg-gradient-dark p-3 h-100"><div class="icon-bg"><i class="fas fa-barcode"></i></div><h3>کدهای رهگیری</h3><h1 class="fw-bold m-0" id="stat-codes">0</h1></div></div>
+
             </div>
+
             <div class="row g-4">
+
                 <div class="col-lg-5">
+
                     <div class="card border-0 shadow-sm mb-3">
+
                         <div class="card-body p-4 text-center bg-light rounded">
+
                             <h5 class="mb-3 fw-bold text-primary"><i class="fas fa-sms me-2"></i>ورود کد پیامک (OTP)</h5>
+
                             <input type="text" id="otpInput" class="form-control otp-input mx-auto mb-2" maxlength="6" placeholder="_ _ _ _ _" autocomplete="off">
+
                             <div id="otpStatus" class="fw-bold" style="min-height: 25px;"></div>
+
                         </div>
+
                     </div>
+
                     <div class="card border-0 shadow-sm">
+
                         <div class="card-header bg-white py-3 border-bottom"><h6 class="m-0 fw-bold"><i class="fas fa-pulse text-danger me-2"></i>عملیات‌های زنده</h6></div>
+
                         <div class="table-responsive"><table class="table table-hover align-middle mb-0 text-center small"><thead class="bg-light"><tr><th>متقاضی</th><th>وضعیت</th><th>عملیات</th></tr></thead><tbody id="activeBotsBody"></tbody></table></div>
+
                     </div>
+
                 </div>
+
                 <div class="col-lg-7">
+
                     <div class="terminal-window h-100 d-flex flex-column">
+
                         <div class="terminal-header"><div class="terminal-dots"><div class="dot dot-red"></div><div class="dot dot-yellow"></div><div class="dot dot-green"></div></div><div class="text-white ms-3 small font-monospace opacity-75">root@cbi-turbo:~# logs</div></div>
+
                         <div class="bg-dark text-white px-3 py-2 d-flex flex-wrap gap-2 align-items-center">
+
                             <input type="text" id="logFilterText" class="form-control form-control-sm w-auto" placeholder="جستجو پیام...">
+
                             <input type="text" id="logFilterNid" class="form-control form-control-sm w-auto" placeholder="کد ملی">
+
                             <input type="text" id="logFilterJob" class="form-control form-control-sm w-auto" placeholder="Job ID">
+
                             <select id="logFilterType" class="form-select form-select-sm w-auto">
+
                                 <option value="">همه رویدادها</option>
+
                                 <option value="log">لاگ</option>
+
                                 <option value="job_status">وضعیت</option>
+
                                 <option value="metric">متریک</option>
+
                             </select>
+
                             <select id="logFilterLevel" class="form-select form-select-sm w-auto">
+
                                 <option value="">همه سطوح</option>
+
                                 <option value="info">Info</option>
+
                                 <option value="success">Success</option>
+
                                 <option value="warning">Warning</option>
+
                                 <option value="error">Error</option>
+
                                 <option value="stopped">Stopped</option>
+
                                 <option value="stopping">Stopping</option>
+
                                 <option value="registering">Registering</option>
+
                                 <option value="selecting">Selecting</option>
+
                                 <option value="waiting sms">Waiting SMS</option>
+
                             </select>
+
                             <button class="btn btn-sm btn-outline-light" id="logClearBtn">پاکسازی</button>
+
                         </div>
+
                         <div class="card-body overflow-auto p-3" id="terminalBox" style="height: 350px; font-family: 'Consolas', monospace; color: #4af626; font-size: 0.9rem;"><div>> System Initialized...</div><div>> Waiting for commands...</div></div>
+
                     </div>
+
                 </div>
+
             </div>
+
         </div>
 
+
+
         <div id="view-add" class="view-section">
+
             <div class="d-flex justify-content-between align-items-center mb-4"><h2 class="fw-bold" id="formTitle">ثبت متقاضی جدید</h2><button class="btn btn-outline-danger btn-sm" onclick="resetAddForm()" id="btnResetForm" style="display:none;"><i class="fas fa-times me-1"></i>لغو ویرایش</button></div>
+
             <div class="card border-0 shadow-sm p-4">
+
                 <form id="addForm">
+
                     <div class="row g-4">
+
                         <div class="col-md-12">
+
                             <h5 class="text-primary fw-bold border-bottom pb-2 mb-3"><i class="fas fa-id-card me-2"></i>۱. مشخصات هویتی و تماس</h5>
+
                             <div class="row g-3">
+
                                 <div class="col-md-3"><label class="form-label small text-muted">نام و نام خانوادگی</label><input type="text" class="form-control" id="inpName"></div>
+
                                 <div class="col-md-3"><label class="form-label small text-muted">کد ملی</label><input type="text" class="form-control fw-bold bg-light" id="inpNid" maxlength="10"></div>
+
                                 <div class="col-md-3"><label class="form-label small text-muted">شماره موبایل</label><input type="text" class="form-control fw-bold" id="inpMobile" maxlength="11"></div>
+
                                 <div class="col-md-3"><label class="form-label small text-muted">کد ملی همسر</label><input type="text" class="form-control" id="inpSpouse" maxlength="10"></div>
+
                                 <div class="col-md-3"><label class="form-label small text-muted">تلفن ثابت</label><input type="text" class="form-control" id="inpPhone" placeholder="021..."></div>
+
                                 <div class="col-md-3"><label class="form-label small text-muted">کد پستی</label><input type="text" class="form-control" id="inpZip" maxlength="10"></div>
+
                                 <div class="col-md-3">
+
             <label class="form-label small text-muted">استان</label>
+
             <select class="form-select" id="inpState">
+
                 <option value="">انتخاب...</option>
+
                 <option value="تهران">تهران</option><option value="خراسان رضوی">خراسان رضوی</option>
+
                 <option value="اصفهان">اصفهان</option><option value="فارس">فارس</option>
+
                 <option value="خوزستان">خوزستان</option><option value="آذربایجان شرقی">آذربایجان شرقی</option>
+
                 <option value="سیستان و بلوچستان">سیستان و بلوچستان</option><option value="کرمان">کرمان</option>
+
                 <option value="مازندران">مازندران</option><option value="گیلان">گیلان</option>
+
                 </select>
+
         </div>
+
                                 <div class="col-md-3"><label class="form-label small text-muted">شهر</label><input type="text" class="form-control" id="inpCity"></div>
+
                                 <div class="col-md-3">
+
             <label class="form-label small text-muted">وضعیت سربازی (آقایان)</label>
+
             <select class="form-select" id="inpMilitary">
+
                 <option value="1">پایان خدمت / معافیت دائم</option>
+
                 <option value="2">در حال انجام خدمت</option>
+
                 <option value="3">سایر</option>
+
             </select>
+
         </div>
+
                             </div>
+
                         </div>
+
                         <div class="col-md-6"><h5 class="text-primary fw-bold border-bottom pb-2 mb-3">۲. تاریخ تولد</h5><div class="input-group"><input type="number" class="form-control text-center" id="bd_d" placeholder="DD"><input type="number" class="form-control text-center" id="bd_m" placeholder="MM"><input type="number" class="form-control text-center" id="bd_y" placeholder="YYYY"></div></div>
+
                         <div class="col-md-6"><h5 class="text-primary fw-bold border-bottom pb-2 mb-3">۳. تاریخ ازدواج</h5><div class="input-group"><input type="number" class="form-control text-center" id="md_d" placeholder="DD"><input type="number" class="form-control text-center" id="md_m" placeholder="MM"><input type="number" class="form-control text-center" id="md_y" placeholder="YYYY"></div></div>
+
                         <div class="col-md-12">
+
                             <h5 class="text-primary fw-bold border-bottom pb-2 mb-3">۴. اولویت بانک‌ها</h5>
+
                             <div class="row g-3">
+
                                 <div class="col-md-6">
+
                                     <label class="form-label small text-muted">بانک‌های موجود</label>
+
                                     <div id="bankOptions" class="bank-options"></div>
+
                                 </div>
+
                                 <div class="col-md-6">
+
                                     <label class="form-label small text-muted">اولویت بانک‌ها (Drag & Drop)</label>
+
                                     <ul id="priorityBanksList" class="bank-priority-list list-group"></ul>
+
                                 </div>
+
                                 <div class="col-md-12">
+
                                     <label class="form-label small text-muted">بانک‌های مورد علاقه</label>
+
                                     <div id="favoriteBanksList" class="bank-favorite-list"></div>
+
                                 </div>
+
                             </div>
+
                         </div>
+
                         <div class="col-md-12 mt-3"><div class="bg-success bg-opacity-10 border border-success rounded p-3 d-flex justify-content-between align-items-center"><div><h6 class="fw-bold text-success m-0">کد رهگیری</h6></div><input type="text" class="form-control border-success text-center fw-bold fs-5" id="inpTrackingCode" style="max-width: 250px;" placeholder="---"></div></div>
+
                     </div>
+
                     <div class="mt-4 pt-3 border-top text-end"><button type="button" class="btn btn-secondary px-4 me-2" onclick="resetAddForm()">پاک کردن</button><button type="button" class="btn btn-primary btn-lg px-5 shadow fw-bold" onclick="submitNewApplicant()">ذخیره</button></div>
+
                 </form>
+
             </div>
+
         </div>
+
+
 
         <div id="view-list" class="view-section"><h2 class="fw-bold mb-4">لیست کل متقاضیان</h2><div class="card border-0 shadow-sm"><div class="table-responsive"><table class="table table-hover align-middle mb-0 text-center"><thead class="bg-light"><tr><th>#</th><th>نام (ویرایش)</th><th>کد ملی</th><th>کد رهگیری</th><th>وضعیت</th><th>Start Register</th><th>STOP Register</th></tr></thead><tbody id="applicantsListBody"></tbody></table></div></div></div>
 
+
+
         <div id="view-bank-select" class="view-section"><h2 class="fw-bold mb-4 text-primary">انتخاب بانک</h2><div class="card border-0 shadow-sm"><table class="table table-hover text-center"><thead class="bg-light"><tr><th>نام</th><th>کد ملی</th><th>وضعیت</th><th>Start Select</th><th>STOP Select</th></tr></thead><tbody id="bankSelectListBody"></tbody></table></div></div>
+
         <div id="view-status" class="view-section"><h2 class="fw-bold mb-4 text-info">مشاهده وضعیت</h2><div class="card border-0 shadow-sm"><table class="table table-hover text-center"><thead class="bg-light"><tr><th>نام</th><th>کد ملی</th><th>رهگیری</th><th>وضعیت</th><th>Start Status</th><th>STOP Status</th></tr></thead><tbody id="statusListBody"></tbody></table></div></div>
+
         <div id="view-recover" class="view-section"><h2 class="fw-bold mb-4 text-warning">بازیابی کد رهگیری</h2><div class="card border-0 shadow-sm"><table class="table table-hover text-center"><tbody id="recoverListBody"></tbody></table></div></div>
+
         <div id="view-delete-req" class="view-section"><h2 class="fw-bold mb-4 text-danger">حذف درخواست</h2><div class="card border-0 shadow-sm"><table class="table table-hover text-center"><tbody id="deleteReqListBody"></tbody></table></div></div>
 
+
+
         <div id="view-settings" class="view-section">
+
             <div class="d-flex justify-content-between mb-4"><h2 class="fw-bold">تنظیمات پیشرفته</h2><button class="btn btn-primary px-4" onclick="saveSettings()">ذخیره تغییرات</button></div>
+
             <div class="row g-4">
+
                 <div class="col-12">
+
                     <div class="card p-4 border-0 shadow-sm">
+
                         <div class="d-flex justify-content-between align-items-center border-bottom pb-2 mb-3">
+
                             <h5 class="text-primary fw-bold mb-0"><i class="fas fa-globe me-2"></i>تنظیمات مرورگر</h5>
+
                             <div class="d-flex gap-2">
+
                                 <button class="btn btn-sm btn-outline-secondary" onclick="applyBrowserPreset('fast')">Fast (headless)</button>
+
                                 <button class="btn btn-sm btn-outline-secondary" onclick="applyBrowserPreset('debug')">Debug (headed + slowMo 100ms)</button>
+
                             </div>
-                        </div>
-                        <div class="row g-3">
-                            <div class="col-md-3">
-                                <label class="form-label">مرورگر</label>
-                                <select class="form-select" id="browserSelect">
-                                    <option value="chromium">Chromium</option>
-                                    <option value="firefox">Firefox</option>
-                                    <option value="webkit">WebKit</option>
-                                </select>
-                            </div>
-                            <div class="col-md-3 d-flex align-items-end">
-                                <div class="form-check form-switch">
-                                    <input class="form-check-input" type="checkbox" id="browserHeadless">
-                                    <label class="form-check-label">Headless</label>
-                                </div>
-                            </div>
-                            <div class="col-md-3">
-                                <label class="form-label">SlowMo (ms)</label>
-                                <input type="number" class="form-control" id="browserSlowMo" min="0" step="50">
-                            </div>
-                            <div class="col-md-3">
-                                <label class="form-label">Timeout (ms)</label>
-                                <input type="number" class="form-control" id="browserTimeout" min="1000" step="1000">
-                            </div>
-                            <div class="col-md-3">
-                                <label class="form-label">عرض Viewport</label>
-                                <input type="number" class="form-control" id="browserViewportWidth" min="320">
-                            </div>
-                            <div class="col-md-3">
-                                <label class="form-label">ارتفاع Viewport</label>
-                                <input type="number" class="form-control" id="browserViewportHeight" min="200">
-                            </div>
-                            <div class="col-md-3">
-                                <label class="form-label">User Data Dir (اختیاری)</label>
-                                <input type="text" class="form-control" id="browserUserDataDir" placeholder="profiles/default">
-                            </div>
-                            <div class="col-md-3">
-                                <label class="form-label">Proxy (اختیاری)</label>
-                                <input type="text" class="form-control" id="browserProxy" placeholder="http://127.0.0.1:8080">
-                            </div>
-                        </div>
-                        <div class="d-flex flex-wrap gap-2 mt-3">
-                            <button class="btn btn-primary" onclick="saveBrowserProfile()">ذخیره تنظیمات مرورگر</button>
-                            <button class="btn btn-outline-success" onclick="testBrowserLaunch()">Test Launch</button>
-                            <span class="text-muted small align-self-center" id="browserProfileSummary">--</span>
-                        </div>
-                    </div>
-                </div>
-                <div class="col-12">
-                    <div class="card p-4 border-0 shadow-sm">
-                        <div class="d-flex justify-content-between align-items-center border-bottom pb-2 mb-3">
-                            <h5 class="text-primary fw-bold mb-0"><i class="fas fa-shield-alt me-2"></i>دامنه‌های مجاز</h5>
-                            <button class="btn btn-sm btn-outline-primary" onclick="saveAllowedDomains()">ذخیره دامنه‌ها</button>
-                        </div>
-                        <p class="text-muted small">
-                            دامنه‌های محیط (ENV) فقط خواندنی هستند و همیشه در فهرست مؤثر باقی می‌مانند.
-                        </p>
-                        <div class="row g-3">
-                            <div class="col-md-6">
-                                <label class="form-label fw-bold">دامنه‌های مؤثر (Effective)</label>
-                                <div id="allowedDomainsEffective" class="bg-light rounded p-2 border small"></div>
-                            </div>
-                            <div class="col-md-6">
-                                <label class="form-label fw-bold">دامنه‌های محیط (ENV)</label>
-                                <div id="allowedDomainsEnv" class="bg-light rounded p-2 border small"></div>
-                            </div>
-                            <div class="col-12">
-                                <label class="form-label fw-bold">دامنه‌های قابل ویرایش (DB)</label>
-                                <div class="input-group mb-2">
-                                    <input type="text" class="form-control" id="allowedDomainInput" placeholder="example.com">
-                                    <button class="btn btn-outline-success" type="button" onclick="addAllowedDomain()">افزودن</button>
-                                </div>
-                                <div id="allowedDomainsDbList" class="bg-light rounded p-2 border small"></div>
-                            </div>
-                        </div>
-                        <div class="mt-3">
-                            <span id="allowedDomainsStatus" class="small text-muted"></span>
-                        </div>
-                        <div class="mt-4">
-                            <label class="form-label fw-bold">تست Allowlist</label>
-                            <div class="input-group mb-2">
-                                <input type="text" class="form-control" id="allowlistTestUrl" placeholder="https://example.com/path">
-                                <button class="btn btn-outline-primary" type="button" onclick="testAllowlistUrl()">بررسی</button>
-                            </div>
-                            <div id="allowlistTestResult" class="small text-muted"></div>
-                        </div>
-                    </div>
-                </div>
-                <div class="col-md-6">
-                    <div class="card p-4 h-100 border-0 shadow-sm">
-                        <h5 class="border-bottom pb-2 mb-3 text-primary">تنظیمات اجرایی ربات</h5>
-                        
-                        <div class="mb-3">
-                            <label class="form-label fw-bold">حالت حل کپچا</label>
-                            <select class="form-select" id="set_captcha_mode">
-                                <option value="human">انسانی (تایپ آهسته و کلیک دقیق) - پیشنهادی</option>
-                                <option value="robot">ربات (تایپ و کلیک آنی) - سریع</option>
-                            </select>
-                            <small class="text-muted">حالت انسانی برای جلوگیری از خطای "کد امنیتی اشتباه است" بهتر است.</small>
+
                         </div>
 
-                        <div class="mb-3">
-                            <label class="form-label">تعداد تلاش مجدد</label>
-                            <input type="number" class="form-control" id="set_retry" value="1000">
+                        <div class="row g-3">
+
+                            <div class="col-md-3">
+
+                                <label class="form-label">مرورگر</label>
+
+                                <select class="form-select" id="browserSelect">
+
+                                    <option value="chromium">Chromium</option>
+
+                                    <option value="firefox">Firefox</option>
+
+                                    <option value="webkit">WebKit</option>
+
+                                </select>
+
+                            </div>
+
+                            <div class="col-md-3 d-flex align-items-end">
+
+                                <div class="form-check form-switch">
+
+                                    <input class="form-check-input" type="checkbox" id="browserHeadless">
+
+                                    <label class="form-check-label">Headless</label>
+
+                                </div>
+
+                            </div>
+
+                            <div class="col-md-3">
+
+                                <label class="form-label">SlowMo (ms)</label>
+
+                                <input type="number" class="form-control" id="browserSlowMo" min="0" step="50">
+
+                            </div>
+
+                            <div class="col-md-3">
+
+                                <label class="form-label">Timeout (ms)</label>
+
+                                <input type="number" class="form-control" id="browserTimeout" min="1000" step="1000">
+
+                            </div>
+
+                            <div class="col-md-3">
+
+                                <label class="form-label">عرض Viewport</label>
+
+                                <input type="number" class="form-control" id="browserViewportWidth" min="320">
+
+                            </div>
+
+                            <div class="col-md-3">
+
+                                <label class="form-label">ارتفاع Viewport</label>
+
+                                <input type="number" class="form-control" id="browserViewportHeight" min="200">
+
+                            </div>
+
+                            <div class="col-md-3">
+
+                                <label class="form-label">User Data Dir (اختیاری)</label>
+
+                                <input type="text" class="form-control" id="browserUserDataDir" placeholder="profiles/default">
+
+                            </div>
+
+                            <div class="col-md-3">
+
+                                <label class="form-label">Proxy (اختیاری)</label>
+
+                                <input type="text" class="form-control" id="browserProxy" placeholder="http://127.0.0.1:8080">
+
+                            </div>
+
                         </div>
+
+                        <div class="d-flex flex-wrap gap-2 mt-3">
+
+                            <button class="btn btn-primary" onclick="saveBrowserProfile()">ذخیره تنظیمات مرورگر</button>
+
+                            <button class="btn btn-outline-success" onclick="testBrowserLaunch()">Test Launch</button>
+
+                            <span class="text-muted small align-self-center" id="browserProfileSummary">--</span>
+
+                        </div>
+
+                    </div>
+
+                </div>
+
+                <div class="col-12">
+
+                    <div class="card p-4 border-0 shadow-sm">
+
+                        <div class="d-flex justify-content-between align-items-center border-bottom pb-2 mb-3">
+
+                            <h5 class="text-primary fw-bold mb-0"><i class="fas fa-shield-alt me-2"></i>دامنه‌های مجاز</h5>
+
+                            <button class="btn btn-sm btn-outline-primary" onclick="saveAllowedDomains()">ذخیره دامنه‌ها</button>
+
+                        </div>
+
+                        <p class="text-muted small">
+
+                            دامنه‌های محیط (ENV) فقط خواندنی هستند و همیشه در فهرست مؤثر باقی می‌مانند.
+
+                        </p>
+
+                        <div class="row g-3">
+
+                            <div class="col-md-6">
+
+                                <label class="form-label fw-bold">دامنه‌های مؤثر (Effective)</label>
+
+                                <div id="allowedDomainsEffective" class="bg-light rounded p-2 border small"></div>
+
+                            </div>
+
+                            <div class="col-md-6">
+
+                                <label class="form-label fw-bold">دامنه‌های محیط (ENV)</label>
+
+                                <div id="allowedDomainsEnv" class="bg-light rounded p-2 border small"></div>
+
+                            </div>
+
+                            <div class="col-12">
+
+                                <label class="form-label fw-bold">دامنه‌های قابل ویرایش (DB)</label>
+
+                                <div class="input-group mb-2">
+
+                                    <input type="text" class="form-control" id="allowedDomainInput" placeholder="example.com">
+
+                                    <button class="btn btn-outline-success" type="button" onclick="addAllowedDomain()">افزودن</button>
+
+                                </div>
+
+                                <div id="allowedDomainsDbList" class="bg-light rounded p-2 border small"></div>
+
+                            </div>
+
+                        </div>
+
+                        <div class="mt-3">
+
+                            <span id="allowedDomainsStatus" class="small text-muted"></span>
+
+                        </div>
+
+                        <div class="mt-4">
+
+                            <label class="form-label fw-bold">تست Allowlist</label>
+
+                            <div class="input-group mb-2">
+
+                                <input type="text" class="form-control" id="allowlistTestUrl" placeholder="https://example.com/path">
+
+                                <button class="btn btn-outline-primary" type="button" onclick="testAllowlistUrl()">بررسی</button>
+
+                            </div>
+
+                            <div id="allowlistTestResult" class="small text-muted"></div>
+
+                        </div>
+
+                    </div>
+
+                </div>
+
+                <div class="col-md-6">
+
+                    <div class="card p-4 h-100 border-0 shadow-sm">
+
+                        <h5 class="border-bottom pb-2 mb-3 text-primary">تنظیمات اجرایی ربات</h5>
+
+                        
+
+                        <div class="mb-3">
+
+                            <label class="form-label fw-bold">حالت حل کپچا</label>
+
+                            <select class="form-select" id="set_captcha_mode">
+
+                                <option value="human">انسانی (تایپ آهسته و کلیک دقیق) - پیشنهادی</option>
+
+                                <option value="robot">ربات (تایپ و کلیک آنی) - سریع</option>
+
+                            </select>
+
+                            <small class="text-muted">حالت انسانی برای جلوگیری از خطای "کد امنیتی اشتباه است" بهتر است.</small>
+
+                        </div>
+
+
+
+                        <div class="mb-3">
+
+                            <label class="form-label">تعداد تلاش مجدد</label>
+
+                            <input type="number" class="form-control" id="set_retry" value="1000">
+
+                        </div>
+
+
 
                         <div class="form-check form-switch mb-3">
+
                             <input class="form-check-input" type="checkbox" id="set_headless">
+
                             <label class="form-check-label">اجرای مخفی (Headless)</label>
+
                         </div>
+
                         
+
                         <div class="alert alert-warning d-flex align-items-center mt-4">
+
                             <input class="form-check-input me-3 fs-4" type="checkbox" id="set_final_submit">
+
                             <div>
+
                                 <label class="form-check-label fw-bold text-danger mb-0" for="set_final_submit">فعال‌سازی ثبت نهایی (Save)</label>
+
                                 <div style="font-size: 0.8rem;">اگر تیک نباشد، ربات در مرحله آخر متوقف شده و دکمه "ثبت" را نمی‌زند (تست).</div>
+
                             </div>
+
                         </div>
+
                     </div>
+
                 </div>
+
+
 
                 <div class="col-md-6">
+
                     <div class="card p-4 h-100 border-0 shadow-sm">
+
                         <h5 class="border-bottom pb-2 mb-3 text-primary">تنظیمات شبکه</h5>
+
                         <div class="mb-3"><label>تاخیر حل کپچا (ثانیه)</label><input type="number" class="form-control" id="set_captcha" step="0.1" value="0.1"></div>
+
                         <div class="form-check form-switch mb-3"><input class="form-check-input" type="checkbox" id="set_useproxy"><label class="form-check-label">استفاده از پروکسی</label></div>
+
                         <textarea class="form-control" id="set_proxylist" rows="6" placeholder="لیست پروکسی (هر خط یکی)"></textarea>
+
                     </div>
+
                 </div>
+
             </div>
+
         </div>
+
     </main>
 
+
+
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
-    <script src="/static/messages_fa.js"></script>
-    <script src="/static/script.js"></script>
+
+    <script src="/static/messages_fa.js?v=1"></script>
+
+    <script src="/static/script.js?v=1"></script>
+
     <div class="toast-container position-fixed top-0 start-0 p-3" id="toastContainer"></div>
+
 </body>
+
 </html>
+

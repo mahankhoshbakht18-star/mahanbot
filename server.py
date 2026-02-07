@@ -19,6 +19,7 @@ from database import DBHandler, resource_path, DB_PATH  # DB_PATH از database.
 from allowlist import get_allowlist_snapshot, get_allowed_domains, is_url_allowed, normalize_domain_list
 from event_logger import (
     EVENT_BROADCASTER,
+    build_event,
     build_log_callback,
     create_job_id,
     job_status_event,
@@ -27,7 +28,9 @@ from event_logger import (
 )
 from browser_launcher import (
     BrowserLaunchError,
+    close_browser,
     get_default_browser_profile,
+    launch_browser,
     merge_browser_profiles,
     normalize_browser_profile,
 )
@@ -62,6 +65,8 @@ CAPTCHA_SERVICE: Optional[CaptchaService] = None
 JOB_QUEUE: Optional["JobQueue"] = None
 OTP_EVENTS: Dict[str, asyncio.Event] = {}
 OTP_EVENT_LOCK = asyncio.Lock()
+STARTUP_DONE = False
+STARTUP_LOCK = asyncio.Lock()
 
 
 # ------------------------- Helpers -------------------------
@@ -139,7 +144,11 @@ def _check_uvicorn_ws_backend():
 
 @app.on_event("startup")
 async def startup_event():
-    global MAIN_LOOP, CAPTCHA_SERVICE, JOB_QUEUE
+    global MAIN_LOOP, CAPTCHA_SERVICE, JOB_QUEUE, STARTUP_DONE
+    async with STARTUP_LOCK:
+        if STARTUP_DONE:
+            return
+        STARTUP_DONE = True
     MAIN_LOOP = asyncio.get_running_loop()
     set_main_loop(MAIN_LOOP)
 
@@ -148,8 +157,9 @@ async def startup_event():
     model, ocr_firewall = load_captcha_resources()
     CAPTCHA_SERVICE = CaptchaService(model=model, ocr_firewall=ocr_firewall)
 
-    JOB_QUEUE = JobQueue(max_concurrency=get_max_concurrency())
-    JOB_QUEUE.start()
+    if JOB_QUEUE is None:
+        JOB_QUEUE = JobQueue(max_concurrency=get_max_concurrency())
+        JOB_QUEUE.start()
 
     # Reset stuck statuses
     try:
@@ -192,6 +202,41 @@ def save_browser_profile_settings(profile: Dict[str, Any]) -> Dict[str, Any]:
     return normalized
 
 
+def _serialize_applicants() -> List[Dict[str, Any]]:
+    results: List[Dict[str, Any]] = []
+    try:
+        with DBHandler._connect(row_factory=True) as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT * FROM applicants ORDER BY id DESC")
+            rows = cursor.fetchall()
+            for row in rows:
+                record = dict(row)
+                try:
+                    record["data"] = json.loads(record["data"]) if record.get("data") else {}
+                except Exception:
+                    record["data"] = {}
+                results.append(record)
+    except Exception:
+        return []
+    return results
+
+
+def _emit_applicants_snapshot() -> None:
+    EVENT_BROADCASTER.emit_event(
+        build_event("applicants_snapshot", applicants=_serialize_applicants())
+    )
+
+
+def _handle_receive_sms(nid: str, code: str, status_label: str = "received") -> bool:
+    success = DBHandler.save_otp(nid, code, status=status_label)
+    if not success:
+        return False
+    log_event(nid, None, f"OTP received: {code}", "success")
+    if MAIN_LOOP:
+        asyncio.run_coroutine_threadsafe(_signal_otp_event(nid), MAIN_LOOP)
+    return True
+
+
 # ------------------------- Models -------------------------
 class ApplicantModel(BaseModel):
     id: Optional[int] = None
@@ -220,6 +265,27 @@ class BrowserProfileRequest(BaseModel):
     user_data_dir: Optional[str] = None
     proxy: Optional[str] = None
     timeout_ms: Optional[int] = None
+
+
+class SettingsRequest(BaseModel):
+    captcha_delay: Optional[float] = None
+    retry_count: Optional[int] = None
+    headless: Optional[bool] = None
+    clear_cookies: Optional[bool] = None
+    save_only_mode: Optional[bool] = None
+    sms_auto_resend: Optional[bool] = None
+    captcha_mode: Optional[str] = None
+    final_submit: Optional[bool] = None
+    use_proxy: Optional[bool] = None
+    proxy_list: Optional[str] = None
+
+
+class AllowedDomainsRequest(BaseModel):
+    domains: List[str]
+
+
+class AllowlistCheckRequest(BaseModel):
+    url: str
 
 
 # ------------------------- Job Queue -------------------------
@@ -281,9 +347,13 @@ class JobQueue:
                     return job
         return None
 
-    def enqueue(self, bot_name: str, nid: str, payload: Dict[str, Any]) -> Job:
+    def enqueue(self, bot_name: str, nid: str, payload: Dict[str, Any]) -> Optional[Job]:
         with self._condition:
-            existing = self.find_active(bot_name, nid)
+            existing = None
+            for job in self._jobs.values():
+                if job.bot_name == bot_name and job.nid == nid and job.status in self.ACTIVE_STATUSES:
+                    existing = job
+                    break
             if existing:
                 raise DuplicateJobError(existing)
             job = Job(bot_name, nid, payload)
@@ -316,6 +386,17 @@ class JobQueue:
                     job_status_event(job.nid, job.id, "cancelling")
                 return job
             return job
+
+    def cancel_by_nid(self, nid: str) -> Optional[Job]:
+        job_id = None
+        with self._lock:
+            for job in self._jobs.values():
+                if job.nid == nid and job.status in self.ACTIVE_STATUSES:
+                    job_id = job.id
+                    break
+        if not job_id:
+            return None
+        return self.cancel(job_id)
 
     def list_jobs(self) -> list[Dict[str, Any]]:
         with self._lock:
@@ -389,19 +470,7 @@ def serve_index():
 @app.get("/applicants")
 def get_applicants():
     try:
-        results = []
-        with DBHandler._connect(row_factory=True) as conn:
-            cursor = conn.cursor()
-            cursor.execute("SELECT * FROM applicants ORDER BY id DESC")
-            rows = cursor.fetchall()
-            for row in rows:
-                record = dict(row)
-                try:
-                    record["data"] = json.loads(record["data"]) if record.get("data") else {}
-                except Exception:
-                    record["data"] = {}
-                results.append(record)
-        return results
+        return _serialize_applicants()
     except Exception as exc:
         logger.warning("Failed to fetch applicants: %s", exc)
         return []
@@ -412,13 +481,10 @@ def receive_sms(req: SMSRequest):
     if not req.nid or not req.code:
         raise HTTPException(status_code=400, detail="Invalid payload")
 
-    success = DBHandler.save_otp(req.nid, req.code, status="received")
+    success = _handle_receive_sms(req.nid, req.code, status_label="received")
     if not success:
         raise HTTPException(status_code=404, detail="Applicant not found")
-
-    log_event(req.nid, None, f"OTP received: {req.code}", "success")
-    if MAIN_LOOP:
-        asyncio.run_coroutine_threadsafe(_signal_otp_event(req.nid), MAIN_LOOP)
+    _emit_applicants_snapshot()
     return {"status": "ok"}
 
 
@@ -427,13 +493,10 @@ def manual_otp(req: SMSRequest):
     if not req.nid or not req.code:
         raise HTTPException(status_code=400, detail="Invalid payload")
 
-    success = DBHandler.save_otp(req.nid, req.code, status="pending")
+    success = _handle_receive_sms(req.nid, req.code, status_label="received")
     if not success:
         raise HTTPException(status_code=404, detail="Applicant not found")
-
-    log_event(req.nid, None, f"OTP manual override: {req.code}", "warning")
-    if MAIN_LOOP:
-        asyncio.run_coroutine_threadsafe(_signal_otp_event(req.nid), MAIN_LOOP)
+    _emit_applicants_snapshot()
     return {"status": "ok"}
 
 
@@ -477,6 +540,7 @@ async def save_applicant(req: ApplicantModel):
                     (req.full_name, req.national_id, d_str),
                 )
             await conn.commit()
+        _emit_applicants_snapshot()
         return {"status": "ok"}
     except Exception as e:
         return {"status": "error", "msg": str(e)}
@@ -488,6 +552,7 @@ async def delete_applicant(nid: str, _: bool = Depends(require_api_key)):
     async with await _open_aiosqlite() as conn:
         await conn.execute("DELETE FROM applicants WHERE national_id=?", (nid,))
         await conn.commit()
+    _emit_applicants_snapshot()
     return {"status": "deleted"}
 
 
@@ -500,7 +565,29 @@ def stop_bank(nid: str, payload: Dict[str, Any], _: bool = Depends(require_api_k
     if not success:
         raise HTTPException(status_code=404, detail="Applicant not found")
     log_event(nid, None, f"⛔ توقف بانک: {bank_name}", "warning")
+    _emit_applicants_snapshot()
     return {"status": "ok", "bank": bank_name}
+
+
+@app.post("/bot/stop/{nid}")
+def stop_bot_by_nid(nid: str, _: bool = Depends(require_api_key)):
+    if not JOB_QUEUE:
+        raise HTTPException(status_code=500, detail="Job queue not ready")
+    job = JOB_QUEUE.cancel_by_nid(nid)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+    _emit_applicants_snapshot()
+    return {"status": job.status, "job": job.to_dict()}
+
+
+@app.post("/bot/action/delete-request/{nid}")
+def delete_request(nid: str, _: bool = Depends(require_api_key)):
+    applicant = DBHandler.get_applicant(nid)
+    if not applicant:
+        raise HTTPException(status_code=404, detail="Applicant not found")
+    log_event(nid, None, "Delete request submitted", "warning")
+    _emit_applicants_snapshot()
+    return {"status": "ok"}
 
 
 # ✅ این endpoint را داشبورد شما لازم دارد
@@ -519,6 +606,56 @@ def update_browser_profile(req: BrowserProfileRequest):
     return save_browser_profile_settings(merged)
 
 
+@app.get("/settings")
+def get_settings():
+    return DBHandler.get_config()
+
+
+@app.post("/settings")
+def update_settings(req: SettingsRequest, _: bool = Depends(require_api_key)):
+    payload = req.dict(exclude_unset=True)
+    current = DBHandler.get_config()
+    current.update(payload)
+    DBHandler.update_config(current)
+    return {"status": "ok", "config": current}
+
+
+@app.get("/settings/allowed-domains")
+def get_allowed_domains_settings():
+    return get_allowlist_snapshot()
+
+
+@app.put("/settings/allowed-domains")
+def update_allowed_domains(req: AllowedDomainsRequest, _: bool = Depends(require_api_key)):
+    normalized, invalid = normalize_domain_list(req.domains)
+    if invalid:
+        raise HTTPException(
+            status_code=400,
+            detail={"error": "invalid_domains", "details": {"invalid_domains": invalid}},
+        )
+    DBHandler.update_setting("allowed_domains", normalized)
+    return get_allowlist_snapshot()
+
+
+@app.post("/settings/allowed-domains/check")
+def check_allowed_domain(req: AllowlistCheckRequest):
+    allowed, host, effective = is_url_allowed(req.url)
+    return {"allowed": allowed, "host": host, "effective": effective}
+
+
+@app.post("/browser/test-launch")
+def test_browser_launch(_: bool = Depends(require_api_key)):
+    profile = load_browser_profile_settings()
+    playwright = browser = context = page = None
+    try:
+        playwright, browser, context, page = launch_browser(profile)
+        return {"status": "ok"}
+    except BrowserLaunchError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=exc.to_dict())
+    finally:
+        close_browser(playwright, browser, context, page)
+
+
 @app.post("/jobs/start")
 def start_job(req: JobStartRequest, _: bool = Depends(require_api_key)):
     if not JOB_QUEUE:
@@ -533,10 +670,16 @@ def start_job(req: JobStartRequest, _: bool = Depends(require_api_key)):
     try:
         job = JOB_QUEUE.enqueue(req.bot_name.lower(), req.nid, payload)
     except DuplicateJobError as exc:
+        existing = exc.job
         return JSONResponse(
             status_code=status.HTTP_409_CONFLICT,
-            content={"error": "job_already_running", "job_id": exc.job.id},
+            content={
+                "error": "job_already_running",
+                "message": "Job already queued or running for this NID.",
+                "job": existing.to_dict() if existing else None,
+            },
         )
+    _emit_applicants_snapshot()
     return {"status": "queued", "job": job.to_dict()}
 
 
@@ -547,6 +690,7 @@ def cancel_job(job_id: str, _: bool = Depends(require_api_key)):
     job = JOB_QUEUE.cancel(job_id)
     if not job:
         raise HTTPException(status_code=404, detail="Job not found")
+    _emit_applicants_snapshot()
     return {"status": job.status, "job": job.to_dict()}
 
 
@@ -555,8 +699,22 @@ def cancel_job(job_id: str, _: bool = Depends(require_api_key)):
 async def websocket_endpoint(websocket: WebSocket):
     await EVENT_BROADCASTER.connect(websocket)
     try:
+        try:
+            await websocket.send_text(
+                json.dumps(build_event("applicants_snapshot", applicants=_serialize_applicants()), ensure_ascii=False)
+            )
+        except Exception:
+            pass
         while True:
-            await websocket.receive_text()
+            try:
+                message = await asyncio.wait_for(websocket.receive_text(), timeout=30)
+                if message and "ping" in message:
+                    continue
+            except asyncio.TimeoutError:
+                try:
+                    await websocket.send_text(json.dumps({"type": "ping", "ts": time.time()}))
+                except Exception:
+                    break
     except WebSocketDisconnect:
         pass
     except ConnectionResetError:
@@ -566,8 +724,7 @@ async def websocket_endpoint(websocket: WebSocket):
         # shutdown / close mid-await
         pass
     except Exception:
-        # جلوگیری از اسپم
-        pass
+        logger.exception("WebSocket error")
     finally:
         EVENT_BROADCASTER.disconnect(websocket)
 

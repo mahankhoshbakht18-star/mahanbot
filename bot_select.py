@@ -35,6 +35,13 @@ class BankSelectionBot(BotCore):
             browser_profile=browser_profile,
         )
         self._favorite_notified = set()
+        self._nid_filled = False
+        self._needs_reload = False
+        self._dialog_handling = False
+
+    def log(self, message, level="info", page=None, meta=None):
+        message = f"[{self.nid}] {message}"
+        super().log(message, level=level, page=page, meta=meta)
 
     def run(self, stop_event, loan_type="rbtnNaghdi"):
         attempt = 0
@@ -50,16 +57,27 @@ class BankSelectionBot(BotCore):
             page = None
             try:
                 playwright, browser, context, page = self.setup_browser(stop_event)
+                page.on("dialog", lambda dialog: self._handle_otp_dialog(dialog))
                 if stop_event.is_set():
                     return
 
                 otp_attempted = False
+                self._nid_filled = False
 
                 def handle_dialog(dialog):
                     nonlocal otp_attempted
                     try:
                         msg = dialog.message()
-                        if any(x in msg for x in ["منقضی", "نامعتبر", "اشتباه", "صحیح نمی باشد"]):
+                        security_code_wrong = "کد امنیتی اشتباه است" in msg
+                        if security_code_wrong:
+                            try:
+                                page.reload()
+                            except Exception:
+                                pass
+                        if (
+                            not security_code_wrong
+                            and any(x in msg for x in ["منقضی", "نامعتبر", "اشتباه", "صحیح نمی باشد"])
+                        ):
                             DBHandler.clear_otp(self.nid)
                             self.log("♻️ کد نامعتبر پاک شد. انتظار برای پیامک جدید...", "warning")
                             otp_attempted = False
@@ -76,6 +94,18 @@ class BankSelectionBot(BotCore):
                 firewall_solved_count = 0
                 max_firewall_solves = int(self.settings.get("max_firewall_solves_per_attempt", 6))
                 next_state_sweep_at = 0.0
+
+                state = "ENTRY_FORM"
+                state_since = time.time()
+
+                def set_state(new_state: str):
+                    nonlocal state, state_since
+                    if state != new_state:
+                        state = new_state
+                        state_since = time.time()
+
+                def state_timed_out(seconds: float) -> bool:
+                    return (time.time() - state_since) > seconds
 
                 # ✅ DIRECT NAVIGATION (must happen immediately)
                 def handle_partial_navigation_error(exc):
@@ -135,6 +165,8 @@ class BankSelectionBot(BotCore):
                 def wait_for_state(selector, label, timeout=2000):
                     if stop_event.is_set():
                         return False
+                    if self.is_firewall_challenge(page):
+                        return False
                     self.log(f"🔍 Checking {label}...", "info", page)
                     try:
                         page.wait_for_selector(selector, timeout=timeout, state="visible")
@@ -160,7 +192,7 @@ class BankSelectionBot(BotCore):
                         if not resumed:
                             break
                         DBHandler.update_status(self.nid, "Ready", "Firewall challenge cleared")
-                        if sleep_with_stop(stop_event, random.uniform(0.5, 0.8)):
+                        if sleep_with_stop(stop_event, 3.0):
                             break
                         continue
 
@@ -169,11 +201,40 @@ class BankSelectionBot(BotCore):
                         self._log_state_sweep(page)
                         next_state_sweep_at = now + 3.0
 
+                    if state == "ENTRY_FORM" and state_timed_out(120):
+                        self.log("? ENTRY_FORM timeout; reloading...", "warning", page)
+                        try:
+                            page.reload()
+                        except Exception:
+                            pass
+                        set_state("ENTRY_FORM")
+
+                    if state == "OTP_FORM" and state_timed_out(180):
+                        DBHandler.clear_otp(self.nid)
+                        self.log("? OTP_FORM timeout; reloading for new OTP.", "warning", page)
+                        try:
+                            page.reload()
+                        except Exception:
+                            pass
+                        set_state("ENTRY_FORM")
+
+                    if state == "BANK_SELECT" and state_timed_out(180):
+                        self.log("? BANK_SELECT timeout; refreshing.", "warning", page)
+                        try:
+                            page.reload()
+                        except Exception:
+                            pass
+                        set_state("ENTRY_FORM")
+
                     if otp_attempted and self._detect_otp_failure(page):
                         DBHandler.clear_otp(self.nid)
                         self.log("♻️ کد منقضی/نامعتبر شد؛ انتظار برای پیامک جدید.", "warning", page)
                         otp_attempted = False
-                        if sleep_with_stop(stop_event, 1.0):
+                        try:
+                            page.reload()
+                        except Exception:
+                            pass
+                        if sleep_with_stop(stop_event, 0.2):
                             break
                         continue
 
@@ -181,7 +242,7 @@ class BankSelectionBot(BotCore):
                     try:
                         if wait_for_state("text=درخواست شما رد شد", "CHECK_BLOCKERS/SOFT_WAF", timeout=1500):
                             self.log("⛔ مسدودی! رفرش...", "error", page)
-                            if sleep_with_stop(stop_event, 2):
+                            if sleep_with_stop(stop_event, 3.0):
                                 break
                             safe_goto(page, TARGET_URL, timeout=60000, wait_until="domcontentloaded", log_callback=self.log)
                             continue
@@ -204,6 +265,7 @@ class BankSelectionBot(BotCore):
                         )
 
                     if step1_found:
+                        set_state("ENTRY_FORM")
                         if stop_event.is_set():
                             break
                         if otp_attempted:
@@ -219,103 +281,171 @@ class BankSelectionBot(BotCore):
                         if not nid_locator:
                             self.log("❌ Failed to locate National ID input.", "error", page)
                             self._debug_step1_dump(page, "nid_not_found")
-                            if sleep_with_stop(stop_event, 1):
+                            if sleep_with_stop(stop_event, 0.2):
                                 break
                             continue
+                        try:
+                            current_val = nid_locator.input_value()
+                        except Exception:
+                            current_val = ""
+                        if current_val != self.nid:
+                            self._nid_filled = False
 
-                        filled = self._fill_input_with_verification(page, nid_locator, self.nid, "National ID")
-                        if not filled:
-                            self._debug_step1_dump(page, "nid_fill_failed")
-                            if sleep_with_stop(stop_event, 1):
-                                break
+                        if not self._nid_filled:
+                            filled = self._fill_input_with_verification(page, nid_locator, self.nid, "National ID")
+                            if not filled:
+                                self._debug_step1_dump(page, "nid_fill_failed")
+                                if sleep_with_stop(stop_event, 0.2):
+                                    break
+                                continue
+                            self._nid_filled = True
+
+                        if self._firewall_gate(page, stop_event):
                             continue
 
-                        if captcha_mode == "human":
-                            self.log("🧩 CAPTCHA detected: manual required. Please solve and submit.", "warning", page)
-                        else:
-                            self._solve_captcha_wrapper(
-                                page,
-                                "input[name$='tbCaptcha1']",
-                                "input[name$='btnSendConfirmCode']",
-                                captcha_mode,
-                            )
+                        self._solve_primary_captcha_fast(page, stop_event)
 
                         try:
                             page.wait_for_selector("input[name$='tbMobileConfCode']", timeout=otp_timeout)
                         except Exception:
                             pass
+                    if self._needs_reload:
+                        try:
+                            page.reload()
+                        except Exception:
+                            pass
+                        self._nid_filled = True
+                        otp_attempted = False
+                        self._needs_reload = False
+                        self.log(
+                            f"[NID: {self.nid}] 🔄 Page reloaded after invalid OTP. Ready for new SMS..",
+                            "warning",
+                            page,
+                        )
+                        if sleep_with_stop(stop_event, 0.2):
+                            break
+                        continue
 
                     # مرحله ۲: OTP
-                    elif self._wait_for_state_any_scope(
+                    if (not step1_found) and self._wait_for_state_any_scope(
                         page,
                         "input[name$='tbMobileConfCode']",
                         "CHECK_STEP_2_OTP_FORM",
                         timeout=otp_timeout,
                     ):
+                        set_state("OTP_FORM")
                         if stop_event.is_set():
                             break
 
                         otp_filled = False
                         while not stop_event.is_set():
+                            if self._firewall_gate(page, stop_event):
+                                continue
                             try:
                                 page.wait_for_selector("input[name$='tbMobileConfCode']", timeout=1500, state="visible")
                             except Exception:
                                 break
-                            otp_code = self._get_otp_from_db_fresh()
-                            if otp_code:
-                                current_val = page.locator("input[name$='tbMobileConfCode']").input_value()
-                                if current_val != otp_code:
-                                    self.log(f"✅ دریافت کد پیامک: {otp_code}", "success", page)
-                                    page.locator("input[name$='tbMobileConfCode']").fill(otp_code)
-                                    if sleep_with_stop(stop_event, 0.5):
-                                        break
-                                otp_filled = True
-                                break
 
-                            self.log("📩 منتظر دریافت پیامک...", "waiting sms", page)
-                            if sleep_with_stop(stop_event, 2):
-                                break
+                            if self._detect_otp_failure(page):
+                                DBHandler.clear_otp(self.nid)
+                                self.log("?? ?? ?????/??????? ??? ??????? ???? ?????.", "warning", page)
+                                try:
+                                    page.reload()
+                                except Exception:
+                                    pass
+                                continue
 
-                        if otp_filled:
+                            otp_code = self.wait_for_otp(stop_event, timeout=65)
+                            if not otp_code:
+                                continue
+                            while self._dialog_handling and not stop_event.is_set():
+                                time.sleep(0.2)
+                            if self._needs_reload:
+                                break
+                            otp_code = str(otp_code).strip()
+                            if not re.fullmatch(r"\d{6}", otp_code):
+                                self.log("⚠️ OTP length invalid; waiting for a 6-digit code.", "warning", page)
+                                continue
+
+                            otp_input = page.locator("input[name$='tbMobileConfCode']")
+                            current_val = otp_input.input_value()
+                            if current_val != otp_code:
+                                self.log(f"? ?????? ?? ?????: {otp_code}", "success", page)
+                                otp_input.fill(otp_code)
+                                try:
+                                    page.wait_for_timeout(800)
+                                except Exception:
+                                    pass
+                                try:
+                                    current_val = otp_input.input_value()
+                                except Exception:
+                                    current_val = ""
+                            otp_filled = (current_val == otp_code)
+                            if not otp_filled:
+                                self.log("⚠️ OTP not confirmed in field; retrying.", "warning", page)
+                                continue
+
+                            if self._firewall_gate(page, stop_event):
+                                continue
                             success = self._solve_captcha_wrapper(
                                 page,
                                 "#ctl00_ContentPlaceHolder1_tbCaptcha2",
                                 "#ctl00_ContentPlaceHolder1_btnContinue1",
                                 captcha_mode,
                             )
-                            if success:
-                                otp_attempted = True
-                                self.log("👆 تایید کد پیامک...", "info", page)
-                                if sleep_with_stop(stop_event, 3):
-                                    break
+                            if not success:
+                                if self._detect_captcha_failure(page):
+                                    try:
+                                        page.reload()
+                                    except Exception:
+                                        pass
+                                else:
+                                    self._refresh_captcha_or_reload(page)
+                                continue
+                            if self._detect_captcha_failure(page):
+                                try:
+                                    page.reload()
+                                except Exception:
+                                    pass
+                                continue
+                            otp_attempted = True
+                            self.log("?? ????? ?? ?????...", "info", page)
+                            if sleep_with_stop(stop_event, 0.2):
+                                break
+                            break
 
-                    # مرحله ۳: انتخاب بانک
                     elif wait_for_state("#ctl00_ContentPlaceHolder1_ddlBankName", "CHECK_STEP_3_BANK_SELECTION", timeout=5000):
+                        set_state("BANK_SELECT")
                         if stop_event.is_set():
                             break
+                        if self._firewall_gate(page, stop_event):
+                            continue
                         result = self._process_bank_selection_v2(page, stop_event)
                         if result == "selected":
                             self.log("✅ بانک انتخاب شد.", "success", page)
                         elif result == "no_match":
-                            self.log("❌ بانک مورد نظر یافت نشد. رفرش...", "warning", page)
-                            try:
-                                page.reload()
-                            except Exception:
-                                pass
+                            self.log("??? ???????? ???????? ?????? ???????? ??????. ???????????????? ????????...", "warning", page)
+                            self._refresh_captcha_or_reload(page)
                         elif result == "waiting":
-                            if sleep_with_stop(stop_event, 2):
+
+                            if sleep_with_stop(stop_event, 0.2):
                                 break
 
                     # انتخاب شعبه
                     elif wait_for_state("#ctl00_ContentPlaceHolder1_ddlBranch", "CHECK_STEP_4_BRANCH_SELECTION", timeout=5000):
+                        set_state("BRANCH_SELECT")
                         if stop_event.is_set():
                             break
+                        if self._firewall_gate(page, stop_event):
+                            continue
                         self._process_branch_selection(page, stop_event)
 
                     # اگر به لاگین پرت شد
                     elif wait_for_state("#ctl00_ContentPlaceHolder1_btnLogin", "CHECK_STEP_LOGIN_REDIRECT", timeout=5000):
                         if stop_event.is_set():
                             break
+                        if self._firewall_gate(page, stop_event):
+                            continue
                         if otp_attempted:
                             DBHandler.clear_otp(self.nid)
                             self.log("♻️ نشست منقضی شد؛ بازگشت به مرحله اول و انتظار پیامک جدید.", "warning", page)
@@ -324,6 +454,7 @@ class BankSelectionBot(BotCore):
 
                     # موفقیت نهایی
                     elif wait_for_state("#ctl00_ContentPlaceHolder1_lblTrackingCode", "CHECK_DONE_TRACKING_CODE", timeout=5000):
+                        set_state("DONE")
                         code = page.locator("#ctl00_ContentPlaceHolder1_lblTrackingCode").inner_text()
                         self.log(f"✅ کد رهگیری: {code}", "success")
                         DBHandler.save_success_data(self.nid, code)
@@ -331,22 +462,18 @@ class BankSelectionBot(BotCore):
 
                     # legacy fallback firewall solver (non-manual page flows)
                     elif self._has_firewall_signal(page):
-                        if self.solve_firewall(page):
-                            firewall_solved_count += 1
-                            if firewall_solved_count > max_firewall_solves:
-                                self.log(
-                                    f"⛔ Firewall loop detected (> {max_firewall_solves} resolves in one attempt). Marking blocked.",
-                                    "error",
-                                    page,
-                                )
-                                self._debug_step1_dump(page, "firewall_stuck_blocked")
-                                DBHandler.update_status(self.nid, "Blocked", "Firewall loop detected")
-                                break
-                            if sleep_with_stop(stop_event, random.uniform(0.5, 0.8)):
-                                break
-                            continue
+                        DBHandler.update_status(self.nid, "BLOCKED_FIREWALL_MANUAL", "Manual firewall challenge")
+                        resumed = self.handle_firewall_challenge(page, stop_event)
+                        if stop_event.is_set():
+                            break
+                        if not resumed:
+                            break
+                        DBHandler.update_status(self.nid, "Ready", "Firewall challenge cleared")
+                        if sleep_with_stop(stop_event, 3.0):
+                            break
+                        continue
 
-                    if sleep_with_stop(stop_event, random.uniform(0.5, 0.8)):
+                    if sleep_with_stop(stop_event, random.uniform(0.2, 0.4)):
                         break
 
             except PlaywrightError as pe:
@@ -378,7 +505,7 @@ class BankSelectionBot(BotCore):
                 close_browser(playwright, browser, context, page)
 
             if not stop_event.is_set():
-                sleep_with_stop(stop_event, random.uniform(0.5, 0.8))
+                sleep_with_stop(stop_event, random.uniform(0.2, 0.4))
 
     def is_firewall_challenge(self, page) -> bool:
         selectors = ["#ans", "#jar"]
@@ -390,10 +517,7 @@ class BankSelectionBot(BotCore):
             except Exception:
                 continue
 
-        challenge_markers = [
-            "human visitor",
-            "support id",
-        ]
+        challenge_markers = ["human visitor", "support id"]
         try:
             body_text = (page.inner_text("body") or "").lower()
             return any(marker in body_text for marker in challenge_markers)
@@ -402,11 +526,13 @@ class BankSelectionBot(BotCore):
 
     def handle_firewall_challenge(self, page, stop_event):
         self.log("🛡️ FIREWALL challenge detected - manual action required.", "warning", page)
+        timeout_seconds = int(self.settings.get("firewall_manual_timeout", 300))
+        deadline = time.time() + timeout_seconds
 
         support_id = None
         try:
             body_text = page.inner_text("body") or ""
-            match = re.search(r"Your support ID is:\s*(\d+)", body_text, re.IGNORECASE)
+            match = re.search(r"support id(?: is)?[:\\s]*([A-Za-z0-9-]+)", body_text, re.IGNORECASE)
             if match:
                 support_id = match.group(1)
         except Exception:
@@ -429,14 +555,97 @@ class BankSelectionBot(BotCore):
             except Exception:
                 pass
 
+            if time.time() > deadline:
+                self.log("⛔ Firewall challenge timeout - human action required.", "error", page)
+                DBHandler.update_status(self.nid, "BLOCKED_FIREWALL_MANUAL", "Firewall timeout")
+                EVENT_BROADCASTER.emit_event(
+                    build_event("human_required", nid=self.nid, reason="firewall_timeout", support_id=support_id)
+                )
+                return False
+
             now = time.time()
             if now >= next_wait_log_at:
-                self.log("Waiting for operator...", "warning", page)
+                self.log("Waiting...", "warning", page)
                 next_wait_log_at = now + 15.0
 
             if sleep_with_stop(stop_event, 3.0):
                 return False
 
+        return False
+
+    def _firewall_gate(self, page, stop_event) -> bool:
+        if stop_event.is_set():
+            return True
+        if not self.is_firewall_challenge(page):
+            return False
+        DBHandler.update_status(self.nid, "BLOCKED_FIREWALL_MANUAL", "Manual firewall challenge")
+        resumed = self.handle_firewall_challenge(page, stop_event)
+        if stop_event.is_set():
+            return True
+        if not resumed:
+            return True
+        DBHandler.update_status(self.nid, "Ready", "Firewall challenge cleared")
+        return False
+
+    def _refresh_captcha_or_reload(self, page):
+        try:
+            reload_btn = page.locator(".BDC_ReloadLink").first
+            if reload_btn.is_visible():
+                reload_btn.click()
+                return
+        except Exception:
+            pass
+        try:
+            page.reload()
+        except Exception:
+            pass
+
+    def _solve_primary_captcha_fast(self, page, stop_event) -> bool:
+        input_sel = "input[name$='tbCaptcha1']"
+        btn_sel = "input[name$='btnSendConfirmCode']"
+        while not stop_event.is_set():
+            if self._firewall_gate(page, stop_event):
+                return False
+            try:
+                captcha_img = page.locator(".BDC_CaptchaImage").first
+                if not captcha_img.is_visible():
+                    return False
+            except Exception:
+                return False
+
+            try:
+                if page.locator(input_sel).input_value():
+                    page.locator(btn_sel).click()
+                else:
+                    code = self.captcha_service.solve(captcha_img.screenshot(), mode="general")
+                    if code and len(code) >= 4:
+                        page.locator(input_sel).fill(code)
+                        page.locator(btn_sel).click()
+                        DBHandler.append_captcha_attempt(self.nid, code, "submitted", source="select")
+                    else:
+                        self._refresh_captcha_or_reload(page)
+                        continue
+            except Exception:
+                self._refresh_captcha_or_reload(page)
+                continue
+
+            try:
+                page.wait_for_selector("input[name$='tbMobileConfCode']", timeout=800, state="visible")
+                return True
+            except Exception:
+                pass
+
+            try:
+                page.wait_for_selector("#ctl00_ContentPlaceHolder1_ddlBankName", timeout=800, state="visible")
+                return True
+            except Exception:
+                pass
+
+            if self._detect_captcha_failure(page):
+                self._refresh_captcha_or_reload(page)
+                continue
+
+            self._refresh_captcha_or_reload(page)
         return False
 
     def _get_otp_from_db_fresh(self):
@@ -448,10 +657,11 @@ class BankSelectionBot(BotCore):
                 if row and row["data"]:
                     data = json.loads(row["data"])
                     otp_code = data.get("otp_code")
-                    return str(otp_code).strip() if otp_code else None
+                    otp_status = data.get("otp_status")
+                    return (str(otp_code).strip() if otp_code else None, otp_status)
         except Exception:
             pass
-        return None
+        return None, None
 
     def _select_editable_input(self, page, selectors, label):
         scopes = [("page", page)] + [(f"frame[{idx}]", frame) for idx, frame in enumerate(page.frames)]
@@ -489,6 +699,8 @@ class BankSelectionBot(BotCore):
         return None, None
 
     def _wait_for_state_any_scope(self, page, selector, label, timeout=2000):
+        if self.is_firewall_challenge(page):
+            return False
         self.log(f"🔍 Checking {label}...", "info", page)
         scopes = [("page", page)] + [(f"frame[{idx}]", frame) for idx, frame in enumerate(page.frames)]
         for scope_name, scope in scopes:
@@ -660,6 +872,9 @@ class BankSelectionBot(BotCore):
         try:
             dropdown_id = "#ctl00_ContentPlaceHolder1_ddlBankName"
             while not stop_event.is_set():
+                if self._firewall_gate(page, stop_event):
+                    return "stopped"
+
                 options = page.locator(f"{dropdown_id} option").all()
                 available_banks = {}
 
@@ -670,17 +885,17 @@ class BankSelectionBot(BotCore):
                         available_banks[txt] = val
 
                 if not available_banks:
-                    self.log("⚠️ لیست بانک‌ها خالی است. رفرش صفحه...", "warning", page)
-                    if sleep_with_stop(stop_event, 3):
-                        return "stopped"
-                    try:
-                        page.reload()
-                    except Exception:
-                        pass
-                    continue
+                    self.log("?? ???? ??????? ???? ???. ???????? ????...", "warning", page)
+                    self._refresh_captcha_or_reload(page)
+                    return "no_match"
 
+                self.log(f"[NID: {self.nid}] Available Banks: {list(available_banks.keys())}", "info", page)
                 runtime_data = self._load_runtime_data()
-                user_priorities = runtime_data.get("priority_banks") or runtime_data.get("banks", [])
+                user_priorities = (
+                    self.user_data.get("priority_banks")
+                    or runtime_data.get("priority_banks")
+                    or runtime_data.get("banks", [])
+                )
                 favorite_banks = runtime_data.get("favorite_banks", [])
                 stopped_banks = set(runtime_data.get("stopped_banks", []))
 
@@ -688,7 +903,7 @@ class BankSelectionBot(BotCore):
                     self._notify_favorite_banks(available_banks, favorite_banks, user_priorities)
 
                 if not user_priorities:
-                    self.log("⚠️ لیست اولویت بانک خالی است!", "error")
+                    self.log("?? ???? ?????? ???? ???? ???!", "error")
                     return "error"
 
                 for priority in user_priorities:
@@ -703,52 +918,72 @@ class BankSelectionBot(BotCore):
                             break
 
                     if found_val:
-                        self.log(f"🎯 بانک یافت شد: {target_name}", "selecting", page)
+                        self.log(f"?? ???? ???? ??: {target_name}", "selecting", page)
                         page.select_option(dropdown_id, value=found_val)
-                        self.log("⏳ در حال بارگذاری شعب...", "info", page)
+                        self.log("? ?? ??? ???????? ???...", "info", page)
                         self._wait_for_branch_ready(page)
+                        self._select_first_available_branch(page)
                         return "selected"
 
-                self.log("⚠️ بانک موردنظر پیدا نشد. رفرش صفحه...", "warning", page)
-                if sleep_with_stop(stop_event, 3):
-                    return "stopped"
-                try:
-                    page.reload()
-                except Exception:
-                    pass
+                self.log("?? ???? ??????? ???? ???. ???????? ????...", "warning", page)
+                self._refresh_captcha_or_reload(page)
+                return "no_match"
             return "stopped"
         except Exception:
             return "error"
 
+    def _select_first_available_branch(self, page):
+        branch_ddl = "#ctl00_ContentPlaceHolder1_ddlBranch"
+        try:
+            options = page.locator(f"{branch_ddl} option").all()
+        except Exception:
+            options = []
+        for opt in options:
+            try:
+                val = opt.get_attribute("value")
+                if val and val != "0":
+                    page.locator(branch_ddl).select_option(value=val)
+                    return True
+            except Exception:
+                continue
+        return False
+
     def _process_branch_selection(self, page, stop_event):
         try:
             branch_ddl = "#ctl00_ContentPlaceHolder1_ddlBranch"
-            branch_index = self.settings.get("branch_index", 1)
+            selected = False
             try:
-                branch_index = int(branch_index)
-            except (TypeError, ValueError):
-                branch_index = 1
-            if branch_index < 1:
-                branch_index = 1
-
-            if page.locator(branch_ddl).input_value() == "0":
-                page.locator(branch_ddl).select_option(index=branch_index)
-                if self.settings.get("final_submit", False):
-                    self.log("🔥 ثبت نهایی...", "success", page)
-                    page.click("#ctl00_ContentPlaceHolder1_btnSave")
-                else:
-                    submit_btn = page.locator("#ctl00_ContentPlaceHolder1_btnSave")
-                    try:
-                        submit_btn.scroll_into_view_if_needed()
-                        page.evaluate(
-                            "btn => btn.style.border = '3px solid red'",
-                            submit_btn.element_handle(),
-                        )
-                    except Exception:
-                        pass
-                    self.log("🛑 توقف قبل از ثبت نهایی (حالت تست)", "warning", page)
-                    while not stop_event.is_set():
-                        time.sleep(1)
+                options = page.locator(f"{branch_ddl} option").all()
+            except Exception:
+                options = []
+            for opt in options:
+                try:
+                    val = opt.get_attribute("value")
+                    if val and val != "0":
+                        page.locator(branch_ddl).select_option(value=val)
+                        selected = True
+                        break
+                except Exception:
+                    continue
+            if not selected:
+                return
+            if self.settings.get("final_submit", False):
+                self.log("?? ??? ?????...", "success", page)
+                page.click("#ctl00_ContentPlaceHolder1_btnSave")
+            else:
+                submit_btn = page.locator("#ctl00_ContentPlaceHolder1_btnSave")
+                try:
+                    submit_btn.scroll_into_view_if_needed()
+                    page.evaluate(
+                        "btn => btn.style.border = '3px solid red'",
+                        submit_btn.element_handle(),
+                    )
+                except Exception:
+                    pass
+                DBHandler.update_status(self.nid, "Ready for Submit", "Ready for Submit")
+                self.log("?? Ready for Submit - waiting for operator.", "warning", page)
+                while not stop_event.is_set():
+                    time.sleep(1)
         except Exception:
             pass
 
@@ -780,6 +1015,27 @@ class BankSelectionBot(BotCore):
         except Exception:
             data = {}
         return data
+
+    def _handle_otp_dialog(self, dialog):
+        try:
+            self._dialog_handling = True
+            msg = dialog.message()
+            if msg and ("نامعتبر" in msg or "منقضی" in msg):
+                self.log(
+                    f"[NID: {self.nid}] ⚠️ OTP Alert detected: {msg}. Dismissing and reloading....",
+                    "warning",
+                )
+                try:
+                    dialog.accept()
+                except Exception:
+                    pass
+                self._needs_reload = True
+                return True
+            return False
+        except Exception:
+            return False
+        finally:
+            self._dialog_handling = False
 
     def _notify_favorite_banks(self, available_banks, favorite_banks, user_priorities):
         priority_names = [

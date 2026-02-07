@@ -167,22 +167,25 @@ class RegistrationBot(BotCore):
                         if stop_event.is_set():
                             break
 
-                        otp = self.get_otp_code()
+                        otp = self.wait_for_otp(stop_event, timeout=65)
                         if otp:
-                            self.log(f"✅ ورود کد: {otp}", "success", page)
+                            self.log(f"? ???? ??: {otp}", "success", page)
                             self._fill_text(page, ["#ctl00_ContentPlaceHolder1_tbMobileConfCode", "input[name='ctl00$ContentPlaceHolder1$tbMobileConfCode']"], otp)
-                            self._solve_captcha_wrapper(
+                            try:
+                                page.wait_for_timeout(500)
+                            except Exception:
+                                pass
+                            success = self._solve_captcha_wrapper(
                                 page,
                                 "#ctl00_ContentPlaceHolder1_tbCaptcha2",
                                 "#ctl00_ContentPlaceHolder1_btnContinue1",
                                 captcha_mode,
                             )
-                            if sleep_with_stop(stop_event, 4):
+                            if success and sleep_with_stop(stop_event, 2):
                                 break
                         else:
-                            self.log("📩 منتظر کد پیامک...", "waiting sms", page)
-                            if sleep_with_stop(stop_event, 3):
-                                break
+                            self.log("?? ????? ?? ?????...", "waiting sms", page)
+                        continue
                         continue
 
                     # ==========================
