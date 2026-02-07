@@ -95,7 +95,17 @@ class BotCore:
         except Exception:
             pass
 
-        # 2) Remote API (map `otp` -> otp_code, persist immediately)
+        # 2) Local wait endpoint (preferred over remote polling)
+        try:
+            code = self.wait_for_otp(timeout=45)
+            if code:
+                DBHandler.save_otp(self.nid, code)
+                self.log(f"??? ?????????????? ???? ???? ????? ???? ??????: {code}", "success")
+                return str(code).strip()
+        except Exception:
+            pass
+
+        # 3) Remote API (map `otp` -> otp_code, persist immediately)
         try:
             response = requests.get(f"{self.api_base_url}/get_otp/{self.nid}", timeout=3)
             if response.status_code == 200:
@@ -112,7 +122,7 @@ class BotCore:
 
         return None
 
-    def wait_for_otp(self, stop_event=None, timeout: int = 65):
+    def wait_for_otp(self, stop_event=None, timeout: int = 45):
         if stop_event is not None and stop_event.is_set():
             return None
         try:

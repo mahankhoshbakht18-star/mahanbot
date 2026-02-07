@@ -239,7 +239,7 @@ def _handle_receive_sms(nid: str, code: str, status_label: str = "received") -> 
     log_event(nid, None, f"OTP received: {code}", "success")
     logger.info("OTP received for %s; notifying waiters", nid)
     if MAIN_LOOP:
-        asyncio.run_coroutine_threadsafe(_signal_otp_event(nid), MAIN_LOOP)
+        MAIN_LOOP.call_soon_threadsafe(lambda: asyncio.create_task(_signal_otp_event(nid)))
     return True
 
 
