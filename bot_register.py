@@ -6,6 +6,7 @@ from bot_core import BotCore
 from browser_actions import BrowserActions
 from browser_launcher import BrowserLaunchError, close_browser, safe_goto
 from database import DBHandler
+from event_logger import EVENT_BROADCASTER, build_event
 
 TARGET_URL = "https://ve.cbi.ir/Register.aspx"
 
@@ -99,7 +100,18 @@ class RegistrationBot(BotCore):
                     ):
                         continue
 
+                    if self.otp_retry_exceeded():
+                        self.log("⛔ OTP retry limit reached; stopping job.", "error", page)
+                        DBHandler.update_status(self.nid, "Stopped", "OTP retry limit reached")
+                        stop_event.set()
+                        break
+
                     if self.consume_recovery_flag("otp_expired"):
+                        if self.otp_retry_exceeded():
+                            self.log("⛔ OTP retry limit reached; stopping job.", "error", page)
+                            DBHandler.update_status(self.nid, "Stopped", "OTP retry limit reached")
+                            stop_event.set()
+                            break
                         try:
                             page.reload()
                         except Exception:
@@ -141,6 +153,13 @@ class RegistrationBot(BotCore):
                         continue
 
                     self.dismiss_modals(page)
+
+                    if self.is_firewall_challenge(page):
+                        DBHandler.update_status(self.nid, "BLOCKED_FIREWALL_MANUAL", "Manual firewall challenge")
+                        if not self._handle_firewall_challenge(page, stop_event):
+                            break
+                        DBHandler.update_status(self.nid, "Ready", "Firewall challenge cleared")
+                        continue
 
                     self.solve_firewall(page)
                     if stop_event.is_set():
@@ -209,6 +228,19 @@ class RegistrationBot(BotCore):
                         self.mark_progress("step2_otp")
                         if stop_event.is_set():
                             break
+
+                        if self._detect_otp_failure(page):
+                            if not self.register_otp_failure("page_otp_invalid"):
+                                self.log("⛔ OTP retry limit reached; stopping job.", "error", page)
+                                DBHandler.update_status(self.nid, "Stopped", "OTP retry limit reached")
+                                stop_event.set()
+                                break
+                            DBHandler.clear_otp(self.nid)
+                            try:
+                                page.reload()
+                            except Exception:
+                                pass
+                            continue
 
                         otp = self.wait_for_otp(stop_event, timeout=65)
                         if otp:
@@ -434,6 +466,56 @@ class RegistrationBot(BotCore):
         if len(parts) == 1:
             return parts[0], ""
         return " ".join(parts[:-1]), parts[-1]
+
+    def _handle_firewall_challenge(self, page, stop_event) -> bool:
+        self.log("🛡️ FIREWALL challenge detected - manual action required.", "warning", page)
+        EVENT_BROADCASTER.emit_event(
+            build_event("waf_manual_required", nid=self.nid, reason="firewall_challenge")
+        )
+        timeout_seconds = int(self.settings.get("firewall_manual_timeout", 300))
+        deadline = time.time() + timeout_seconds
+        next_wait_log_at = 0.0
+
+        while not stop_event.is_set():
+            try:
+                nid_input = page.locator("#ctl00_ContentPlaceHolder1_tbIDNo")
+                if nid_input.is_visible() and nid_input.is_enabled():
+                    self.log("✅ Firewall challenge cleared by operator. Resuming automation.", "success", page)
+                    return True
+            except Exception:
+                pass
+
+            if time.time() > deadline:
+                self.log("⛔ Firewall challenge timeout - human action required.", "error", page)
+                DBHandler.update_status(self.nid, "BLOCKED_FIREWALL_MANUAL", "Firewall timeout")
+                EVENT_BROADCASTER.emit_event(
+                    build_event("human_required", nid=self.nid, reason="firewall_timeout")
+                )
+                return False
+
+            now = time.time()
+            if now >= next_wait_log_at:
+                self.log("Waiting...", "warning", page)
+                next_wait_log_at = now + 15.0
+
+            if sleep_with_stop(stop_event, 3.0):
+                return False
+        return False
+
+    def _detect_otp_failure(self, page) -> bool:
+        phrases = [
+            "کد منقضی",
+            "منقضی شده",
+            "کد تایید اشتباه",
+            "کد تایید صحیح نمی باشد",
+            "کد تایید نامعتبر",
+            "session expired",
+        ]
+        try:
+            content = page.content()
+        except Exception:
+            return False
+        return any(phrase in content for phrase in phrases)
     def _solve_captcha_wrapper(self, page, input_sel, btn_sel, mode):
         if mode == "robot":
             return self._handle_captcha_robot(page, input_sel, btn_sel)

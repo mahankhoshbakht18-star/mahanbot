@@ -32,6 +32,9 @@ class BotCore:
         self._recovery_flags = {"otp_expired": False, "captcha_invalid": False, "generic_error": False}
         self._captcha_retry = 0
         self._captcha_retry_limit = int(self.settings.get("captcha_retry_limit", 5))
+        self._otp_retry = 0
+        self._otp_retry_limit = int(self.settings.get("otp_retry_limit", 3))
+        self._otp_retry_exceeded = False
         self._last_progress_time = time.time()
         self._watchdog_timeout = int(self.settings.get("watchdog_timeout", 45))
         self._last_watchdog_dump = 0.0
@@ -133,6 +136,7 @@ class BotCore:
             self.log(f"❌ خطا در راه‌اندازی مرورگر: {exc.message}", "error")
             raise
         self.attach_dialog_handler(page)
+        context.on("page", self.attach_dialog_handler)
         if stop_event is not None:
             self._start_cancel_watcher(stop_event, playwright, browser, context, page)
         open_healthcheck_page(page, log_callback=self.log)
@@ -223,6 +227,25 @@ class BotCore:
             return True
         return False
 
+    def register_otp_failure(self, reason: str = "otp_invalid") -> bool:
+        self._otp_retry += 1
+        if self._otp_retry > self._otp_retry_limit:
+            if not self._otp_retry_exceeded:
+                self._otp_retry_exceeded = True
+                self.log(
+                    f"RECOVERY otp_retry_exceeded ({self._otp_retry}/{self._otp_retry_limit}) reason={reason}",
+                    "error",
+                )
+            return False
+        self.log(
+            f"RECOVERY otp_failure ({self._otp_retry}/{self._otp_retry_limit}) reason={reason}",
+            "warning",
+        )
+        return True
+
+    def otp_retry_exceeded(self) -> bool:
+        return self._otp_retry_exceeded
+
     def _classify_dialog(self, msg):
         msg = msg or ""
         otp_phrases = [
@@ -267,8 +290,9 @@ class BotCore:
                 action = self._classify_dialog(msg)
                 if action == "otp_expired":
                     DBHandler.clear_otp(self.nid)
-                    self._set_recovery_flag("otp_expired")
-                    self.log("RECOVERY otp_expired -> restart_otp", "warning", page)
+                    if self.register_otp_failure("dialog_otp_expired"):
+                        self._set_recovery_flag("otp_expired")
+                        self.log("RECOVERY otp_expired -> restart_otp", "warning", page)
                 elif action == "captcha_invalid":
                     self._captcha_retry += 1
                     self._set_recovery_flag("captcha_invalid")
@@ -312,7 +336,10 @@ class BotCore:
                 if not target.is_visible():
                     continue
                 btns = target.locator(
-                    "button:has-text('OK'), button:has-text('\u062a\u0627\u06cc\u06cc\u062f'), button:has-text('\u062a\u0623\u06cc\u06cc\u062f'), button:has-text('\u0628\u0633\u062a\u0646'), .swal2-confirm, .ui-dialog-buttonset button"
+                    "button:has-text('OK'), button:has-text('\u062a\u0627\u06cc\u06cc\u062f'), "
+                    "button:has-text('\u062a\u0623\u06cc\u06cc\u062f'), button:has-text('\u0628\u0633\u062a\u0646'), "
+                    "button:has-text('\u0628\u0627\u0634\u0647'), button:has-text('\u0642\u0628\u0648\u0644'), "
+                    ".swal2-confirm, .ui-dialog-buttonset button"
                 )
                 if btns.count() > 0:
                     btns.first.click(timeout=500)
@@ -382,3 +409,20 @@ class BotCore:
         except Exception:
             pass
         return True
+
+    def is_firewall_challenge(self, page) -> bool:
+        selectors = ["#ans", "#jar", "text=در حال بررسی مرورگر شما"]
+        for selector in selectors:
+            try:
+                locator = page.locator(selector)
+                if locator.count() > 0 and locator.first.is_visible():
+                    return True
+            except Exception:
+                continue
+
+        challenge_markers = ["human visitor", "support id", "cloudflare", "firewall"]
+        try:
+            body_text = (page.inner_text("body") or "").lower()
+            return any(marker in body_text for marker in challenge_markers)
+        except Exception:
+            return False
