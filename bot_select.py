@@ -251,7 +251,7 @@ class BankSelectionBot(BotCore):
                         set_state("ENTRY_FORM")
 
                     if state == "OTP_FORM" and state_timed_out(180):
-                        DBHandler.clear_otp(self.nid)
+                        self.clear_otp_backend()
                         self.log("? OTP_FORM timeout; reloading for new OTP.", "warning", page)
                         try:
                             page.reload()
@@ -273,7 +273,7 @@ class BankSelectionBot(BotCore):
                             DBHandler.update_status(self.nid, "Stopped", "OTP retry limit reached")
                             stop_event.set()
                             break
-                        DBHandler.clear_otp(self.nid)
+                        self.clear_otp_backend()
                         self.log("♻️ کد منقضی/نامعتبر شد؛ انتظار برای پیامک جدید.", "warning", page)
                         otp_attempted = False
                         try:
@@ -315,7 +315,7 @@ class BankSelectionBot(BotCore):
                         if stop_event.is_set():
                             break
                         if otp_attempted:
-                            DBHandler.clear_otp(self.nid)
+                            self.clear_otp_backend()
                             self.log("♻️ بازگشت به مرحله اول؛ کد قبلی پاک شد.", "warning", page)
                             otp_attempted = False
 
@@ -384,6 +384,7 @@ class BankSelectionBot(BotCore):
                             break
 
                         otp_filled = False
+                        otp_attempts = 0
                         while not stop_event.is_set():
                             if self._firewall_gate(page, stop_event):
                                 continue
@@ -392,13 +393,13 @@ class BankSelectionBot(BotCore):
                             except Exception:
                                 break
 
-                            if self._detect_otp_failure(page):
+                            if self._detect_otp_failure(page) or self.last_dialog_indicates_otp_invalid():
                                 if not self.register_otp_failure("page_otp_invalid"):
                                     self.log("⛔ OTP retry limit reached; stopping job.", "error", page)
                                     DBHandler.update_status(self.nid, "Stopped", "OTP retry limit reached")
                                     stop_event.set()
                                     break
-                                DBHandler.clear_otp(self.nid)
+                                self.clear_otp_backend()
                                 self.log("?? ?? ?????/??????? ??? ??????? ???? ?????.", "warning", page)
                                 try:
                                     page.reload()
@@ -406,11 +407,24 @@ class BankSelectionBot(BotCore):
                                     pass
                                 continue
 
-                            otp_code = self.wait_for_otp(stop_event, timeout=45)
+                            if otp_attempts >= self._otp_retry_limit:
+                                self.log("⛔ OTP attempt limit reached; stopping job.", "error", page)
+                                DBHandler.update_status(self.nid, "Stopped", "OTP attempt limit reached")
+                                stop_event.set()
+                                break
+
+                            otp_code = self.wait_for_otp(stop_event, timeout=120)
                             if not otp_code:
+                                try:
+                                    page.wait_for_timeout(random.randint(200, 500))
+                                except Exception:
+                                    pass
                                 continue
                             while self._dialog_handling and not stop_event.is_set():
-                                time.sleep(0.2)
+                                try:
+                                    page.wait_for_timeout(200)
+                                except Exception:
+                                    pass
                             if self._needs_reload:
                                 break
                             otp_code = str(otp_code).strip()
@@ -474,11 +488,40 @@ class BankSelectionBot(BotCore):
                                 except Exception:
                                     pass
                                 continue
+                            otp_attempts += 1
                             otp_attempted = True
                             self.log("?? ????? ?? ?????...", "info", page)
-                            if sleep_with_stop(stop_event, 0.2):
+                            if stop_event.is_set():
                                 break
-                            break
+                            try:
+                                page.wait_for_selector("#ctl00_ContentPlaceHolder1_ddlBankName", timeout=5000, state="visible")
+                                set_state("BANK_SELECT")
+                                break
+                            except Exception:
+                                pass
+                            if self._detect_otp_failure(page) or self.last_dialog_indicates_otp_invalid():
+                                if not self.register_otp_failure("otp_invalid_after_submit"):
+                                    self.log("⛔ OTP retry limit reached; stopping job.", "error", page)
+                                    DBHandler.update_status(self.nid, "Stopped", "OTP retry limit reached")
+                                    stop_event.set()
+                                    break
+                                self.clear_otp_backend()
+                                self.log("♻️ کد منقضی/نامعتبر شد؛ انتظار برای پیامک جدید.", "warning", page)
+                                try:
+                                    page.reload()
+                                except Exception:
+                                    pass
+                                continue
+                            self._dump_state(
+                                page,
+                                selectors=["input[name$='tbMobileConfCode']", "#ctl00_ContentPlaceHolder1_ddlBankName"],
+                                reason="otp_unknown_failure",
+                            )
+                            try:
+                                page.wait_for_timeout(300)
+                            except Exception:
+                                pass
+                            continue
 
                     elif wait_for_state("#ctl00_ContentPlaceHolder1_ddlBankName", "CHECK_STEP_3_BANK_SELECTION", timeout=5000):
                         set_state("BANK_SELECT")
@@ -513,7 +556,7 @@ class BankSelectionBot(BotCore):
                         if self._firewall_gate(page, stop_event):
                             continue
                         if otp_attempted:
-                            DBHandler.clear_otp(self.nid)
+                            self.clear_otp_backend()
                             self.log("♻️ نشست منقضی شد؛ بازگشت به مرحله اول و انتظار پیامک جدید.", "warning", page)
                             otp_attempted = False
                         self._perform_login_standard(page, captcha_mode)
@@ -1165,7 +1208,30 @@ class BankSelectionBot(BotCore):
             content = page.content()
         except Exception:
             return False
-        return any(phrase in content for phrase in phrases)
+        if any(phrase in content for phrase in phrases):
+            return True
+        modal_selectors = [
+            "[role='dialog']",
+            ".modal.show",
+            ".swal2-container",
+            "#dlg",
+            ".ui-dialog",
+        ]
+        for selector in modal_selectors:
+            try:
+                modal = page.locator(selector)
+                if modal.count() == 0:
+                    continue
+                target = modal.first
+                if not target.is_visible():
+                    continue
+                text = target.inner_text()
+                if "منقضی" in text or "نامعتبر" in text:
+                    self.dismiss_modals(page)
+                    return True
+            except Exception:
+                continue
+        return False
 
     def _detect_captcha_failure(self, page) -> bool:
         phrases = [

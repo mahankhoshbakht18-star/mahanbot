@@ -235,29 +235,83 @@ class RegistrationBot(BotCore):
                                 DBHandler.update_status(self.nid, "Stopped", "OTP retry limit reached")
                                 stop_event.set()
                                 break
-                            DBHandler.clear_otp(self.nid)
+                            self.clear_otp_backend()
                             try:
                                 page.reload()
                             except Exception:
                                 pass
                             continue
 
-                        otp = self.wait_for_otp(stop_event, timeout=65)
-                        if otp:
-                            self.log(f"? ???? ??: {otp}", "success", page)
-                            self._fill_text(page, ["#ctl00_ContentPlaceHolder1_tbMobileConfCode", "input[name='ctl00$ContentPlaceHolder1$tbMobileConfCode']"], otp)
+                        if self.last_dialog_indicates_otp_invalid():
+                            if not self.register_otp_failure("dialog_otp_invalid"):
+                                self.log("⛔ OTP retry limit reached; stopping job.", "error", page)
+                                DBHandler.update_status(self.nid, "Stopped", "OTP retry limit reached")
+                                stop_event.set()
+                                break
+                            self.clear_otp_backend()
                             try:
-                                page.wait_for_timeout(500)
+                                page.reload()
                             except Exception:
                                 pass
-                            success = self._solve_captcha_wrapper(
-                                page,
-                                "#ctl00_ContentPlaceHolder1_tbCaptcha2",
-                                "#ctl00_ContentPlaceHolder1_btnContinue1",
-                                captcha_mode,
-                            )
-                            if success and sleep_with_stop(stop_event, 2):
+                            continue
+
+                        otp = self.wait_for_otp(stop_event, timeout=120)
+                        if not otp:
+                            try:
+                                page.wait_for_timeout(random.randint(200, 500))
+                            except Exception:
+                                pass
+                            continue
+
+                        self.log(f"? ???? ??: {otp}", "success", page)
+                        self._fill_text(
+                            page,
+                            ["#ctl00_ContentPlaceHolder1_tbMobileConfCode", "input[name='ctl00$ContentPlaceHolder1$tbMobileConfCode']"],
+                            otp,
+                        )
+                        try:
+                            page.wait_for_timeout(300)
+                        except Exception:
+                            pass
+                        success = self._solve_captcha_wrapper(
+                            page,
+                            "#ctl00_ContentPlaceHolder1_tbCaptcha2",
+                            "#ctl00_ContentPlaceHolder1_btnContinue1",
+                            captcha_mode,
+                        )
+                        if not success:
+                            if self._detect_captcha_failure(page):
+                                try:
+                                    page.reload()
+                                except Exception:
+                                    pass
+                            continue
+                        try:
+                            page.wait_for_selector("#ctl00_ContentPlaceHolder1_ddlBankName", timeout=5000, state="visible")
+                            break
+                        except Exception:
+                            pass
+                        if self._detect_otp_failure(page) or self.last_dialog_indicates_otp_invalid():
+                            if not self.register_otp_failure("otp_invalid_after_submit"):
+                                self.log("⛔ OTP retry limit reached; stopping job.", "error", page)
+                                DBHandler.update_status(self.nid, "Stopped", "OTP retry limit reached")
+                                stop_event.set()
                                 break
+                            self.clear_otp_backend()
+                            try:
+                                page.reload()
+                            except Exception:
+                                pass
+                            continue
+                        self._dump_state(
+                            page,
+                            selectors=["#ctl00_ContentPlaceHolder1_tbMobileConfCode", "#ctl00_ContentPlaceHolder1_ddlBankName"],
+                            reason="otp_unknown_failure",
+                        )
+                        try:
+                            page.wait_for_timeout(300)
+                        except Exception:
+                            pass
                         else:
                             self.log("?? ????? ?? ?????...", "waiting sms", page)
                         continue
@@ -515,7 +569,30 @@ class RegistrationBot(BotCore):
             content = page.content()
         except Exception:
             return False
-        return any(phrase in content for phrase in phrases)
+        if any(phrase in content for phrase in phrases):
+            return True
+        modal_selectors = [
+            "[role='dialog']",
+            ".modal.show",
+            ".swal2-container",
+            "#dlg",
+            ".ui-dialog",
+        ]
+        for selector in modal_selectors:
+            try:
+                modal = page.locator(selector)
+                if modal.count() == 0:
+                    continue
+                target = modal.first
+                if not target.is_visible():
+                    continue
+                text = target.inner_text()
+                if "منقضی" in text or "نامعتبر" in text:
+                    self.dismiss_modals(page)
+                    return True
+            except Exception:
+                continue
+        return False
     def _solve_captcha_wrapper(self, page, input_sel, btn_sel, mode):
         if mode == "robot":
             return self._handle_captcha_robot(page, input_sel, btn_sel)
