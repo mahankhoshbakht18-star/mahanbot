@@ -33,11 +33,14 @@ class BotCore:
         self._captcha_retry = 0
         self._captcha_retry_limit = int(self.settings.get("captcha_retry_limit", 5))
         self._otp_retry = 0
-        self._otp_retry_limit = int(self.settings.get("otp_retry_limit", 3))
+        self._otp_retry_limit = int(self.settings.get("otp_retry_limit", 5))
         self._otp_retry_exceeded = False
         self._last_progress_time = time.time()
         self._watchdog_timeout = int(self.settings.get("watchdog_timeout", 45))
         self._last_watchdog_dump = 0.0
+        self._last_dialog_message = ""
+        self._last_dialog_action = None
+        self._last_dialog_ts = 0.0
 
     def log(self, message, level="info", page=None, meta=None):
         if self.log_callback:
@@ -126,7 +129,13 @@ class BotCore:
         if stop_event is not None and stop_event.is_set():
             return None
         try:
-            response = requests.get(f"{self.local_api_base}/wait_otp/{self.nid}", timeout=timeout)
+            response = requests.get(
+                f"{self.local_api_base}/wait_otp/{self.nid}",
+                params={"timeout": timeout},
+                timeout=timeout + 5,
+            )
+            if response.status_code == 204:
+                return None
             if response.status_code == 200:
                 data = response.json()
                 code = data.get("otp")
@@ -135,6 +144,17 @@ class BotCore:
         except Exception:
             pass
         return None
+
+    def clear_otp_backend(self):
+        try:
+            requests.post(f"{self.local_api_base}/otp/clear/{self.nid}", timeout=3)
+            return
+        except Exception:
+            pass
+        try:
+            DBHandler.clear_otp(self.nid)
+        except Exception:
+            pass
 
     def setup_browser(self, stop_event=None):
         profile = dict(self.browser_profile)
@@ -237,6 +257,14 @@ class BotCore:
             return True
         return False
 
+    def last_dialog_indicates_otp_invalid(self, max_age: float = 6.0) -> bool:
+        if not self._last_dialog_message:
+            return False
+        if time.time() - self._last_dialog_ts > max_age:
+            return False
+        msg = self._last_dialog_message
+        return "منقضی" in msg or "نامعتبر" in msg
+
     def register_otp_failure(self, reason: str = "otp_invalid") -> bool:
         self._otp_retry += 1
         if self._otp_retry > self._otp_retry_limit:
@@ -262,16 +290,10 @@ class BotCore:
             "\u06a9\u062f \u062a\u0627\u06cc\u06cc\u062f \u062a\u0644\u0641\u0646 \u0647\u0645\u0631\u0627\u0647",
             "\u06a9\u062f \u062a\u0627\u06cc\u06cc\u062f",
             "\u06a9\u062f \u062a\u0623\u06cc\u06cc\u062f",
-            "\u0645\u0646\u0642\u0636\u06cc",
         ]
-        captcha_phrases = [
-            "\u06a9\u062f \u0627\u0645\u0646\u06cc\u062a\u06cc",
-            "\u0646\u0627\u0645\u0639\u062a\u0628\u0631 \u0627\u0633\u062a",
-        ]
-        if any(p in msg for p in otp_phrases):
+        otp_keywords = ["\u0645\u0646\u0642\u0636\u06cc", "\u0646\u0627\u0645\u0639\u062a\u0628\u0631"]
+        if any(p in msg for p in otp_phrases) or any(k in msg for k in otp_keywords):
             return "otp_expired"
-        if any(p in msg for p in captcha_phrases):
-            return "captcha_invalid"
         if msg:
             return "generic_error"
         return None
@@ -287,6 +309,8 @@ class BotCore:
         def _handler(dialog):
             msg = ""
             dtype = "unknown"
+            if hasattr(self, "_dialog_handling"):
+                self._dialog_handling = True
             try:
                 dtype = dialog.type()
             except Exception:
@@ -298,19 +322,14 @@ class BotCore:
 
             try:
                 action = self._classify_dialog(msg)
+                self._last_dialog_message = msg
+                self._last_dialog_action = action
+                self._last_dialog_ts = time.time()
                 if action == "otp_expired":
-                    DBHandler.clear_otp(self.nid)
+                    self.clear_otp_backend()
                     if self.register_otp_failure("dialog_otp_expired"):
                         self._set_recovery_flag("otp_expired")
                         self.log("RECOVERY otp_expired -> restart_otp", "warning", page)
-                elif action == "captcha_invalid":
-                    self._captcha_retry += 1
-                    self._set_recovery_flag("captcha_invalid")
-                    self.log(
-                        f"RECOVERY captcha_invalid -> retry {self._captcha_retry}/{self._captcha_retry_limit}",
-                        "warning",
-                        page,
-                    )
                 elif action == "generic_error":
                     self._set_recovery_flag("generic_error")
                     self.log("RECOVERY generic_error -> soft_reload", "warning", page)
@@ -325,6 +344,8 @@ class BotCore:
                 dialog.accept()
             except Exception:
                 pass
+            if hasattr(self, "_dialog_handling"):
+                self._dialog_handling = False
 
         page.on("dialog", _handler)
 

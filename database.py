@@ -206,6 +206,10 @@ class DBHandler:
 
     @staticmethod
     def save_otp(nid: str, code: str, status: str = "received") -> bool:
+        return DBHandler.set_otp(nid, code, ts=time.time(), status=status)
+
+    @staticmethod
+    def set_otp(nid: str, code: str, ts: Optional[float] = None, status: str = "received") -> bool:
         try:
             with DBHandler._connect() as conn:
                 data = DBHandler._load_applicant_data(conn, nid)
@@ -213,6 +217,7 @@ class DBHandler:
                     return False
                 data["otp_code"] = str(code).strip()
                 data["otp_status"] = status
+                data["otp_ts"] = float(ts) if ts is not None else time.time()
                 conn.execute(
                     "UPDATE applicants SET data=? WHERE national_id=?",
                     (json.dumps(data, ensure_ascii=False), nid),
@@ -223,16 +228,29 @@ class DBHandler:
             return False
 
     @staticmethod
-    def get_otp(nid: str) -> Optional[str]:
+    def get_otp_record(nid: str) -> Optional[Dict[str, Any]]:
         try:
             with DBHandler._connect() as conn:
                 data = DBHandler._load_applicant_data(conn, nid)
                 if data is None:
                     return None
                 code = data.get("otp_code")
-                return str(code).strip() if code else None
+                if not code:
+                    return None
+                return {
+                    "otp": str(code).strip(),
+                    "ts": data.get("otp_ts"),
+                    "status": data.get("otp_status"),
+                }
         except Exception:
             return None
+
+    @staticmethod
+    def get_otp(nid: str) -> Optional[str]:
+        record = DBHandler.get_otp_record(nid)
+        if not record:
+            return None
+        return record.get("otp")
 
     @staticmethod
     def clear_otp(nid: str) -> None:
@@ -243,6 +261,7 @@ class DBHandler:
                     return
                 data.pop("otp_code", None)
                 data.pop("otp_status", None)
+                data.pop("otp_ts", None)
                 conn.execute(
                     "UPDATE applicants SET data=? WHERE national_id=?",
                     (json.dumps(data, ensure_ascii=False), nid),

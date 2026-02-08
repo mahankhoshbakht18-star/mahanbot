@@ -5,6 +5,7 @@ import time
 import json
 import asyncio
 import logging
+from contextlib import asynccontextmanager
 from collections import deque
 from typing import Deque, Dict, Any, Optional, List, Tuple
 
@@ -97,16 +98,20 @@ async def log_unhandled_exceptions(request, call_next):
         raise
 
 
+@asynccontextmanager
 async def _open_aiosqlite():
     """
     برای جلوگیری از 'database is locked' و هماهنگی با DBHandler (sqlite3 sync)
     """
     conn = await aiosqlite.connect(DB_PATH, timeout=30)
-    await conn.execute("PRAGMA journal_mode=WAL;")
-    await conn.execute("PRAGMA synchronous=NORMAL;")
-    await conn.execute("PRAGMA busy_timeout=5000;")
-    await conn.execute("PRAGMA foreign_keys=ON;")
-    return conn
+    try:
+        await conn.execute("PRAGMA journal_mode=WAL;")
+        await conn.execute("PRAGMA synchronous=NORMAL;")
+        await conn.execute("PRAGMA busy_timeout=5000;")
+        await conn.execute("PRAGMA foreign_keys=ON;")
+        yield conn
+    finally:
+        await conn.close()
 
 
 async def _get_otp_event(nid: str) -> asyncio.Event:
@@ -121,11 +126,6 @@ async def _get_otp_event(nid: str) -> asyncio.Event:
 async def _signal_otp_event(nid: str) -> None:
     event = await _get_otp_event(nid)
     event.set()
-
-
-async def _clear_otp_event(nid: str) -> None:
-    async with OTP_EVENT_LOCK:
-        OTP_EVENTS.pop(nid, None)
 
 
 def _check_uvicorn_ws_backend():
@@ -168,7 +168,7 @@ async def startup_event():
 
     # Reset stuck statuses
     try:
-        async with await _open_aiosqlite() as conn:
+        async with _open_aiosqlite() as conn:
             await conn.execute(
                 "UPDATE applicants SET status='Stopped' "
                 "WHERE status IN ('Running','Selecting','Registering','Waiting SMS')"
@@ -233,7 +233,7 @@ def _emit_applicants_snapshot() -> None:
 
 
 def _handle_receive_sms(nid: str, code: str, status_label: str = "received") -> bool:
-    success = DBHandler.save_otp(nid, code, status=status_label)
+    success = DBHandler.set_otp(nid, code, ts=time.time(), status=status_label)
     if not success:
         return False
     log_event(nid, None, f"OTP received: {code}", "success")
@@ -507,29 +507,41 @@ def manual_otp(req: SMSRequest):
 
 
 @app.get("/wait_otp/{nid}")
-async def wait_otp(nid: str):
+async def wait_otp(nid: str, timeout: int = 120):
     if not nid:
         raise HTTPException(status_code=400, detail="Invalid NID")
 
-    existing = DBHandler.get_otp(nid)
-    if existing:
-        return {"otp": existing}
+    existing = DBHandler.get_otp_record(nid)
+    if existing and existing.get("otp"):
+        return {
+            "nid": nid,
+            "otp": existing["otp"],
+            "source": "db",
+            "ts": existing.get("ts") or time.time(),
+        }
 
     event = await _get_otp_event(nid)
+    event.clear()
+    timeout = max(1, min(int(timeout), 300))
+    logger.info("wait_otp waiting for %s", nid)
     try:
-        await asyncio.wait_for(event.wait(), timeout=120)
+        await asyncio.wait_for(event.wait(), timeout=timeout)
     except asyncio.TimeoutError:
-        await _clear_otp_event(nid)
-        raise HTTPException(status_code=408, detail="OTP timeout")
+        logger.info("wait_otp timeout for %s", nid)
+        return Response(status_code=204)
     finally:
         event.clear()
-        await _clear_otp_event(nid)
 
-    code = DBHandler.get_otp(nid)
-    if not code:
-        raise HTTPException(status_code=404, detail="OTP not found")
+    record = DBHandler.get_otp_record(nid)
+    if not record or not record.get("otp"):
+        return Response(status_code=204)
     logger.info("wait_otp released for %s", nid)
-    return {"otp": code}
+    return {
+        "nid": nid,
+        "otp": record["otp"],
+        "source": "event",
+        "ts": record.get("ts") or time.time(),
+    }
 
 
 # ✅ ذخیره متقاضی
@@ -537,7 +549,7 @@ async def wait_otp(nid: str):
 async def save_applicant(req: ApplicantModel):
     try:
         d_str = json.dumps(req.data, ensure_ascii=False)
-        async with await _open_aiosqlite() as conn:
+        async with _open_aiosqlite() as conn:
             if req.id:
                 await conn.execute(
                     "UPDATE applicants SET full_name=?, national_id=?, data=? WHERE id=?",
@@ -558,11 +570,20 @@ async def save_applicant(req: ApplicantModel):
 # ✅ حذف متقاضی
 @app.delete("/applicants/{nid}")
 async def delete_applicant(nid: str, _: bool = Depends(require_api_key)):
-    async with await _open_aiosqlite() as conn:
+    async with _open_aiosqlite() as conn:
         await conn.execute("DELETE FROM applicants WHERE national_id=?", (nid,))
         await conn.commit()
     _emit_applicants_snapshot()
     return {"status": "deleted"}
+
+
+@app.post("/otp/clear/{nid}")
+def clear_otp(nid: str):
+    if not nid:
+        raise HTTPException(status_code=400, detail="Invalid NID")
+    DBHandler.clear_otp(nid)
+    _emit_applicants_snapshot()
+    return {"status": "cleared", "nid": nid}
 
 
 @app.post("/applicants/{nid}/banks/stop")
