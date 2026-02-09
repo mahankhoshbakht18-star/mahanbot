@@ -264,11 +264,23 @@ class RegistrationBot(BotCore):
                             continue
 
                         self.log(f"? ???? ??: {otp}", "success", page)
-                        self._fill_text(
-                            page,
-                            ["#ctl00_ContentPlaceHolder1_tbMobileConfCode", "input[name='ctl00$ContentPlaceHolder1$tbMobileConfCode']"],
-                            otp,
-                        )
+                        otp_selector = "#ctl00_ContentPlaceHolder1_tbMobileConfCode, input[name='ctl00$ContentPlaceHolder1$tbMobileConfCode']"
+                        otp_value = str(otp).strip()
+                        try:
+                            page.evaluate(
+                                "(selector, value) => {"
+                                "const el = document.querySelector(selector);"
+                                "if (!el) return false;"
+                                "el.value = value;"
+                                "el.dispatchEvent(new Event('input', { bubbles: true }));"
+                                "el.dispatchEvent(new Event('change', { bubbles: true }));"
+                                "return true;"
+                                "}",
+                                otp_selector,
+                                otp_value,
+                            )
+                        except Exception:
+                            pass
                         try:
                             page.wait_for_timeout(300)
                         except Exception:
@@ -557,22 +569,10 @@ class RegistrationBot(BotCore):
         return False
 
     def _detect_otp_failure(self, page) -> bool:
-        phrases = [
-            "کد منقضی",
-            "منقضی شده",
-            "کد تایید اشتباه",
-            "کد تایید صحیح نمی باشد",
-            "کد تایید نامعتبر",
-            "session expired",
-        ]
-        try:
-            content = page.content()
-        except Exception:
-            return False
-        if any(phrase in content for phrase in phrases):
-            return True
         modal_selectors = [
             "[role='dialog']",
+            "[role='alert']",
+            ".alert",
             ".modal.show",
             ".swal2-container",
             "#dlg",

@@ -185,10 +185,11 @@ class BankSelectionBot(BotCore):
                             break
                         otp_attempted = False
                         self._nid_filled = False
-                        try:
-                            page.reload()
-                        except Exception:
-                            pass
+                        if self._can_navigate_from_otp(page):
+                            try:
+                                page.reload()
+                            except Exception:
+                                pass
                         continue
 
                     if self.consume_recovery_flag("captcha_invalid"):
@@ -197,10 +198,11 @@ class BankSelectionBot(BotCore):
                         else:
                             self.log("RECOVERY captcha_invalid -> retry limit reached; reload", "warning", page)
                             self._captcha_retry = 0
-                            try:
-                                page.reload()
-                            except Exception:
-                                pass
+                            if self._can_navigate_from_otp(page):
+                                try:
+                                    page.reload()
+                                except Exception:
+                                    pass
                         continue
 
                     if self.consume_recovery_flag("generic_error"):
@@ -216,10 +218,11 @@ class BankSelectionBot(BotCore):
                             )
                         except Exception:
                             pass
-                        try:
-                            page.reload()
-                        except Exception:
-                            pass
+                        if self._can_navigate_from_otp(page):
+                            try:
+                                page.reload()
+                            except Exception:
+                                pass
                         continue
 
                     self.dismiss_modals(page)
@@ -243,29 +246,38 @@ class BankSelectionBot(BotCore):
                         next_state_sweep_at = now + 3.0
 
                     if state == "ENTRY_FORM" and state_timed_out(120):
-                        self.log("? ENTRY_FORM timeout; reloading...", "warning", page)
-                        try:
-                            page.reload()
-                        except Exception:
-                            pass
-                        set_state("ENTRY_FORM")
+                        if self._can_navigate_from_otp(page):
+                            self.log("? ENTRY_FORM timeout; reloading...", "warning", page)
+                            try:
+                                page.reload()
+                            except Exception:
+                                pass
+                            set_state("ENTRY_FORM")
+                        else:
+                            set_state("OTP_FORM")
 
                     if state == "OTP_FORM" and state_timed_out(180):
                         self.clear_otp_backend()
-                        self.log("? OTP_FORM timeout; reloading for new OTP.", "warning", page)
-                        try:
-                            page.reload()
-                        except Exception:
-                            pass
-                        set_state("ENTRY_FORM")
+                        if self._can_navigate_from_otp(page):
+                            self.log("? OTP_FORM timeout; reloading for new OTP.", "warning", page)
+                            try:
+                                page.reload()
+                            except Exception:
+                                pass
+                            set_state("ENTRY_FORM")
+                        else:
+                            set_state("OTP_FORM")
 
                     if state == "BANK_SELECT" and state_timed_out(180):
-                        self.log("? BANK_SELECT timeout; refreshing.", "warning", page)
-                        try:
-                            page.reload()
-                        except Exception:
-                            pass
-                        set_state("ENTRY_FORM")
+                        if self._can_navigate_from_otp(page):
+                            self.log("? BANK_SELECT timeout; refreshing.", "warning", page)
+                            try:
+                                page.reload()
+                            except Exception:
+                                pass
+                            set_state("ENTRY_FORM")
+                        else:
+                            set_state("OTP_FORM")
 
                     if otp_attempted and self._detect_otp_failure(page):
                         if not self.register_otp_failure("page_otp_invalid"):
@@ -276,10 +288,11 @@ class BankSelectionBot(BotCore):
                         self.clear_otp_backend()
                         self.log("♻️ کد منقضی/نامعتبر شد؛ انتظار برای پیامک جدید.", "warning", page)
                         otp_attempted = False
-                        try:
-                            page.reload()
-                        except Exception:
-                            pass
+                        if self._can_navigate_from_otp(page):
+                            try:
+                                page.reload()
+                            except Exception:
+                                pass
                         if sleep_with_stop(stop_event, 0.2):
                             break
                         continue
@@ -290,25 +303,36 @@ class BankSelectionBot(BotCore):
                             self.log("⛔ مسدودی! رفرش...", "error", page)
                             if sleep_with_stop(stop_event, 3.0):
                                 break
-                            safe_goto(page, TARGET_URL, timeout=60000, wait_until="domcontentloaded", log_callback=self.log)
+                            if self._can_navigate_from_otp(page):
+                                safe_goto(
+                                    page,
+                                    TARGET_URL,
+                                    timeout=60000,
+                                    wait_until="domcontentloaded",
+                                    log_callback=self.log,
+                                )
                             continue
                     except Exception:
                         pass
 
                     # مرحله ۱: ورود کد ملی
-                    step1_found = self._wait_for_state_any_scope(
-                        page,
-                        "#ctl00_ContentPlaceHolder1_tbIDNo",
-                        "CHECK_STEP_1_ENTRY_FORM",
-                        timeout=step1_timeout,
-                    )
-                    if not step1_found:
+                    otp_visible = self._otp_input_visible(page)
+                    if not otp_visible:
                         step1_found = self._wait_for_state_any_scope(
                             page,
-                            "input[name$='tbIDNo']",
-                            "CHECK_STEP_1_ENTRY_FORM_FALLBACK",
+                            "#ctl00_ContentPlaceHolder1_tbIDNo",
+                            "CHECK_STEP_1_ENTRY_FORM",
                             timeout=step1_timeout,
                         )
+                        if not step1_found:
+                            step1_found = self._wait_for_state_any_scope(
+                                page,
+                                "input[name$='tbIDNo']",
+                                "CHECK_STEP_1_ENTRY_FORM_FALLBACK",
+                                timeout=step1_timeout,
+                            )
+                    else:
+                        step1_found = False
 
                     if step1_found:
                         set_state("ENTRY_FORM")
@@ -356,10 +380,11 @@ class BankSelectionBot(BotCore):
                         except Exception:
                             pass
                     if self._needs_reload:
-                        try:
-                            page.reload()
-                        except Exception:
-                            pass
+                        if self._can_navigate_from_otp(page):
+                            try:
+                                page.reload()
+                            except Exception:
+                                pass
                         self._nid_filled = True
                         otp_attempted = False
                         self._needs_reload = False
@@ -401,10 +426,11 @@ class BankSelectionBot(BotCore):
                                     break
                                 self.clear_otp_backend()
                                 self.log("?? ?? ?????/??????? ??? ??????? ???? ?????.", "warning", page)
-                                try:
-                                    page.reload()
-                                except Exception:
-                                    pass
+                                if self._can_navigate_from_otp(page):
+                                    try:
+                                        page.reload()
+                                    except Exception:
+                                        pass
                                 continue
 
                             if otp_attempts >= self._otp_retry_limit:
@@ -475,18 +501,20 @@ class BankSelectionBot(BotCore):
                             )
                             if not success:
                                 if self._detect_captcha_failure(page):
-                                    try:
-                                        page.reload()
-                                    except Exception:
-                                        pass
+                                    if self._can_navigate_from_otp(page):
+                                        try:
+                                            page.reload()
+                                        except Exception:
+                                            pass
                                 else:
                                     self._refresh_captcha_or_reload(page)
                                 continue
                             if self._detect_captcha_failure(page):
-                                try:
-                                    page.reload()
-                                except Exception:
-                                    pass
+                                if self._can_navigate_from_otp(page):
+                                    try:
+                                        page.reload()
+                                    except Exception:
+                                        pass
                                 continue
                             otp_attempts += 1
                             otp_attempted = True
@@ -496,6 +524,9 @@ class BankSelectionBot(BotCore):
                             try:
                                 page.wait_for_selector("#ctl00_ContentPlaceHolder1_ddlBankName", timeout=5000, state="visible")
                                 set_state("BANK_SELECT")
+                                result = self._process_bank_selection_v2(page, stop_event)
+                                if result == "selected":
+                                    self.log("✅ بانک انتخاب شد.", "success", page)
                                 break
                             except Exception:
                                 pass
@@ -507,10 +538,11 @@ class BankSelectionBot(BotCore):
                                     break
                                 self.clear_otp_backend()
                                 self.log("♻️ کد منقضی/نامعتبر شد؛ انتظار برای پیامک جدید.", "warning", page)
-                                try:
-                                    page.reload()
-                                except Exception:
-                                    pass
+                                if self._can_navigate_from_otp(page):
+                                    try:
+                                        page.reload()
+                                    except Exception:
+                                        pass
                                 continue
                             self._dump_state(
                                 page,
@@ -707,6 +739,8 @@ class BankSelectionBot(BotCore):
                 return
         except Exception:
             pass
+        if not self._can_navigate_from_otp(page):
+            return
         try:
             page.reload()
         except Exception:
@@ -987,27 +1021,26 @@ class BankSelectionBot(BotCore):
             while not stop_event.is_set():
                 if self._firewall_gate(page, stop_event):
                     return "stopped"
-
+                available_banks = {}
                 try:
-                    page.wait_for_function(
+                    options = page.evaluate(
                         "(selector) => {"
                         "const el = document.querySelector(selector);"
-                        "return el && el.options && el.options.length > 1;"
+                        "if (!el) return [];"
+                        "return Array.from(el.options || []).map(opt => ({"
+                        "value: opt.value,"
+                        "text: (opt.textContent || '').trim()"
+                        "}));"
                         "}",
                         dropdown_id,
-                        timeout=8000,
                     )
+                    for opt in options:
+                        val = opt.get("value")
+                        txt = (opt.get("text") or "").strip()
+                        if val and val != "0" and txt:
+                            available_banks[txt] = val
                 except Exception:
                     pass
-
-                options = page.locator(f"{dropdown_id} option").all()
-                available_banks = {}
-
-                for opt in options:
-                    val = opt.get_attribute("value")
-                    txt = opt.inner_text().strip()
-                    if val and val != "0":
-                        available_banks[txt] = val
 
                 if not available_banks:
                     self.log("?? ???? ??????? ???? ???. ???????? ????...", "warning", page)
@@ -1017,8 +1050,8 @@ class BankSelectionBot(BotCore):
                 self.log(f"[NID: {self.nid}] Available Banks: {list(available_banks.keys())}", "info", page)
                 runtime_data = self._load_runtime_data()
                 user_priorities = (
-                    self.user_data.get("priority_banks")
-                    or runtime_data.get("priority_banks")
+                    runtime_data.get("priority_banks")
+                    or self.user_data.get("priority_banks")
                     or runtime_data.get("banks", [])
                 )
                 favorite_banks = runtime_data.get("favorite_banks", [])
@@ -1047,7 +1080,7 @@ class BankSelectionBot(BotCore):
                         page.select_option(dropdown_id, value=found_val)
                         self.log("? ?? ??? ???????? ???...", "info", page)
                         self._wait_for_branch_fully_loaded(page, branch_ddl)
-                        self._select_first_available_branch(page)
+                        self._process_branch_selection(page, stop_event)
                         return "selected"
 
                 self.log("?? ???? ??????? ???? ???. ???????? ????...", "warning", page)
@@ -1092,6 +1125,7 @@ class BankSelectionBot(BotCore):
     def _process_branch_selection(self, page, stop_event):
         try:
             branch_ddl = "#ctl00_ContentPlaceHolder1_ddlBranch"
+            self._wait_for_branch_fully_loaded(page, branch_ddl)
             selected = False
             try:
                 options = page.locator(f"{branch_ddl} option").all()
@@ -1196,22 +1230,10 @@ class BankSelectionBot(BotCore):
                     break
 
     def _detect_otp_failure(self, page) -> bool:
-        phrases = [
-            "کد منقضی",
-            "منقضی شده",
-            "کد تایید اشتباه",
-            "کد تایید صحیح نمی باشد",
-            "کد تایید نامعتبر",
-            "session expired",
-        ]
-        try:
-            content = page.content()
-        except Exception:
-            return False
-        if any(phrase in content for phrase in phrases):
-            return True
         modal_selectors = [
             "[role='dialog']",
+            "[role='alert']",
+            ".alert",
             ".modal.show",
             ".swal2-container",
             "#dlg",
@@ -1232,6 +1254,44 @@ class BankSelectionBot(BotCore):
             except Exception:
                 continue
         return False
+
+    def _otp_input_visible(self, page) -> bool:
+        selectors = ["input[name$='tbMobileConfCode']", "#ctl00_ContentPlaceHolder1_tbMobileConfCode"]
+        scopes = [page] + list(page.frames)
+        for scope in scopes:
+            for selector in selectors:
+                try:
+                    locator = scope.locator(selector)
+                    if locator.count() > 0 and locator.first.is_visible():
+                        return True
+                except Exception:
+                    continue
+        return False
+
+    def _resend_enabled(self, page) -> bool:
+        selectors = [
+            "#ctl00_ContentPlaceHolder1_btnSendConfirmCode",
+            "input[name$='btnSendConfirmCode']",
+            "button:has-text('ارسال مجدد')",
+        ]
+        scopes = [page] + list(page.frames)
+        for scope in scopes:
+            for selector in selectors:
+                try:
+                    locator = scope.locator(selector)
+                    if locator.count() == 0:
+                        continue
+                    target = locator.first
+                    if target.is_visible() and target.is_enabled():
+                        return True
+                except Exception:
+                    continue
+        return False
+
+    def _can_navigate_from_otp(self, page) -> bool:
+        if not self._otp_input_visible(page):
+            return True
+        return self._resend_enabled(page)
 
     def _detect_captcha_failure(self, page) -> bool:
         phrases = [

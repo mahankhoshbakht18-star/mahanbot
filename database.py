@@ -64,6 +64,8 @@ class DBHandler:
                 # WAL must be set before heavy write contention begins
                 c.execute("PRAGMA journal_mode=WAL;")
                 c.execute("PRAGMA synchronous=NORMAL;")
+                c.execute("PRAGMA busy_timeout=5000;")
+                c.execute("PRAGMA foreign_keys=ON;")
 
                 c.execute(
                     """CREATE TABLE IF NOT EXISTS applicants (
