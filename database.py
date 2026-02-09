@@ -93,7 +93,7 @@ class DBHandler:
                         "clear_cookies": True,
                         "save_only_mode": False,
                         "sms_auto_resend": True,
-                        "captcha_mode": "human",
+                        "captcha_mode": "robot",
                         "final_submit": False,
                     },
                     ensure_ascii=False,
