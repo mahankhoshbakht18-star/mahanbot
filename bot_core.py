@@ -128,6 +128,7 @@ class BotCore:
     def wait_for_otp(self, stop_event=None, timeout: int = 45):
         if stop_event is not None and stop_event.is_set():
             return None
+        timeout = max(1, int(timeout))
         try:
             response = requests.get(
                 f"{self.local_api_base}/wait_otp/{self.nid}",
