@@ -255,7 +255,7 @@ class RegistrationBot(BotCore):
                                 pass
                             continue
 
-                        otp = self.wait_for_otp(stop_event, timeout=120)
+                        otp = self.get_otp_code(stop_event=stop_event, timeout=120)
                         if not otp:
                             try:
                                 page.wait_for_timeout(random.randint(200, 500))

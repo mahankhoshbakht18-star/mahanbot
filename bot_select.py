@@ -439,7 +439,7 @@ class BankSelectionBot(BotCore):
                                 stop_event.set()
                                 break
 
-                            otp_code = self.wait_for_otp(stop_event, timeout=120)
+                            otp_code = self.get_otp_code(stop_event=stop_event, timeout=120)
                             if not otp_code:
                                 try:
                                     page.wait_for_timeout(random.randint(200, 500))
