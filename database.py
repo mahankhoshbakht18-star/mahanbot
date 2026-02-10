@@ -208,7 +208,8 @@ class DBHandler:
 
     @staticmethod
     def save_otp(nid: str, code: str, status: str = "received") -> bool:
-        return DBHandler.set_otp(nid, code, ts=time.time(), status=status)
+        otp_ts = time.time()
+        return DBHandler.set_otp(nid, code, ts=otp_ts, status=status)
 
     @staticmethod
     def set_otp(nid: str, code: str, ts: Optional[float] = None, status: str = "received") -> bool:

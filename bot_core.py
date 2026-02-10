@@ -41,6 +41,7 @@ class BotCore:
         self._last_dialog_message = ""
         self._last_dialog_action = None
         self._last_dialog_ts = 0.0
+        self._otp_entry_time = 0.0
 
     def log(self, message, level="info", page=None, meta=None):
         if self.log_callback:
@@ -82,7 +83,7 @@ class BotCore:
 
         # 1) Local wait endpoint (/wait_otp) for zero-polling behavior
         try:
-            code = self.wait_for_otp(stop_event, timeout=timeout)
+            code = self.wait_for_otp(stop_event, timeout=timeout, min_ts=self._otp_entry_time)
             if code:
                 DBHandler.save_otp(self.nid, code)
                 self.log(f"✅ OTP received from /wait_otp: {code}", "success")
@@ -124,14 +125,19 @@ class BotCore:
 
         return None
 
-    def wait_for_otp(self, stop_event=None, timeout: int = 45):
+    def mark_otp_entry_time(self, ts: float = None) -> float:
+        self._otp_entry_time = float(ts if ts is not None else time.time())
+        return self._otp_entry_time
+
+    def wait_for_otp(self, stop_event=None, timeout: int = 45, min_ts: float = None):
         if stop_event is not None and stop_event.is_set():
             return None
         timeout = max(1, int(timeout))
+        min_ts_value = self._otp_entry_time if min_ts is None else float(min_ts)
         try:
             response = requests.get(
                 f"{self.local_api_base}/wait_otp/{self.nid}",
-                params={"timeout": timeout},
+                params={"timeout": timeout, "min_ts": min_ts_value},
                 timeout=timeout + 5,
             )
             if response.status_code == 204:
@@ -330,13 +336,10 @@ class BotCore:
                 self._last_dialog_ts = time.time()
                 if action == "otp_expired":
                     self.clear_remote_otp()
+                    self.mark_otp_entry_time()
                     if self.register_otp_failure("dialog_otp_expired"):
                         self._set_recovery_flag("otp_expired")
-                        self.log("RECOVERY otp_expired -> restart_otp", "warning", page)
-                    try:
-                        page.reload(timeout=10000)
-                    except Exception:
-                        pass
+                        self.log("RECOVERY otp_expired -> restart_otp_without_reload", "warning", page)
                 elif action == "generic_error":
                     self._set_recovery_flag("generic_error")
                     self.log("RECOVERY generic_error -> soft_reload", "warning", page)
