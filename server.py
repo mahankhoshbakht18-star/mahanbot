@@ -507,41 +507,49 @@ def manual_otp(req: SMSRequest):
 
 
 @app.get("/wait_otp/{nid}")
-async def wait_otp(nid: str, timeout: int = 120):
+async def wait_otp(nid: str, timeout: int = 120, min_ts: float = 0.0):
     if not nid:
         raise HTTPException(status_code=400, detail="Invalid NID")
 
-    existing = DBHandler.get_otp_record(nid)
-    if existing and existing.get("otp"):
-        return {
-            "nid": nid,
-            "otp": existing["otp"],
-            "source": "db",
-            "ts": existing.get("ts") or time.time(),
-        }
-
-    event = await _get_otp_event(nid)
-    event.clear()
-    timeout = max(1, min(int(timeout), 300))
-    logger.info("wait_otp waiting for %s", nid)
     try:
-        await asyncio.wait_for(event.wait(), timeout=timeout)
-    except asyncio.TimeoutError:
-        logger.info("wait_otp timeout for %s", nid)
-        return Response(status_code=204)
-    finally:
-        event.clear()
+        min_ts = float(min_ts)
+    except Exception:
+        min_ts = 0.0
+    timeout = max(1, min(int(timeout), 300))
+    deadline = time.monotonic() + timeout
+    logger.info("wait_otp waiting for %s (min_ts=%s)", nid, min_ts)
 
-    record = DBHandler.get_otp_record(nid)
-    if not record or not record.get("otp"):
-        return Response(status_code=204)
-    logger.info("wait_otp released for %s", nid)
-    return {
-        "nid": nid,
-        "otp": record["otp"],
-        "source": "event",
-        "ts": record.get("ts") or time.time(),
-    }
+    while True:
+        record = DBHandler.get_otp_record(nid)
+        record_ts = 0.0
+        if record:
+            try:
+                record_ts = float(record.get("ts") or 0.0)
+            except Exception:
+                record_ts = 0.0
+        if record and record.get("otp") and record_ts > min_ts:
+            logger.info("wait_otp released for %s ts=%s > min_ts=%s", nid, record_ts, min_ts)
+            return {
+                "nid": nid,
+                "otp": record["otp"],
+                "source": "fresh",
+                "ts": record_ts or time.time(),
+            }
+
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            logger.info("wait_otp timeout for %s", nid)
+            return Response(status_code=204)
+
+        event = await _get_otp_event(nid)
+        event.clear()
+        try:
+            await asyncio.wait_for(event.wait(), timeout=remaining)
+        except asyncio.TimeoutError:
+            logger.info("wait_otp timeout for %s", nid)
+            return Response(status_code=204)
+        finally:
+            event.clear()
 
 
 # ✅ ذخیره متقاضی

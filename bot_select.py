@@ -67,6 +67,7 @@ class BankSelectionBot(BotCore):
                 captcha_mode = self.settings.get("captcha_mode", "human")
                 step1_timeout = 12000
                 otp_timeout = 450
+                entry_time = 0.0
                 firewall_solved_count = 0
                 max_firewall_solves = int(self.settings.get("max_firewall_solves_per_attempt", 6))
                 next_state_sweep_at = 0.0
@@ -75,11 +76,13 @@ class BankSelectionBot(BotCore):
                 state_since = time.time()
 
                 def set_state(new_state: str):
-                    nonlocal state, state_since
+                    nonlocal state, state_since, entry_time
                     if state != new_state:
                         state = new_state
                         state_since = time.time()
                         self.mark_progress(f"state:{new_state}")
+                        if new_state == "OTP_FORM":
+                            entry_time = self.mark_otp_entry_time(state_since)
 
                 def state_timed_out(seconds: float) -> bool:
                     return (time.time() - state_since) > seconds
@@ -188,11 +191,7 @@ class BankSelectionBot(BotCore):
                             break
                         otp_attempted = False
                         self._nid_filled = False
-                        if self._can_navigate_from_otp(page):
-                            try:
-                                page.reload()
-                            except Exception:
-                                pass
+                        entry_time = self.mark_otp_entry_time()
                         continue
 
                     if self.consume_recovery_flag("captcha_invalid"):
@@ -428,12 +427,8 @@ class BankSelectionBot(BotCore):
                                     stop_event.set()
                                     break
                                 self.clear_otp_backend()
+                                entry_time = self.mark_otp_entry_time()
                                 self.log("?? ?? ?????/??????? ??? ??????? ???? ?????.", "warning", page)
-                                if self._can_navigate_from_otp(page):
-                                    try:
-                                        page.reload()
-                                    except Exception:
-                                        pass
                                 continue
 
                             if otp_attempts >= self._otp_retry_limit:
@@ -442,7 +437,7 @@ class BankSelectionBot(BotCore):
                                 stop_event.set()
                                 break
 
-                            otp_code = self.get_otp_code(stop_event=stop_event, timeout=120)
+                            otp_code = self.wait_for_otp(stop_event=stop_event, timeout=120, min_ts=entry_time)
                             if not otp_code:
                                 try:
                                     page.wait_for_timeout(150)
@@ -463,6 +458,10 @@ class BankSelectionBot(BotCore):
 
                             otp_selector = "input[name$='tbMobileConfCode']"
                             otp_input = page.locator(otp_selector)
+                            try:
+                                otp_input.fill("")
+                            except Exception:
+                                pass
                             current_val = otp_input.input_value()
                             if current_val != otp_code:
                                 self.log(f"? ?????? ?? ?????: {otp_code}", "success", page)
@@ -528,13 +527,9 @@ class BankSelectionBot(BotCore):
                                     DBHandler.update_status(self.nid, "Stopped", "OTP retry limit reached")
                                     stop_event.set()
                                     break
-                                self.clear_otp_backend()
+                                self.clear_remote_otp()
+                                entry_time = self.mark_otp_entry_time()
                                 self.log("♻️ کد منقضی/نامعتبر شد؛ انتظار برای پیامک جدید.", "warning", page)
-                                if self._can_navigate_from_otp(page):
-                                    try:
-                                        page.reload()
-                                    except Exception:
-                                        pass
                                 continue
                             self._dump_state(
                                 page,
