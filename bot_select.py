@@ -66,7 +66,7 @@ class BankSelectionBot(BotCore):
                 self.log(f"🚀 شروع عملیات (دور {attempt})...", "info", page)
                 captcha_mode = self.settings.get("captcha_mode", "human")
                 step1_timeout = 12000
-                otp_timeout = 8000
+                otp_timeout = 450
                 firewall_solved_count = 0
                 max_firewall_solves = int(self.settings.get("max_firewall_solves_per_attempt", 6))
                 next_state_sweep_at = 0.0
@@ -139,7 +139,7 @@ class BankSelectionBot(BotCore):
                     except Exception:
                         pass
 
-                def wait_for_state(selector, label, timeout=2000):
+                def wait_for_state(selector, label, timeout=350):
                     if stop_event.is_set():
                         return False
                     if self.is_firewall_challenge(page):
@@ -159,6 +159,9 @@ class BankSelectionBot(BotCore):
                         self.log("🛑 مرورگر توسط کاربر بسته شد.", "stopped")
                         stop_event.set()
                         return
+
+                    if self._otp_input_visible(page):
+                        set_state("OTP_FORM")
 
                     if self.watchdog_check(
                         page,
@@ -442,13 +445,13 @@ class BankSelectionBot(BotCore):
                             otp_code = self.get_otp_code(stop_event=stop_event, timeout=120)
                             if not otp_code:
                                 try:
-                                    page.wait_for_timeout(random.randint(200, 500))
+                                    page.wait_for_timeout(150)
                                 except Exception:
                                     pass
                                 continue
                             while self._dialog_handling and not stop_event.is_set():
                                 try:
-                                    page.wait_for_timeout(200)
+                                    page.wait_for_timeout(80)
                                 except Exception:
                                     pass
                             if self._needs_reload:
@@ -479,7 +482,7 @@ class BankSelectionBot(BotCore):
                                 except Exception:
                                     pass
                                 try:
-                                    page.wait_for_timeout(200)
+                                    page.wait_for_timeout(80)
                                 except Exception:
                                     pass
                                 try:
@@ -500,21 +503,10 @@ class BankSelectionBot(BotCore):
                                 captcha_mode,
                             )
                             if not success:
-                                if self._detect_captcha_failure(page):
-                                    if self._can_navigate_from_otp(page):
-                                        try:
-                                            page.reload()
-                                        except Exception:
-                                            pass
-                                else:
-                                    self._refresh_captcha_or_reload(page)
+                                self._refresh_captcha_or_reload(page)
                                 continue
                             if self._detect_captcha_failure(page):
-                                if self._can_navigate_from_otp(page):
-                                    try:
-                                        page.reload()
-                                    except Exception:
-                                        pass
+                                self._refresh_captcha_or_reload(page)
                                 continue
                             otp_attempts += 1
                             otp_attempted = True
@@ -550,7 +542,7 @@ class BankSelectionBot(BotCore):
                                 reason="otp_unknown_failure",
                             )
                             try:
-                                page.wait_for_timeout(300)
+                                page.wait_for_timeout(120)
                             except Exception:
                                 pass
                             continue
@@ -614,7 +606,7 @@ class BankSelectionBot(BotCore):
                             break
                         continue
 
-                    if sleep_with_stop(stop_event, random.uniform(0.2, 0.4)):
+                    if sleep_with_stop(stop_event, random.uniform(0.05, 0.1)):
                         break
 
             except PlaywrightError as pe:
@@ -646,7 +638,7 @@ class BankSelectionBot(BotCore):
                 close_browser(playwright, browser, context, page)
 
             if not stop_event.is_set():
-                sleep_with_stop(stop_event, random.uniform(0.2, 0.4))
+                sleep_with_stop(stop_event, random.uniform(0.05, 0.1))
 
     def is_firewall_challenge(self, page) -> bool:
         selectors = ["#ans", "#jar"]
@@ -732,17 +724,11 @@ class BankSelectionBot(BotCore):
         return False
 
     def _refresh_captcha_or_reload(self, page):
+        """Refresh captcha image without reloading page to preserve session."""
         try:
             reload_btn = page.locator(".BDC_ReloadLink").first
-            if reload_btn.is_visible():
+            if reload_btn.is_visible() and reload_btn.is_enabled():
                 reload_btn.click()
-                return
-        except Exception:
-            pass
-        if not self._can_navigate_from_otp(page):
-            return
-        try:
-            page.reload()
         except Exception:
             pass
 
@@ -1018,75 +1004,52 @@ class BankSelectionBot(BotCore):
         try:
             dropdown_id = "#ctl00_ContentPlaceHolder1_ddlBankName"
             branch_ddl = "#ctl00_ContentPlaceHolder1_ddlBranch"
-            while not stop_event.is_set():
-                if self._firewall_gate(page, stop_event):
-                    return "stopped"
-                available_banks = {}
-                try:
-                    options = page.evaluate(
-                        "(selector) => {"
-                        "const el = document.querySelector(selector);"
-                        "if (!el) return [];"
-                        "return Array.from(el.options || []).map(opt => ({"
-                        "value: opt.value,"
-                        "text: (opt.textContent || '').trim()"
-                        "}));"
-                        "}",
-                        dropdown_id,
-                    )
-                    for opt in options:
-                        val = opt.get("value")
-                        txt = (opt.get("text") or "").strip()
-                        if val and val != "0" and txt:
-                            available_banks[txt] = val
-                except Exception:
-                    pass
+            if self._firewall_gate(page, stop_event):
+                return "stopped"
 
-                if not available_banks:
-                    self.log("?? ???? ??????? ???? ???. ???????? ????...", "warning", page)
-                    self._return_to_bank_field(page, dropdown_id)
-                    return "waiting"
-
-                self.log(f"[NID: {self.nid}] Available Banks: {list(available_banks.keys())}", "info", page)
-                runtime_data = self._load_runtime_data()
-                user_priorities = (
-                    runtime_data.get("priority_banks")
-                    or self.user_data.get("priority_banks")
-                    or runtime_data.get("banks", [])
-                )
-                favorite_banks = runtime_data.get("favorite_banks", [])
-                stopped_banks = set(runtime_data.get("stopped_banks", []))
-
-                if favorite_banks:
-                    self._notify_favorite_banks(available_banks, favorite_banks, user_priorities)
-
-                if not user_priorities:
-                    self.log("?? ???? ?????? ???? ???? ???!", "error")
-                    return "error"
-
-                for priority in user_priorities:
-                    target_name = priority["name"] if isinstance(priority, dict) else priority
-                    if target_name in stopped_banks:
-                        continue
-
-                    found_val = None
-                    for b_text, b_val in available_banks.items():
-                        if target_name and target_name in b_text:
-                            found_val = b_val
-                            break
-
-                    if found_val:
-                        self.log(f"?? ???? ???? ??: {target_name}", "selecting", page)
-                        page.select_option(dropdown_id, value=found_val)
-                        self.log("? ?? ??? ???????? ???...", "info", page)
-                        self._wait_for_branch_fully_loaded(page, branch_ddl)
-                        self._process_branch_selection(page, stop_event)
-                        return "selected"
-
-                self.log("?? ???? ??????? ???? ???. ???????? ????...", "warning", page)
-                self._return_to_bank_field(page, dropdown_id)
+            options = page.evaluate(
+                "(selector) => {"
+                "const el = document.querySelector(selector);"
+                "if (!el) return [];"
+                "return Array.from(el.options || []).map(opt => ({"
+                "value: opt.value, text: (opt.textContent || '').trim()" 
+                "}));"
+                "}",
+                dropdown_id,
+            ) or []
+            available = [(o.get("text", "").strip(), o.get("value")) for o in options]
+            available = [(t, v) for t, v in available if t and v and v != "0"]
+            if not available:
                 return "waiting"
-            return "stopped"
+
+            runtime_data = self._load_runtime_data()
+            priorities = (
+                runtime_data.get("priority_banks")
+                or self.user_data.get("priority_banks")
+                or runtime_data.get("banks", [])
+            )
+            if not priorities:
+                return "error"
+
+            target_value = None
+            for priority in priorities:
+                name = priority.get("name") if isinstance(priority, dict) else str(priority)
+                if not name:
+                    continue
+                for text_item, value_item in available:
+                    if name in text_item:
+                        target_value = value_item
+                        break
+                if target_value:
+                    break
+
+            if not target_value:
+                return "no_match"
+
+            page.select_option(dropdown_id, value=target_value)
+            self._wait_for_branch_fully_loaded(page, branch_ddl)
+            self._process_branch_selection(page, stop_event)
+            return "selected"
         except Exception:
             return "error"
 
@@ -1126,60 +1089,42 @@ class BankSelectionBot(BotCore):
         try:
             branch_ddl = "#ctl00_ContentPlaceHolder1_ddlBranch"
             self._wait_for_branch_fully_loaded(page, branch_ddl)
-            selected = False
-            try:
-                options = page.locator(f"{branch_ddl} option").all()
-            except Exception:
-                options = []
-            for opt in options:
-                try:
-                    val = opt.get_attribute("value")
-                    if val and val != "0":
-                        page.locator(branch_ddl).select_option(value=val)
-                        selected = True
-                        break
-                except Exception:
-                    continue
-            if not selected:
+
+            branch_value = page.evaluate(
+                "(selector) => {"
+                "const el = document.querySelector(selector);"
+                "if (!el) return null;"
+                "const opts = Array.from(el.options || []);"
+                "const first = opts.find(o => o.value && o.value !== '0');"
+                "if (!first) return null;"
+                "el.value = first.value;"
+                "el.dispatchEvent(new Event('change', { bubbles: true }));"
+                "return first.value;"
+                "}",
+                branch_ddl,
+            )
+            if not branch_value:
                 return
-            if self.settings.get("final_submit", False):
-                self.log("?? ??? ?????...", "success", page)
-                page.click("#ctl00_ContentPlaceHolder1_btnSave")
-            else:
-                submit_btn = page.locator("#ctl00_ContentPlaceHolder1_btnSave")
-                try:
-                    submit_btn.scroll_into_view_if_needed()
-                    page.evaluate(
-                        "btn => btn.style.border = '3px solid red'",
-                        submit_btn.element_handle(),
-                    )
-                except Exception:
-                    pass
-                DBHandler.update_status(self.nid, "Ready for Submit", "Ready for Submit")
-                self.log("?? Ready for Submit - waiting for operator.", "warning", page)
-                while not stop_event.is_set():
-                    time.sleep(1)
+
+            page.click("#ctl00_ContentPlaceHolder1_btnSave")
+            DBHandler.update_status(self.nid, "Submitted", "Final submit clicked")
+            self.log("✅ ثبت نهایی انجام شد.", "success", page)
         except Exception:
             pass
 
     def _wait_for_branch_fully_loaded(self, page, branch_ddl):
         try:
-            page.wait_for_selector(branch_ddl, timeout=10000)
+            page.wait_for_selector(branch_ddl, timeout=500)
             page.wait_for_function(
                 "(selector) => {"
                 "const el = document.querySelector(selector);"
-                "if (!el || el.disabled || el.offsetParent === null) return false;"
-                "const options = Array.from(el.options || []);"
-                "return options.length > 1 && options.some(opt => opt.value && opt.value !== '0');"
+                "return !!el && el.options.length > 1 && !el.disabled;"
                 "}",
                 branch_ddl,
-                timeout=10000,
+                timeout=5000,
             )
         except Exception:
-            try:
-                page.wait_for_load_state("networkidle", timeout=5000)
-            except Exception:
-                time.sleep(2)
+            pass
 
     def _load_runtime_data(self):
         row = DBHandler.get_applicant(self.nid)
@@ -1257,15 +1202,12 @@ class BankSelectionBot(BotCore):
 
     def _otp_input_visible(self, page) -> bool:
         selectors = ["input[name$='tbMobileConfCode']", "#ctl00_ContentPlaceHolder1_tbMobileConfCode"]
-        scopes = [page] + list(page.frames)
-        for scope in scopes:
-            for selector in selectors:
-                try:
-                    locator = scope.locator(selector)
-                    if locator.count() > 0 and locator.first.is_visible():
-                        return True
-                except Exception:
-                    continue
+        for selector in selectors:
+            try:
+                page.wait_for_selector(selector, timeout=350, state="visible")
+                return True
+            except Exception:
+                continue
         return False
 
     def _resend_enabled(self, page) -> bool:
@@ -1289,9 +1231,7 @@ class BankSelectionBot(BotCore):
         return False
 
     def _can_navigate_from_otp(self, page) -> bool:
-        if not self._otp_input_visible(page):
-            return True
-        return self._resend_enabled(page)
+        return not self._otp_input_visible(page)
 
     def _detect_captcha_failure(self, page) -> bool:
         phrases = [
@@ -1312,47 +1252,23 @@ class BankSelectionBot(BotCore):
             if not captcha_img.is_visible():
                 return False
 
-            if mode == "human":
-                if page.locator(input_sel).input_value():
-                    self.log("🧩 CAPTCHA filled by operator; submitting.", "info", page)
-                    page.locator(btn_sel).click()
-                    return True
-                self.log("🧩 CAPTCHA detected: manual required.", "warning", page)
-                return False
-
-            if page.locator(input_sel).input_value() and mode == "robot":
-                page.locator(btn_sel).click()
-                return True
-
             code = self.captcha_service.solve(captcha_img.screenshot(), mode="general")
-
-            if code and len(code) >= 4:
-                self.log(f"🧩 حل شد: {code}", "info", page)
-                inp = page.locator(input_sel)
-                inp.clear()
-
-                if mode == "human":
-                    inp.type(code, delay=random.randint(150, 300))
-                    time.sleep(0.5)
-                    page.locator(btn_sel).click(delay=random.randint(50, 150))
-                else:
-                    inp.fill(code)
-                    page.locator(btn_sel).click()
-                time.sleep(1)
-                result = "failed" if self._detect_captcha_failure(page) else "success"
-                DBHandler.append_captcha_attempt(self.nid, code, result, source="select")
-                return True
-            else:
-                self.log("❌ خطا در خواندن. رفرش...", "warning", page)
-                try:
-                    page.locator(".BDC_ReloadLink").first.click()
-                except Exception:
-                    pass
-                time.sleep(1.5)
-                if code:
-                    DBHandler.append_captcha_attempt(self.nid, code, "failed", source="select")
+            if not code or len(code) < 4:
+                self._refresh_captcha_or_reload(page)
                 return False
+
+            inp = page.locator(input_sel)
+            inp.clear()
+            inp.fill(code)
+            page.locator(btn_sel).click()
+            result = "failed" if self._detect_captcha_failure(page) else "success"
+            DBHandler.append_captcha_attempt(self.nid, code, result, source="select")
+            if result == "failed":
+                self._refresh_captcha_or_reload(page)
+                return False
+            return True
         except Exception:
+            self._refresh_captcha_or_reload(page)
             return False
 
     def _perform_login_standard(self, page, mode):

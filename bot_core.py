@@ -78,37 +78,19 @@ class BotCore:
         return dict(data)
 
     def get_otp_code(self, stop_event=None, timeout: int = 45):
-        """Retrieve OTP from cache, local wait endpoint, or remote API."""
+        """Retrieve OTP primarily from the local wait endpoint for event-driven flow."""
 
-        # 1) Local DB cache (otp_code in data JSON)
-        try:
-            user = DBHandler.get_applicant(self.nid)
-            if user:
-                raw_data = user.get("data")
-                if isinstance(raw_data, str):
-                    d = json.loads(raw_data)
-                elif isinstance(raw_data, dict):
-                    d = raw_data
-                else:
-                    d = {}
-                code = d.get("otp_code")
-                if code and str(code).strip():
-                    self.log(f"??? ?????????????? ???? ???? ?????????? ???? ??????????????: {code}", "success")
-                    return str(code).strip()
-        except Exception:
-            pass
-
-        # 2) Local wait endpoint (preferred over remote polling)
+        # 1) Local wait endpoint (/wait_otp) for zero-polling behavior
         try:
             code = self.wait_for_otp(stop_event, timeout=timeout)
             if code:
                 DBHandler.save_otp(self.nid, code)
-                self.log(f"??? ?????????????? ???? ???? ????? ???? ??????: {code}", "success")
+                self.log(f"✅ OTP received from /wait_otp: {code}", "success")
                 return str(code).strip()
         except Exception:
             pass
 
-        # 3) Remote API (map `otp` -> otp_code, persist immediately)
+        # 2) Remote API fallback only when local endpoint is unavailable
         try:
             response = requests.get(f"{self.api_base_url}/get_otp/{self.nid}", timeout=3)
             if response.status_code == 200:
@@ -120,6 +102,23 @@ class BotCore:
                     DBHandler.save_otp(self.nid, code)
                     self.log(f"[NID: {self.nid}] ?? OTP successfully retrieved from API and synced to DB: {code}", "success")
                     return code
+        except Exception:
+            pass
+
+        # 3) DB fallback as last resort
+        try:
+            user = DBHandler.get_applicant(self.nid)
+            if user:
+                raw_data = user.get("data")
+                if isinstance(raw_data, str):
+                    data = json.loads(raw_data)
+                elif isinstance(raw_data, dict):
+                    data = raw_data
+                else:
+                    data = {}
+                code = data.get("otp_code")
+                if code and str(code).strip():
+                    return str(code).strip()
         except Exception:
             pass
 
@@ -156,6 +155,9 @@ class BotCore:
             DBHandler.clear_otp(self.nid)
         except Exception:
             pass
+
+    def clear_remote_otp(self):
+        self.clear_otp_backend()
 
     def setup_browser(self, stop_event=None):
         profile = dict(self.browser_profile)
@@ -327,10 +329,14 @@ class BotCore:
                 self._last_dialog_action = action
                 self._last_dialog_ts = time.time()
                 if action == "otp_expired":
-                    self.clear_otp_backend()
+                    self.clear_remote_otp()
                     if self.register_otp_failure("dialog_otp_expired"):
                         self._set_recovery_flag("otp_expired")
                         self.log("RECOVERY otp_expired -> restart_otp", "warning", page)
+                    try:
+                        page.reload(timeout=10000)
+                    except Exception:
+                        pass
                 elif action == "generic_error":
                     self._set_recovery_flag("generic_error")
                     self.log("RECOVERY generic_error -> soft_reload", "warning", page)
