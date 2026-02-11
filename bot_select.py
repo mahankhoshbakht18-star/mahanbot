@@ -40,10 +40,19 @@ class BankSelectionBot(BotCore):
         self._dialog_handling = False
         self._safe_goto_locked = False
         self._otp_wait_lock = False
+        self._otp_guard_until = 0.0
 
     def log(self, message, level="info", page=None, meta=None):
         message = f"[{self.nid}] {message}"
         super().log(message, level=level, page=page, meta=meta)
+
+    def fetch_otp_fast(self, stop_event=None, timeout: int = 120, min_ts: float = 0.0):
+        """Fetch OTP from wait endpoint while hard-filtering stale codes."""
+        guard_min_ts = max(float(min_ts or 0.0), float(getattr(self, "_otp_entry_time", 0.0) or 0.0))
+        otp_code = self.wait_for_otp(stop_event=stop_event, timeout=timeout, min_ts=guard_min_ts)
+        if otp_code:
+            return str(otp_code).strip()
+        return None
 
     def run(self, stop_event, loan_type="rbtnNaghdi"):
         attempt = 0
@@ -76,6 +85,7 @@ class BankSelectionBot(BotCore):
 
                 state = "ENTRY_FORM"
                 state_since = time.time()
+                page_loaded_ts = state_since
 
                 def set_state(new_state: str):
                     nonlocal state, state_since, entry_time
@@ -84,7 +94,8 @@ class BankSelectionBot(BotCore):
                         state_since = time.time()
                         self.mark_progress(f"state:{new_state}")
                         if new_state == "OTP_FORM":
-                            entry_time = self.mark_otp_entry_time(state_since)
+                            entry_time = self.mark_otp_entry_time(max(state_since, page_loaded_ts))
+                            self._otp_guard_until = time.time() + 120.0
 
                 def state_timed_out(seconds: float) -> bool:
                     return (time.time() - state_since) > seconds
@@ -149,6 +160,8 @@ class BankSelectionBot(BotCore):
                         page.wait_for_load_state("networkidle", timeout=10000)
                     except Exception:
                         pass
+                finally:
+                    page_loaded_ts = time.time()
 
                 def wait_for_state(selector, label, timeout=350):
                     if stop_event.is_set():
@@ -419,8 +432,9 @@ class BankSelectionBot(BotCore):
 
                         otp_filled = False
                         otp_attempts = 0
-                        self.suspend_watchdog(20)
+                        self.suspend_watchdog(120)
                         self._otp_wait_lock = True
+                        self._otp_guard_until = time.time() + 120.0
                         self.log("🎯 OTP field detected؛ سایر اسکنرها متوقف و فقط wait_otp فعال است.", "info", page)
                         while not stop_event.is_set():
                             if self._firewall_gate(page, stop_event):
@@ -447,7 +461,7 @@ class BankSelectionBot(BotCore):
                                 stop_event.set()
                                 break
 
-                            otp_code = self.wait_for_otp(stop_event=stop_event, timeout=120, min_ts=entry_time)
+                            otp_code = self.fetch_otp_fast(stop_event=stop_event, timeout=120, min_ts=entry_time)
                             if not otp_code:
                                 try:
                                     page.wait_for_timeout(150)
@@ -734,7 +748,8 @@ class BankSelectionBot(BotCore):
             return False
 
     def _reload_guarded(self, page, reason: str = "") -> bool:
-        if self._otp_wait_lock or self._otp_input_visible(page):
+        otp_guard_active = time.time() < self._otp_guard_until
+        if self._otp_wait_lock or otp_guard_active or self._otp_input_visible(page):
             self._safe_goto_locked = True
             msg = "🔒 Reload suppressed: waiting on OTP input."
             if reason:
@@ -748,7 +763,8 @@ class BankSelectionBot(BotCore):
             return False
 
     def _safe_goto_guarded(self, page, url, **kwargs):
-        if self._otp_wait_lock or self._safe_goto_locked or self._otp_input_visible(page):
+        otp_guard_active = time.time() < self._otp_guard_until
+        if self._otp_wait_lock or otp_guard_active or self._safe_goto_locked or self._otp_input_visible(page):
             self._safe_goto_locked = True
             self.log("🔒 safe_goto locked: waiting on OTP form; navigation suppressed.", "warning", page)
             return False

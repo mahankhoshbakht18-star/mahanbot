@@ -232,8 +232,9 @@ def _emit_applicants_snapshot() -> None:
     )
 
 
-def _handle_receive_sms(nid: str, code: str, status_label: str = "received") -> bool:
-    success = DBHandler.set_otp(nid, code, ts=time.time(), status=status_label)
+def _handle_receive_sms(nid: str, code: str, status_label: str = "received", ts: Optional[float] = None) -> bool:
+    otp_ts = float(ts) if ts is not None else time.time()
+    success = DBHandler.set_otp(nid, code, ts=otp_ts, status=status_label)
     if not success:
         return False
     log_event(nid, None, f"OTP received: {code}", "success")
@@ -524,32 +525,18 @@ def get_applicants():
 
 
 @app.post("/receive_sms")
+@app.post("/manual_otp")
+@app.post("/otp/manual")
 def receive_sms(req: SMSRequest):
     if not req.nid or not req.code:
         raise HTTPException(status_code=400, detail="Invalid payload")
 
-    success = _handle_receive_sms(req.nid, req.code, status_label="received")
+    request_ts = time.time()
+    success = _handle_receive_sms(req.nid, req.code, status_label="received", ts=request_ts)
     if not success:
         raise HTTPException(status_code=404, detail="Applicant not found")
     _emit_applicants_snapshot()
-    return {"status": "ok"}
-
-
-@app.post("/otp/manual")
-def manual_otp(req: SMSRequest):
-    if not req.nid or not req.code:
-        raise HTTPException(status_code=400, detail="Invalid payload")
-
-    success = _handle_receive_sms(req.nid, req.code, status_label="received")
-    if not success:
-        raise HTTPException(status_code=404, detail="Applicant not found")
-    _emit_applicants_snapshot()
-    return {"status": "ok"}
-
-
-@app.post("/manual_otp")
-def manual_otp_legacy(req: SMSRequest):
-    return manual_otp(req)
+    return {"status": "ok", "ts": request_ts}
 
 
 @app.get("/wait_otp/{nid}")
