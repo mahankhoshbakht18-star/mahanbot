@@ -208,7 +208,7 @@ class DBHandler:
 
     @staticmethod
     def save_otp(nid: str, code: str, status: str = "received") -> bool:
-        otp_ts = time.time()
+        otp_ts = DBHandler._current_timestamp_seconds_ms()
         return DBHandler.set_otp(nid, code, ts=otp_ts, status=status)
 
     @staticmethod
@@ -220,7 +220,9 @@ class DBHandler:
                     return False
                 data["otp_code"] = str(code).strip()
                 data["otp_status"] = status
-                data["otp_ts"] = float(ts) if ts is not None else time.time()
+                timestamp_seconds = float(ts) if ts is not None else DBHandler._current_timestamp_seconds_ms()
+                data["otp_ts"] = timestamp_seconds
+                data["otp_ts_ms"] = int(timestamp_seconds * 1000)
                 conn.execute(
                     "UPDATE applicants SET data=? WHERE national_id=?",
                     (json.dumps(data, ensure_ascii=False), nid),
@@ -243,6 +245,7 @@ class DBHandler:
                 return {
                     "otp": str(code).strip(),
                     "ts": data.get("otp_ts"),
+                    "ts_ms": data.get("otp_ts_ms"),
                     "status": data.get("otp_status"),
                 }
         except Exception:
@@ -356,3 +359,7 @@ class DBHandler:
             except Exception as e:
                 print(f"Save Success Error: {e}")
         return False
+    @staticmethod
+    def _current_timestamp_seconds_ms() -> float:
+        """Return current unix timestamp in seconds with millisecond precision."""
+        return time.time_ns() / 1_000_000_000

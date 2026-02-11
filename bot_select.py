@@ -39,6 +39,7 @@ class BankSelectionBot(BotCore):
         self._needs_reload = False
         self._dialog_handling = False
         self._safe_goto_locked = False
+        self._otp_wait_lock = False
 
     def log(self, message, level="info", page=None, meta=None):
         message = f"[{self.nid}] {message}"
@@ -223,10 +224,7 @@ class BankSelectionBot(BotCore):
                             self.log("RECOVERY captcha_invalid -> retry limit reached; reload", "warning", page)
                             self._captcha_retry = 0
                             if self._can_navigate_from_otp(page):
-                                try:
-                                    page.reload()
-                                except Exception:
-                                    pass
+                                self._reload_guarded(page, reason="captcha retry exhausted")
                         continue
 
                     if self.consume_recovery_flag("generic_error"):
@@ -243,10 +241,7 @@ class BankSelectionBot(BotCore):
                         except Exception:
                             pass
                         if self._can_navigate_from_otp(page):
-                            try:
-                                page.reload()
-                            except Exception:
-                                pass
+                            self._reload_guarded(page, reason="state timeout")
                         continue
 
                     self.dismiss_modals(page)
@@ -272,10 +267,7 @@ class BankSelectionBot(BotCore):
                     if state == "ENTRY_FORM" and state_timed_out(120):
                         if self._can_navigate_from_otp(page):
                             self.log("⚠️ ENTRY_FORM timeout; reloading...", "warning", page)
-                            try:
-                                page.reload()
-                            except Exception:
-                                pass
+                            self._reload_guarded(page, reason="state timeout")
                             set_state("ENTRY_FORM")
                         else:
                             set_state("OTP_FORM")
@@ -284,10 +276,7 @@ class BankSelectionBot(BotCore):
                         self.clear_otp_backend()
                         if self._can_navigate_from_otp(page):
                             self.log("⚠️ OTP_FORM timeout; reloading for new OTP.", "warning", page)
-                            try:
-                                page.reload()
-                            except Exception:
-                                pass
+                            self._reload_guarded(page, reason="state timeout")
                             set_state("ENTRY_FORM")
                         else:
                             set_state("OTP_FORM")
@@ -295,10 +284,7 @@ class BankSelectionBot(BotCore):
                     if state == "BANK_SELECT" and state_timed_out(180):
                         if self._can_navigate_from_otp(page):
                             self.log("⚠️ BANK_SELECT timeout; refreshing.", "warning", page)
-                            try:
-                                page.reload()
-                            except Exception:
-                                pass
+                            self._reload_guarded(page, reason="state timeout")
                             set_state("ENTRY_FORM")
                         else:
                             set_state("OTP_FORM")
@@ -313,10 +299,7 @@ class BankSelectionBot(BotCore):
                         self.log("♻️ کد منقضی/نامعتبر شد؛ انتظار برای پیامک جدید.", "warning", page)
                         otp_attempted = False
                         if self._can_navigate_from_otp(page):
-                            try:
-                                page.reload()
-                            except Exception:
-                                pass
+                            self._reload_guarded(page, reason="state timeout")
                         if sleep_with_stop(stop_event, 0.2):
                             break
                         continue
@@ -410,10 +393,7 @@ class BankSelectionBot(BotCore):
                             pass
                     if self._needs_reload:
                         if self._can_navigate_from_otp(page):
-                            try:
-                                page.reload()
-                            except Exception:
-                                pass
+                            self._reload_guarded(page, reason="state timeout")
                         self._nid_filled = True
                         otp_attempted = False
                         self._needs_reload = False
@@ -440,6 +420,7 @@ class BankSelectionBot(BotCore):
                         otp_filled = False
                         otp_attempts = 0
                         self.suspend_watchdog(20)
+                        self._otp_wait_lock = True
                         self.log("🎯 OTP field detected؛ سایر اسکنرها متوقف و فقط wait_otp فعال است.", "info", page)
                         while not stop_event.is_set():
                             if self._firewall_gate(page, stop_event):
@@ -473,6 +454,7 @@ class BankSelectionBot(BotCore):
                                 except Exception:
                                     pass
                                 continue
+                            self._otp_wait_lock = False
                             while self._dialog_handling and not stop_event.is_set():
                                 try:
                                     page.wait_for_timeout(80)
@@ -483,43 +465,39 @@ class BankSelectionBot(BotCore):
                             otp_code = str(otp_code).strip()
                             if not re.fullmatch(r"\d{6}", otp_code):
                                 self.log("⚠️ OTP length invalid; waiting for a 6-digit code.", "warning", page)
+                                self._otp_wait_lock = True
                                 continue
 
                             otp_selector = "input[name$='tbMobileConfCode']"
                             otp_input = page.locator(otp_selector)
+                            self.log(f"✅ تزریق OTP در فیلد پیامک: {otp_code}", "success", page)
                             try:
-                                otp_input.fill("")
+                                page.evaluate(
+                                    "(selector, value) => {"
+                                    "const el = document.querySelector(selector);"
+                                    "if (!el) return false;"
+                                    "el.value = value;"
+                                    "el.dispatchEvent(new Event('input', { bubbles: true }));"
+                                    "el.dispatchEvent(new Event('change', { bubbles: true }));"
+                                    "return true;"
+                                    "}",
+                                    otp_selector,
+                                    otp_code,
+                                )
                             except Exception:
                                 pass
-                            current_val = otp_input.input_value()
-                            if current_val != otp_code:
-                                self.log(f"✅ تزریق OTP در فیلد پیامک: {otp_code}", "success", page)
-                                try:
-                                    page.evaluate(
-                                        "(selector, value) => {"
-                                        "const el = document.querySelector(selector);"
-                                        "if (!el) return false;"
-                                        "el.value = value;"
-                                        "el.dispatchEvent(new Event('input', { bubbles: true }));"
-                                        "el.dispatchEvent(new Event('change', { bubbles: true }));"
-                                        "return true;"
-                                        "}",
-                                        otp_selector,
-                                        otp_code,
-                                    )
-                                except Exception:
-                                    pass
-                                try:
-                                    page.wait_for_timeout(80)
-                                except Exception:
-                                    pass
-                                try:
-                                    current_val = otp_input.input_value()
-                                except Exception:
-                                    current_val = ""
+                            try:
+                                page.wait_for_timeout(80)
+                            except Exception:
+                                pass
+                            try:
+                                current_val = otp_input.input_value()
+                            except Exception:
+                                current_val = ""
                             otp_filled = (current_val == otp_code)
                             if not otp_filled:
                                 self.log("⚠️ OTP not confirmed in field; retrying.", "warning", page)
+                                self._otp_wait_lock = True
                                 continue
 
                             if self._firewall_gate(page, stop_event):
@@ -547,6 +525,7 @@ class BankSelectionBot(BotCore):
                                 result = self._process_bank_selection_v2(page, stop_event)
                                 if result == "selected":
                                     self.log("✅ بانک انتخاب شد.", "success", page)
+                                self._otp_wait_lock = False
                                 break
                             except Exception:
                                 pass
@@ -754,10 +733,24 @@ class BankSelectionBot(BotCore):
         except Exception:
             return False
 
-    def _safe_goto_guarded(self, page, url, **kwargs):
-        if self._safe_goto_locked or self._otp_input_visible(page):
+    def _reload_guarded(self, page, reason: str = "") -> bool:
+        if self._otp_wait_lock or self._otp_input_visible(page):
             self._safe_goto_locked = True
-            self.log("🔒 safe_goto locked: OTP form detected; navigation suppressed.", "warning", page)
+            msg = "🔒 Reload suppressed: waiting on OTP input."
+            if reason:
+                msg = f"{msg} ({reason})"
+            self.log(msg, "warning", page)
+            return False
+        try:
+            page.reload()
+            return True
+        except Exception:
+            return False
+
+    def _safe_goto_guarded(self, page, url, **kwargs):
+        if self._otp_wait_lock or self._safe_goto_locked or self._otp_input_visible(page):
+            self._safe_goto_locked = True
+            self.log("🔒 safe_goto locked: waiting on OTP form; navigation suppressed.", "warning", page)
             return False
         safe_goto(page, url, **kwargs)
         return True
