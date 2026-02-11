@@ -547,6 +547,11 @@ def manual_otp(req: SMSRequest):
     return {"status": "ok"}
 
 
+@app.post("/manual_otp")
+def manual_otp_legacy(req: SMSRequest):
+    return manual_otp(req)
+
+
 @app.get("/wait_otp/{nid}")
 async def wait_otp(nid: str, timeout: int = 120, min_ts: float = 0.0):
     if not nid:
