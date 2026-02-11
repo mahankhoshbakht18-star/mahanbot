@@ -794,6 +794,28 @@ async function sendOtp(code) {
 
 
 
+
+async function sendOtpManualFallback(code) {
+
+    const nid = window.currentActiveBotNid;
+
+    if (!nid) return;
+
+    const cleanCode = (code || '').trim();
+
+    if (!cleanCode) return;
+
+    document.getElementById('otpStatus').innerHTML = '...';
+
+    await apiCall(`/manual_otp`, 'POST', {nid: nid, code: cleanCode});
+
+    document.getElementById('otpStatus').innerHTML = `<span class="text-warning">کد دستی ارسال شد.</span>`;
+
+    document.getElementById('otpInput').value = '';
+
+}
+
+
 async function sendManualOtp() {
 
     const nid = window.currentActiveBotNid;
@@ -810,9 +832,9 @@ async function sendManualOtp() {
 
     if (statusEl) statusEl.textContent = 'در حال ارسال...';
 
-    await apiCall(`/receive_sms`, 'POST', {nid: nid, code: code});
+    await apiCall(`/manual_otp`, 'POST', {nid: nid, code: code});
 
-    if (statusEl) statusEl.textContent = 'ارسال شد.';
+    if (statusEl) statusEl.textContent = 'ارسال دستی انجام شد.';
 
     input.value = '';
 

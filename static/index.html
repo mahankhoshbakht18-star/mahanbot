@@ -182,6 +182,11 @@
 
                             <input type="text" id="otpInput" class="form-control otp-input mx-auto mb-2" maxlength="6" placeholder="_ _ _ _ _" autocomplete="off">
 
+                            <div class="d-flex justify-content-center gap-2 mb-2">
+                                <button class="btn btn-sm btn-outline-primary" onclick="sendOtp(document.getElementById('otpInput').value)">ارسال خودکار</button>
+                                <button class="btn btn-sm btn-outline-warning" onclick="sendOtpManualFallback(document.getElementById('otpInput').value)">ارسال دستی به /manual_otp</button>
+                            </div>
+
                             <div id="otpStatus" class="fw-bold" style="min-height: 25px;"></div>
 
                         </div>
