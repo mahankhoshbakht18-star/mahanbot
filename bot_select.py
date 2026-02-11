@@ -249,7 +249,7 @@ class BankSelectionBot(BotCore):
 
                     if state == "ENTRY_FORM" and state_timed_out(120):
                         if self._can_navigate_from_otp(page):
-                            self.log("? ENTRY_FORM timeout; reloading...", "warning", page)
+                            self.log("⚠️ ENTRY_FORM timeout; reloading...", "warning", page)
                             try:
                                 page.reload()
                             except Exception:
@@ -261,7 +261,7 @@ class BankSelectionBot(BotCore):
                     if state == "OTP_FORM" and state_timed_out(180):
                         self.clear_otp_backend()
                         if self._can_navigate_from_otp(page):
-                            self.log("? OTP_FORM timeout; reloading for new OTP.", "warning", page)
+                            self.log("⚠️ OTP_FORM timeout; reloading for new OTP.", "warning", page)
                             try:
                                 page.reload()
                             except Exception:
@@ -272,7 +272,7 @@ class BankSelectionBot(BotCore):
 
                     if state == "BANK_SELECT" and state_timed_out(180):
                         if self._can_navigate_from_otp(page):
-                            self.log("? BANK_SELECT timeout; refreshing.", "warning", page)
+                            self.log("⚠️ BANK_SELECT timeout; refreshing.", "warning", page)
                             try:
                                 page.reload()
                             except Exception:
@@ -412,6 +412,8 @@ class BankSelectionBot(BotCore):
 
                         otp_filled = False
                         otp_attempts = 0
+                        self.suspend_watchdog(20)
+                        self.log("🎯 OTP field detected؛ سایر اسکنرها متوقف و فقط wait_otp فعال است.", "info", page)
                         while not stop_event.is_set():
                             if self._firewall_gate(page, stop_event):
                                 continue
@@ -428,7 +430,7 @@ class BankSelectionBot(BotCore):
                                     break
                                 self.clear_otp_backend()
                                 entry_time = self.mark_otp_entry_time()
-                                self.log("?? ?? ?????/??????? ??? ??????? ???? ?????.", "warning", page)
+                                self.log("♻️ کد منقضی/نامعتبر شد؛ فقط منتظر OTP تازه می‌مانم.", "warning", page)
                                 continue
 
                             if otp_attempts >= self._otp_retry_limit:
@@ -464,7 +466,7 @@ class BankSelectionBot(BotCore):
                                 pass
                             current_val = otp_input.input_value()
                             if current_val != otp_code:
-                                self.log(f"? ?????? ?? ?????: {otp_code}", "success", page)
+                                self.log(f"✅ تزریق OTP در فیلد پیامک: {otp_code}", "success", page)
                                 try:
                                     page.evaluate(
                                         "(selector, value) => {"
@@ -509,7 +511,7 @@ class BankSelectionBot(BotCore):
                                 continue
                             otp_attempts += 1
                             otp_attempted = True
-                            self.log("?? ????? ?? ?????...", "info", page)
+                            self.log("📨 OTP ارسال شد؛ ورود به مرحله انتخاب بانک...", "info", page)
                             if stop_event.is_set():
                                 break
                             try:
@@ -552,7 +554,7 @@ class BankSelectionBot(BotCore):
                         if result == "selected":
                             self.log("✅ بانک انتخاب شد.", "success", page)
                         elif result == "no_match":
-                            self.log("??? ???????? ???????? ?????? ???????? ??????. ???????????????? ????????...", "warning", page)
+                            self.log("⚠️ هنوز بانکی انتخاب نشده است؛ در حال تلاش مجدد...", "warning", page)
                             self._refresh_captcha_or_reload(page)
                         elif result == "waiting":
 
@@ -744,13 +746,9 @@ class BankSelectionBot(BotCore):
                 if page.locator(input_sel).input_value():
                     page.locator(btn_sel).click()
                 else:
-                    code = self.captcha_service.solve(captcha_img.screenshot(), mode="general")
-                    if code and len(code) >= 4:
-                        page.locator(input_sel).fill(code)
-                        page.locator(btn_sel).click()
-                        DBHandler.append_captcha_attempt(self.nid, code, "submitted", source="select")
-                    else:
-                        self._refresh_captcha_or_reload(page)
+                    if not self.solve_captcha_step(page, input_sel, btn_sel, source="primary"):
+                        if sleep_with_stop(stop_event, 3.0):
+                            return False
                         continue
             except Exception:
                 self._refresh_captcha_or_reload(page)
@@ -1247,8 +1245,31 @@ class BankSelectionBot(BotCore):
             if not captcha_img.is_visible():
                 return False
 
+            if not self.solve_captcha_step(page, input_sel, btn_sel, source="otp"):
+                return False
+
+            inp = page.locator(input_sel)
+            code = inp.input_value().strip()
+            result = "failed" if self._detect_captcha_failure(page) else "success"
+            DBHandler.append_captcha_attempt(self.nid, code, result, source="select")
+            if result == "failed":
+                self._refresh_captcha_or_reload(page)
+                return False
+            return True
+        except Exception:
+            self._refresh_captcha_or_reload(page)
+            return False
+
+    def solve_captcha_step(self, page, input_sel: str, btn_sel: str, source: str = "general") -> bool:
+        """Single-attempt captcha solve with smart backoff handled by caller."""
+        try:
+            captcha_img = page.locator(".BDC_CaptchaImage").first
+            if not captcha_img.is_visible():
+                return False
             code = self.captcha_service.solve(captcha_img.screenshot(), mode="general")
-            if not code or len(code) < 4:
+            code = (code or "").strip()
+            if len(code) < 4:
+                self.log("🤖 مدل پاسخ خالی/نامعتبر داد؛ کپچا رفرش شد.", "warning", page)
                 self._refresh_captcha_or_reload(page)
                 return False
 
@@ -1256,11 +1277,8 @@ class BankSelectionBot(BotCore):
             inp.clear()
             inp.fill(code)
             page.locator(btn_sel).click()
-            result = "failed" if self._detect_captcha_failure(page) else "success"
-            DBHandler.append_captcha_attempt(self.nid, code, result, source="select")
-            if result == "failed":
-                self._refresh_captcha_or_reload(page)
-                return False
+            DBHandler.append_captcha_attempt(self.nid, code, "submitted", source=source)
+            self.suspend_watchdog(20)
             return True
         except Exception:
             self._refresh_captcha_or_reload(page)

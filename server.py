@@ -308,6 +308,7 @@ class Job:
         self.stop_event = threading.Event()
         self.cancel_requested = False
         self.error: Optional[Any] = None
+        self.runner_thread: Optional[threading.Thread] = None
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -428,7 +429,7 @@ class JobQueue:
             log_event(job.nid, job.id, f"Job started ({job.bot_name})", "info")
 
             try:
-                self._run_job(job)
+                self._run_job_isolated(job)
                 if job.cancel_requested:
                     job.status = "cancelled"
                 else:
@@ -440,6 +441,46 @@ class JobQueue:
             finally:
                 job.finished_at = time.time()
                 job_status_event(job.nid, job.id, job.status)
+
+    def _run_job_isolated(self, job: Job) -> None:
+        """Run every bot in an isolated thread with a dedicated asyncio loop."""
+        result: Dict[str, Any] = {}
+        err: Dict[str, BaseException] = {}
+
+        def _runner():
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            try:
+                result["ok"] = True
+                self._run_job(job)
+            except BaseException as exc:  # noqa: BLE001
+                err["exc"] = exc
+            finally:
+                try:
+                    pending = asyncio.all_tasks(loop)
+                    for task in pending:
+                        task.cancel()
+                    if pending:
+                        loop.run_until_complete(asyncio.gather(*pending, return_exceptions=True))
+                except Exception:
+                    pass
+                finally:
+                    asyncio.set_event_loop(None)
+                    loop.close()
+
+        runner = threading.Thread(target=_runner, name=f"job-{job.id}", daemon=True)
+        job.runner_thread = runner
+        runner.start()
+
+        while runner.is_alive():
+            if job.stop_event.is_set():
+                # bots observe stop_event and close browser; keep join interval short for quick shutdown.
+                runner.join(timeout=0.2)
+            else:
+                runner.join(timeout=0.5)
+
+        if "exc" in err:
+            raise err["exc"]
 
     def _run_job(self, job: Job) -> None:
         settings = DBHandler.get_config()
