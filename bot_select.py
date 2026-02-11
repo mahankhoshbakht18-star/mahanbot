@@ -47,9 +47,8 @@ class BankSelectionBot(BotCore):
         super().log(message, level=level, page=page, meta=meta)
 
     def fetch_otp_fast(self, stop_event=None, timeout: int = 120, min_ts: float = 0.0):
-        """Fetch OTP from wait endpoint while hard-filtering stale codes."""
-        guard_min_ts = max(float(min_ts or 0.0), float(getattr(self, "_otp_entry_time", 0.0) or 0.0))
-        otp_code = self.wait_for_otp(stop_event=stop_event, timeout=timeout, min_ts=guard_min_ts)
+        """Fetch OTP from wait endpoint without min_ts filtering for immediate pickup."""
+        otp_code = self.wait_for_otp(stop_event=stop_event, timeout=timeout, min_ts=0.0)
         if otp_code:
             return str(otp_code).strip()
         return None

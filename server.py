@@ -525,8 +525,6 @@ def get_applicants():
 
 
 @app.post("/receive_sms")
-@app.post("/manual_otp")
-@app.post("/otp/manual")
 def receive_sms(req: SMSRequest):
     if not req.nid or not req.code:
         raise HTTPException(status_code=400, detail="Invalid payload")
@@ -537,6 +535,23 @@ def receive_sms(req: SMSRequest):
         raise HTTPException(status_code=404, detail="Applicant not found")
     _emit_applicants_snapshot()
     return {"status": "ok", "ts": request_ts}
+
+
+@app.post("/manual_otp")
+@app.post("/otp/manual")
+def manual_otp(req: SMSRequest):
+    if not req.nid or not req.code:
+        raise HTTPException(status_code=400, detail="Invalid payload")
+
+    success = DBHandler.save_otp(req.nid, req.code, status="received")
+    if not success:
+        raise HTTPException(status_code=404, detail="Applicant not found")
+    log_event(req.nid, None, f"OTP received manually: {req.code}", "success")
+    logger.info("Manual OTP received for %s; notifying waiters", req.nid)
+    if MAIN_LOOP:
+        MAIN_LOOP.call_soon_threadsafe(lambda: asyncio.create_task(_signal_otp_event(req.nid)))
+    _emit_applicants_snapshot()
+    return {"status": "ok", "source": "manual"}
 
 
 @app.get("/wait_otp/{nid}")
