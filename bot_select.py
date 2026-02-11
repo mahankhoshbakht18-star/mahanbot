@@ -38,6 +38,7 @@ class BankSelectionBot(BotCore):
         self._nid_filled = False
         self._needs_reload = False
         self._dialog_handling = False
+        self._safe_goto_locked = False
 
     def log(self, message, level="info", page=None, meta=None):
         message = f"[{self.nid}] {message}"
@@ -109,7 +110,13 @@ class BankSelectionBot(BotCore):
                     return False
 
                 try:
-                    safe_goto(page, TARGET_URL, timeout=60000, wait_until="domcontentloaded", log_callback=self.log)
+                    self._safe_goto_guarded(
+                        page,
+                        TARGET_URL,
+                        timeout=60000,
+                        wait_until="domcontentloaded",
+                        log_callback=self.log,
+                    )
                 except Exception as exc:
                     if handle_partial_navigation_error(exc) and page_has_target_selectors():
                         pass
@@ -117,7 +124,7 @@ class BankSelectionBot(BotCore):
                         if sleep_with_stop(stop_event, 1.0):
                             return
                         try:
-                            safe_goto(
+                            self._safe_goto_guarded(
                                 page,
                                 TARGET_URL,
                                 timeout=60000,
@@ -162,6 +169,21 @@ class BankSelectionBot(BotCore):
                         self.log("🛑 مرورگر توسط کاربر بسته شد.", "stopped")
                         stop_event.set()
                         return
+
+                    # Firewall-first priority (bot5 behavior): when #ans is visible, do not run other states.
+                    if self._firewall_input_visible(page):
+                        solved = self.solve_firewall(page)
+                        if solved:
+                            firewall_solved_count += 1
+                            DBHandler.update_status(self.nid, "Ready", "Firewall challenge cleared")
+                        if firewall_solved_count >= max_firewall_solves:
+                            self.log("⛔ Firewall solve limit reached; stopping job.", "error", page)
+                            DBHandler.update_status(self.nid, "Stopped", "Firewall solve limit reached")
+                            stop_event.set()
+                            break
+                        if sleep_with_stop(stop_event, 0.5):
+                            break
+                        continue
 
                     if self._otp_input_visible(page):
                         set_state("OTP_FORM")
@@ -306,7 +328,7 @@ class BankSelectionBot(BotCore):
                             if sleep_with_stop(stop_event, 3.0):
                                 break
                             if self._can_navigate_from_otp(page):
-                                safe_goto(
+                                self._safe_goto_guarded(
                                     page,
                                     TARGET_URL,
                                     timeout=60000,
@@ -374,6 +396,11 @@ class BankSelectionBot(BotCore):
 
                         if self._firewall_gate(page, stop_event):
                             continue
+
+                        try:
+                            page.wait_for_timeout(500)
+                        except Exception:
+                            pass
 
                         self._solve_primary_captcha_fast(page, stop_event)
 
@@ -655,10 +682,7 @@ class BankSelectionBot(BotCore):
             return False
 
     def handle_firewall_challenge(self, page, stop_event):
-        self.log("🛡️ FIREWALL challenge detected - manual action required.", "warning", page)
-        EVENT_BROADCASTER.emit_event(
-            build_event("waf_manual_required", nid=self.nid, reason="firewall_challenge")
-        )
+        self.log("🛡️ FIREWALL challenge detected - solving automatically.", "warning", page)
         timeout_seconds = int(self.settings.get("firewall_manual_timeout", 300))
         deadline = time.time() + timeout_seconds
 
@@ -679,21 +703,24 @@ class BankSelectionBot(BotCore):
 
         next_wait_log_at = 0.0
         while not stop_event.is_set():
+            if self._firewall_input_visible(page):
+                self.solve_firewall(page)
+                if sleep_with_stop(stop_event, 0.5):
+                    return False
+                continue
+
             try:
                 nid_input = page.locator("#ctl00_ContentPlaceHolder1_tbIDNo")
                 entry_ready = nid_input.is_visible() and nid_input.is_enabled()
                 if entry_ready:
-                    self.log("✅ Firewall challenge cleared by operator. Resuming automation.", "success", page)
+                    self.log("✅ Firewall challenge cleared automatically. Resuming automation.", "success", page)
                     return True
             except Exception:
                 pass
 
             if time.time() > deadline:
-                self.log("⛔ Firewall challenge timeout - human action required.", "error", page)
+                self.log("⛔ Firewall challenge timeout.", "error", page)
                 DBHandler.update_status(self.nid, "BLOCKED_FIREWALL_MANUAL", "Firewall timeout")
-                EVENT_BROADCASTER.emit_event(
-                    build_event("human_required", nid=self.nid, reason="firewall_timeout", support_id=support_id)
-                )
                 return False
 
             now = time.time()
@@ -719,6 +746,21 @@ class BankSelectionBot(BotCore):
             return True
         DBHandler.update_status(self.nid, "Ready", "Firewall challenge cleared")
         return False
+
+    def _firewall_input_visible(self, page) -> bool:
+        try:
+            ans = page.locator("#ans")
+            return ans.count() > 0 and ans.first.is_visible()
+        except Exception:
+            return False
+
+    def _safe_goto_guarded(self, page, url, **kwargs):
+        if self._safe_goto_locked or self._otp_input_visible(page):
+            self._safe_goto_locked = True
+            self.log("🔒 safe_goto locked: OTP form detected; navigation suppressed.", "warning", page)
+            return False
+        safe_goto(page, url, **kwargs)
+        return True
 
     def _refresh_captcha_or_reload(self, page):
         """Refresh captcha image without reloading page to preserve session."""
@@ -1198,6 +1240,7 @@ class BankSelectionBot(BotCore):
         for selector in selectors:
             try:
                 page.wait_for_selector(selector, timeout=350, state="visible")
+                self._safe_goto_locked = True
                 return True
             except Exception:
                 continue
