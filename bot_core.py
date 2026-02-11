@@ -37,6 +37,8 @@ class BotCore:
         self._otp_retry_exceeded = False
         self._last_progress_time = time.time()
         self._watchdog_timeout = int(self.settings.get("watchdog_timeout", 45))
+        self._watchdog_timeout = max(20, self._watchdog_timeout)
+        self._watchdog_suspended_until = 0.0
         self._last_watchdog_dump = 0.0
         self._last_dialog_message = ""
         self._last_dialog_action = None
@@ -101,7 +103,7 @@ class BotCore:
                     code = str(code).strip()
                 if code:
                     DBHandler.save_otp(self.nid, code)
-                    self.log(f"[NID: {self.nid}] ?? OTP successfully retrieved from API and synced to DB: {code}", "success")
+                    self.log(f"[NID: {self.nid}] ✅ OTP from API synced to DB: {code}", "success")
                     return code
         except Exception:
             pass
@@ -346,10 +348,13 @@ class BotCore:
             except Exception:
                 pass
 
-            try:
-                self.log(f"DIALOG_ACCEPTED type={dtype} msg={msg}", "warning", page)
-            except Exception:
-                pass
+            normalized_msg = (msg or "").strip()
+            should_log_dialog = any(token in normalized_msg for token in ("خطا", "نامعتبر"))
+            if should_log_dialog:
+                try:
+                    self.log(f"DIALOG_ACCEPTED type={dtype} msg={msg}", "warning", page)
+                except Exception:
+                    pass
             try:
                 dialog.accept()
             except Exception:
@@ -430,6 +435,8 @@ class BotCore:
         if stop_event is not None and stop_event.is_set():
             return False
         now = time.time()
+        if now < self._watchdog_suspended_until:
+            return False
         if now - self._last_progress_time < self._watchdog_timeout:
             return False
         self._last_progress_time = now
@@ -450,6 +457,10 @@ class BotCore:
         except Exception:
             pass
         return True
+
+    def suspend_watchdog(self, seconds: float = 20.0):
+        seconds = max(0.0, float(seconds))
+        self._watchdog_suspended_until = max(self._watchdog_suspended_until, time.time() + seconds)
 
     def is_firewall_challenge(self, page) -> bool:
         selectors = ["#ans", "#jar", "text=در حال بررسی مرورگر شما"]

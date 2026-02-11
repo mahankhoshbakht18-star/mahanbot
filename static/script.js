@@ -437,7 +437,7 @@ function renderPriorityBanks() {
 
             <span>${bank}</span>
 
-            <button class="btn btn-sm btn-outline-danger"></button>
+            <button class="btn btn-sm btn-outline-danger">حذف</button>
 
         `;
 
@@ -704,7 +704,7 @@ function renderActiveApplicantCard(user) {
 
     if (!user) {
 
-        nameEl.textContent = '   ';
+        nameEl.textContent = 'بدون کاربر فعال';
 
         metaEl.textContent = '---';
 
@@ -732,7 +732,7 @@ function renderActiveApplicantCard(user) {
 
     nameEl.textContent = user.full_name || '---';
 
-    metaEl.textContent = `: ${user.national_id || '-'} | : ${mobile}`;
+    metaEl.textContent = `کد ملی: ${user.national_id || '-'} | موبایل: ${mobile}`;
 
     statusEl.textContent = translateStatus(user.status);
 
@@ -742,7 +742,7 @@ function renderActiveApplicantCard(user) {
 
     if (!priority.length) {
 
-        bankListEl.innerHTML = '<span class="text-muted small">   .</span>';
+        bankListEl.innerHTML = '<span class="text-muted small">هیچ بانکی ثبت نشده است.</span>';
 
         return;
 
@@ -760,7 +760,7 @@ function renderActiveApplicantCard(user) {
 
         chip.className = `bank-stop-chip ${isStopped ? 'stopped' : ''}`;
 
-        chip.textContent = isStopped ? `${bankName} ()` : `Stop ${bankName}`;
+        chip.textContent = isStopped ? `${bankName} (متوقف)` : `توقف ${bankName}`;
 
         if (!isStopped) {
 
@@ -808,11 +808,11 @@ async function sendManualOtp() {
 
     if (!code) return;
 
-    if (statusEl) statusEl.textContent = '  ...';
+    if (statusEl) statusEl.textContent = 'در حال ارسال...';
 
     await apiCall(`/receive_sms`, 'POST', {nid: nid, code: code});
 
-    if (statusEl) statusEl.textContent = '   .';
+    if (statusEl) statusEl.textContent = 'ارسال شد.';
 
     input.value = '';
 
