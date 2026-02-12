@@ -434,7 +434,7 @@ class BankSelectionBot(BotCore):
                         self.suspend_watchdog(120)
                         self._otp_wait_lock = True
                         self._otp_guard_until = time.time() + 120.0
-                        self.log("🎯 OTP field detected؛ سایر اسکنرها متوقف و فقط wait_otp فعال است.", "info", page)
+                        self.log("🎯 فیلد OTP رویت شد؛ در انتظار دریافت کد...", "info", page)
                         while not stop_event.is_set():
                             if self._firewall_gate(page, stop_event):
                                 continue
@@ -533,7 +533,7 @@ class BankSelectionBot(BotCore):
                             if stop_event.is_set():
                                 break
                             try:
-                                page.wait_for_selector("#ctl00_ContentPlaceHolder1_ddlBankName", timeout=5000, state="visible")
+                                page.wait_for_selector("#ctl00_ContentPlaceHolder1_ddlBankName", timeout=10000, state="visible")
                                 set_state("BANK_SELECT")
                                 result = self._process_bank_selection_v2(page, stop_event)
                                 if result == "selected":
@@ -541,7 +541,7 @@ class BankSelectionBot(BotCore):
                                 self._otp_wait_lock = False
                                 break
                             except Exception:
-                                pass
+                                self.log("⚠️ لیست بانک‌ها بارگذاری نشد.", "warning", page)
                             if self._detect_otp_failure(page) or self.last_dialog_indicates_otp_invalid():
                                 if not self.register_otp_failure("otp_invalid_after_submit"):
                                     self.log("⛔ OTP retry limit reached; stopping job.", "error", page)

@@ -590,7 +590,6 @@ async def wait_otp(nid: str, timeout: int = 120, min_ts: float = 0.0):
             return Response(status_code=204)
 
         event = await _get_otp_event(nid)
-        event.clear()
         try:
             await asyncio.wait_for(event.wait(), timeout=remaining)
         except asyncio.TimeoutError:

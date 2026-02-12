@@ -154,8 +154,11 @@ class BotCore:
         return None
 
     def clear_otp_backend(self):
+        """پاکسازی کامل وضعیت OTP برای آماده‌سازی دریافت پیامک جدید"""
+        self.log("♻️ پاکسازی حافظه موقت پیامک...", "info")
         try:
             requests.post(f"{self.local_api_base}/otp/clear/{self.nid}", timeout=3)
+            self._otp_guard_until = 0.0
             return
         except Exception:
             pass
@@ -163,6 +166,8 @@ class BotCore:
             DBHandler.clear_otp(self.nid)
         except Exception:
             pass
+        finally:
+            self._otp_guard_until = 0.0
 
     def clear_remote_otp(self):
         self.clear_otp_backend()
