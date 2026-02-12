@@ -235,8 +235,7 @@ class BankSelectionBot(BotCore):
                         else:
                             self.log("RECOVERY captcha_invalid -> retry limit reached; reload", "warning", page)
                             self._captcha_retry = 0
-                            if self._can_navigate_from_otp(page):
-                                self._reload_guarded(page, reason="captcha retry exhausted")
+                            self._refresh_captcha_or_reload(page)
                         continue
 
                     if self.consume_recovery_flag("generic_error"):
@@ -419,149 +418,21 @@ class BankSelectionBot(BotCore):
                         continue
 
                     # مرحله ۲: OTP
-                    if (not step1_found) and self._wait_for_state_any_scope(
-                        page,
-                        "input[name$='tbMobileConfCode']",
-                        "CHECK_STEP_2_OTP_FORM",
-                        timeout=otp_timeout,
-                    ):
+                    if self._otp_input_visible(page):
                         set_state("OTP_FORM")
                         if stop_event.is_set():
                             break
 
-                        otp_filled = False
-                        otp_attempts = 0
-                        self.suspend_watchdog(120)
-                        self._otp_wait_lock = True
-                        self._otp_guard_until = time.time() + 120.0
-                        self.log("🎯 OTP field detected؛ سایر اسکنرها متوقف و فقط wait_otp فعال است.", "info", page)
-                        while not stop_event.is_set():
-                            if self._firewall_gate(page, stop_event):
-                                continue
-                            try:
-                                page.wait_for_selector("input[name$='tbMobileConfCode']", timeout=1500, state="visible")
-                            except Exception:
-                                break
-
-                            if self._detect_otp_failure(page) or self.last_dialog_indicates_otp_invalid():
-                                if not self.register_otp_failure("page_otp_invalid"):
-                                    self.log("⛔ OTP retry limit reached; stopping job.", "error", page)
-                                    DBHandler.update_status(self.nid, "Stopped", "OTP retry limit reached")
-                                    stop_event.set()
-                                    break
-                                self.clear_otp_backend()
-                                entry_time = self.mark_otp_entry_time()
-                                self.log("♻️ کد منقضی/نامعتبر شد؛ فقط منتظر OTP تازه می‌مانم.", "warning", page)
-                                continue
-
-                            if otp_attempts >= self._otp_retry_limit:
-                                self.log("⛔ OTP attempt limit reached; stopping job.", "error", page)
-                                DBHandler.update_status(self.nid, "Stopped", "OTP attempt limit reached")
-                                stop_event.set()
-                                break
-
-                            otp_code = self.fetch_otp_fast(stop_event=stop_event, timeout=120, min_ts=entry_time)
-                            if not otp_code:
-                                try:
-                                    page.wait_for_timeout(150)
-                                except Exception:
-                                    pass
-                                continue
-                            self._otp_wait_lock = False
-                            while self._dialog_handling and not stop_event.is_set():
-                                try:
-                                    page.wait_for_timeout(80)
-                                except Exception:
-                                    pass
-                            if self._needs_reload:
-                                break
-                            otp_code = str(otp_code).strip()
-                            if not re.fullmatch(r"\d{6}", otp_code):
-                                self.log("⚠️ OTP length invalid; waiting for a 6-digit code.", "warning", page)
-                                self._otp_wait_lock = True
-                                continue
-
-                            otp_selector = "input[name$='tbMobileConfCode']"
-                            otp_input = page.locator(otp_selector)
-                            self.log(f"✅ تزریق OTP در فیلد پیامک: {otp_code}", "success", page)
-                            try:
-                                page.evaluate(
-                                    "(selector, value) => {"
-                                    "const el = document.querySelector(selector);"
-                                    "if (!el) return false;"
-                                    "el.value = value;"
-                                    "el.dispatchEvent(new Event('input', { bubbles: true }));"
-                                    "el.dispatchEvent(new Event('change', { bubbles: true }));"
-                                    "return true;"
-                                    "}",
-                                    otp_selector,
-                                    otp_code,
-                                )
-                            except Exception:
-                                pass
-                            try:
-                                page.wait_for_timeout(80)
-                            except Exception:
-                                pass
-                            try:
-                                current_val = otp_input.input_value()
-                            except Exception:
-                                current_val = ""
-                            otp_filled = (current_val == otp_code)
-                            if not otp_filled:
-                                self.log("⚠️ OTP not confirmed in field; retrying.", "warning", page)
-                                self._otp_wait_lock = True
-                                continue
-
-                            if self._firewall_gate(page, stop_event):
-                                continue
-                            success = self._solve_captcha_wrapper(
-                                page,
-                                "#ctl00_ContentPlaceHolder1_tbCaptcha2",
-                                "#ctl00_ContentPlaceHolder1_btnContinue1",
-                                captcha_mode,
-                            )
-                            if not success:
-                                self._refresh_captcha_or_reload(page)
-                                continue
-                            if self._detect_captcha_failure(page):
-                                self._refresh_captcha_or_reload(page)
-                                continue
-                            otp_attempts += 1
+                        result = self.fast_otp_sync_and_inject(page, stop_event)
+                        if stop_event.is_set():
+                            break
+                        if result:
                             otp_attempted = True
-                            self.log("📨 OTP ارسال شد؛ ورود به مرحله انتخاب بانک...", "info", page)
-                            if stop_event.is_set():
-                                break
-                            try:
-                                page.wait_for_selector("#ctl00_ContentPlaceHolder1_ddlBankName", timeout=5000, state="visible")
-                                set_state("BANK_SELECT")
-                                result = self._process_bank_selection_v2(page, stop_event)
-                                if result == "selected":
-                                    self.log("✅ بانک انتخاب شد.", "success", page)
-                                self._otp_wait_lock = False
-                                break
-                            except Exception:
-                                pass
-                            if self._detect_otp_failure(page) or self.last_dialog_indicates_otp_invalid():
-                                if not self.register_otp_failure("otp_invalid_after_submit"):
-                                    self.log("⛔ OTP retry limit reached; stopping job.", "error", page)
-                                    DBHandler.update_status(self.nid, "Stopped", "OTP retry limit reached")
-                                    stop_event.set()
-                                    break
-                                self.clear_remote_otp()
-                                entry_time = self.mark_otp_entry_time()
-                                self.log("♻️ کد منقضی/نامعتبر شد؛ انتظار برای پیامک جدید.", "warning", page)
-                                continue
-                            self._dump_state(
-                                page,
-                                selectors=["input[name$='tbMobileConfCode']", "#ctl00_ContentPlaceHolder1_ddlBankName"],
-                                reason="otp_unknown_failure",
-                            )
-                            try:
-                                page.wait_for_timeout(120)
-                            except Exception:
-                                pass
-                            continue
+                            set_state("BANK_SELECT")
+                            if result == "selected":
+                                self.log("Bank selected.", "success", page)
+                        continue
+
 
                     elif wait_for_state("#ctl00_ContentPlaceHolder1_ddlBankName", "CHECK_STEP_3_BANK_SELECTION", timeout=5000):
                         set_state("BANK_SELECT")
@@ -770,14 +641,51 @@ class BankSelectionBot(BotCore):
         safe_goto(page, url, **kwargs)
         return True
 
-    def _refresh_captcha_or_reload(self, page):
-        """Refresh captcha image without reloading page to preserve session."""
+    def _refresh_captcha_or_reload(self, page, input_sel="#ctl00_ContentPlaceHolder1_tbCaptcha2", timeout=12000):
+        """Full-reload strategy: reload page, then re-sync NID and captcha elements."""
         try:
-            reload_btn = page.locator(".BDC_ReloadLink").first
-            if reload_btn.is_visible() and reload_btn.is_enabled():
-                reload_btn.click()
+            page.reload(wait_until="domcontentloaded")
+            try:
+                page.wait_for_load_state("networkidle", timeout=timeout)
+            except Exception:
+                pass
+            try:
+                page.wait_for_selector(".BDC_CaptchaImage", timeout=timeout, state="visible")
+            except Exception:
+                pass
+
+            self._ensure_nid_after_reload(page)
+
+            if input_sel:
+                try:
+                    target = page.locator(input_sel)
+                    if target.count() > 0 and target.first.is_visible():
+                        target.first.fill("")
+                except Exception:
+                    pass
+            return True
         except Exception:
-            pass
+            return False
+
+    def _ensure_nid_after_reload(self, page):
+        selectors = ["#ctl00_ContentPlaceHolder1_tbIDNo", "input[name$='tbIDNo']"]
+        for selector in selectors:
+            try:
+                field = page.locator(selector)
+                if field.count() == 0 or not field.first.is_visible():
+                    continue
+                current = ""
+                try:
+                    current = field.first.input_value().strip()
+                except Exception:
+                    current = ""
+                if not current:
+                    field.first.fill(self.nid)
+                    self._nid_filled = True
+                return True
+            except Exception:
+                continue
+        return False
 
     def _solve_primary_captcha_fast(self, page, stop_event) -> bool:
         input_sel = "input[name$='tbCaptcha1']"
@@ -829,14 +737,102 @@ class BankSelectionBot(BotCore):
                 cursor = conn.cursor()
                 cursor.execute("SELECT data FROM applicants WHERE national_id=?", (self.nid,))
                 row = cursor.fetchone()
-                if row and row["data"]:
-                    data = json.loads(row["data"])
-                    otp_code = data.get("otp_code")
-                    otp_status = data.get("otp_status")
-                    return (str(otp_code).strip() if otp_code else None, otp_status)
+                if not row:
+                    return None, None
+
+                raw = row["data"]
+                if isinstance(raw, str):
+                    try:
+                        data = json.loads(raw)
+                    except Exception:
+                        data = {}
+                elif isinstance(raw, dict):
+                    data = raw
+                else:
+                    data = {}
+
+                otp_status = str(data.get("otp_status") or "").strip().lower()
+                otp_code = data.get("otp_code")
+                if otp_code is not None:
+                    otp_code = str(otp_code).strip()
+                if otp_status != "received":
+                    return None, otp_status or None
+                if not otp_code:
+                    return None, otp_status
+                return otp_code, otp_status
         except Exception:
             pass
         return None, None
+
+    def fast_otp_sync_and_inject(self, page, stop_event):
+        """
+        Direct cycle: DB -> browser.
+        Keeps firewall/captcha handling while minimizing OTP handoff latency.
+        """
+        otp_selector = "input[name$='tbMobileConfCode']"
+        if not self._otp_input_visible(page):
+            return None
+
+        self.suspend_watchdog(120)
+        self._otp_wait_lock = True
+        self._otp_guard_until = time.time() + 120.0
+        self.log("Direct OTP sync active; waiting for SMS from DB.", "info", page)
+
+        otp_code = None
+        try:
+            while not stop_event.is_set():
+                if self._firewall_gate(page, stop_event):
+                    if stop_event.is_set():
+                        return None
+                    continue
+
+                if self._detect_otp_failure(page) or self.last_dialog_indicates_otp_invalid():
+                    if not self.register_otp_failure("page_otp_invalid"):
+                        self.log("OTP retry limit reached; stopping job.", "error", page)
+                        DBHandler.update_status(self.nid, "Stopped", "OTP retry limit reached")
+                        stop_event.set()
+                        return None
+                    self.clear_otp_backend()
+                    self.mark_otp_entry_time()
+                    continue
+
+                otp_code = DBHandler.get_otp(self.nid)
+                if otp_code and re.fullmatch(r"\d{6}", str(otp_code).strip()):
+                    otp_code = str(otp_code).strip()
+                    self.log(f"OTP received: {otp_code}", "success", page)
+                    break
+
+                if sleep_with_stop(stop_event, 0.3):
+                    return None
+
+            if stop_event.is_set() or not otp_code:
+                return None
+
+            page.fill(otp_selector, otp_code)
+
+            captcha_mode = self.settings.get("captcha_mode", "robot")
+            success = self._solve_captcha_wrapper(
+                page,
+                "#ctl00_ContentPlaceHolder1_tbCaptcha2",
+                "#ctl00_ContentPlaceHolder1_btnContinue1",
+                captcha_mode,
+            )
+            if not success:
+                return None
+
+            if self._detect_captcha_failure(page):
+                self._refresh_captcha_or_reload(page)
+                return None
+
+            try:
+                page.wait_for_selector("#ctl00_ContentPlaceHolder1_ddlBankName", timeout=10000, state="visible")
+                self.log("Entered bank selection step.", "success", page)
+                return self._process_bank_selection_v2(page, stop_event)
+            except Exception:
+                self.log("Bank selection page did not load after OTP submit.", "error", page)
+                return None
+        finally:
+            self._otp_wait_lock = False
 
     def _select_editable_input(self, page, selectors, label):
         scopes = [("page", page)] + [(f"frame[{idx}]", frame) for idx, frame in enumerate(page.frames)]
@@ -967,6 +963,10 @@ class BankSelectionBot(BotCore):
                     handle,
                     value,
                 )
+        except Exception:
+            pass
+        try:
+            page.wait_for_timeout(500)
         except Exception:
             pass
 
@@ -1292,31 +1292,117 @@ class BankSelectionBot(BotCore):
 
     def _solve_captcha_wrapper(self, page, input_sel, btn_sel, mode):
         try:
-            captcha_img = page.locator(".BDC_CaptchaImage").first
-            if not captcha_img.is_visible():
-                return False
+            while True:
+                inp = page.locator(input_sel)
+                try:
+                    if inp.count() == 0 or not inp.first.is_visible():
+                        try:
+                            page.wait_for_selector("#ctl00_ContentPlaceHolder1_ddlBankName", timeout=800, state="visible")
+                            return True
+                        except Exception:
+                            return False
+                except Exception:
+                    try:
+                        page.wait_for_selector("#ctl00_ContentPlaceHolder1_ddlBankName", timeout=800, state="visible")
+                        return True
+                    except Exception:
+                        return False
 
-            if not self.solve_captcha_step(page, input_sel, btn_sel, source="otp"):
-                return False
+                try:
+                    page.wait_for_load_state("networkidle", timeout=5000)
+                except Exception:
+                    pass
 
-            inp = page.locator(input_sel)
-            code = inp.input_value().strip()
-            result = "failed" if self._detect_captcha_failure(page) else "success"
-            DBHandler.append_captcha_attempt(self.nid, code, result, source="select")
-            if result == "failed":
-                self._refresh_captcha_or_reload(page)
-                return False
-            return True
+                try:
+                    page.wait_for_selector(".BDC_CaptchaImage", timeout=5000, state="visible")
+                except Exception:
+                    pass
+
+                try:
+                    page.wait_for_function(
+                        """(imgSelector) => {
+                            const img = document.querySelector(imgSelector);
+                            if (!img) return false;
+                            const src = img.getAttribute("src") || "";
+                            return !!src && img.complete && img.naturalWidth > 0;
+                        }""",
+                        arg=".BDC_CaptchaImage",
+                        timeout=4000,
+                    )
+                except Exception:
+                    pass
+
+                try:
+                    inp.first.fill("")
+                except Exception:
+                    pass
+
+                if not self.solve_captcha_step(page, input_sel, btn_sel, source="otp"):
+                    if not self._refresh_captcha_or_reload(page, input_sel=input_sel):
+                        return False
+                    continue
+
+                code = ""
+                try:
+                    code = inp.first.input_value().strip()
+                except Exception:
+                    code = ""
+
+                try:
+                    page.wait_for_function(
+                        """(selector) => {
+                            const el = document.querySelector(selector);
+                            if (!el) return true;
+                            const style = window.getComputedStyle(el);
+                            return style.display === "none" || style.visibility === "hidden" || el.disabled;
+                        }""",
+                        arg=input_sel,
+                        timeout=1200,
+                    )
+                except Exception:
+                    pass
+
+                failed = self._detect_captcha_failure(page)
+                if not failed:
+                    if code:
+                        DBHandler.append_captcha_attempt(self.nid, code, "success", source="select")
+                    return True
+
+                if code:
+                    DBHandler.append_captcha_attempt(self.nid, code, "failed", source="select")
+                if not self._refresh_captcha_or_reload(page, input_sel=input_sel):
+                    return False
         except Exception:
-            self._refresh_captcha_or_reload(page)
+            self._refresh_captcha_or_reload(page, input_sel=input_sel)
             return False
 
     def solve_captcha_step(self, page, input_sel: str, btn_sel: str, source: str = "general") -> bool:
         """Single-attempt captcha solve with smart backoff handled by caller."""
         try:
+            try:
+                page.wait_for_load_state("networkidle", timeout=5000)
+            except Exception:
+                pass
             captcha_img = page.locator(".BDC_CaptchaImage").first
+            try:
+                page.wait_for_selector(".BDC_CaptchaImage", timeout=5000, state="visible")
+            except Exception:
+                pass
             if not captcha_img.is_visible():
                 return False
+            try:
+                page.wait_for_function(
+                    """(imgSelector) => {
+                        const img = document.querySelector(imgSelector);
+                        if (!img) return false;
+                        const src = img.getAttribute("src") || "";
+                        return !!src && img.complete && img.naturalWidth > 0;
+                    }""",
+                    arg=".BDC_CaptchaImage",
+                    timeout=4000,
+                )
+            except Exception:
+                pass
             code = self.captcha_service.solve(captcha_img.screenshot(), mode="general")
             code = (code or "").strip()
             if len(code) < 4:
@@ -1325,7 +1411,7 @@ class BankSelectionBot(BotCore):
                 return False
 
             inp = page.locator(input_sel)
-            inp.clear()
+            inp.fill("")
             inp.fill(code)
             page.locator(btn_sel).click()
             DBHandler.append_captcha_attempt(self.nid, code, "submitted", source=source)
@@ -1347,3 +1433,4 @@ class BankSelectionBot(BotCore):
             )
         except Exception:
             pass
+

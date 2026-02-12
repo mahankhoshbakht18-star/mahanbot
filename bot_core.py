@@ -234,7 +234,7 @@ class BotCore:
                         firewall_input.first.fill(code)
                         page.locator("#jar").first.click()
                         action = "captcha_submitted"
-                        time.sleep(1.5)
+                        time.sleep(3.0)
                         self.log(
                             f"🛡 solve_firewall: detected={detected}, action={action}, returning=True",
                             "info",

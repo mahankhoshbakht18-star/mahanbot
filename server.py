@@ -147,6 +147,20 @@ def _check_uvicorn_ws_backend():
         )
 
 
+def _normalize_nid(value: Optional[str]) -> str:
+    if value is None:
+        return ""
+    s = str(value).strip()
+    if not s:
+        return ""
+    # Normalize Persian/Arabic digits to ASCII
+    trans = str.maketrans("۰۱۲۳۴۵۶۷۸۹٠١٢٣٤٥٦٧٨٩", "01234567890123456789")
+    s = s.translate(trans)
+    # Remove common separators
+    s = s.replace("-", "").replace(" ", "")
+    return s
+
+
 @app.on_event("startup")
 async def startup_event():
     global MAIN_LOOP, CAPTCHA_SERVICE, JOB_QUEUE, STARTUP_DONE
@@ -526,12 +540,18 @@ def get_applicants():
 
 @app.post("/receive_sms")
 def receive_sms(req: SMSRequest):
-    if not req.nid or not req.code:
+    raw_nid = str(req.nid or "").strip()
+    nid = _normalize_nid(raw_nid)
+    code = str(req.code or "").strip()
+    if not (nid or raw_nid) or not code:
         raise HTTPException(status_code=400, detail="Invalid payload")
 
     request_ts = time.time()
-    success = _handle_receive_sms(req.nid, req.code, status_label="received", ts=request_ts)
+    success = _handle_receive_sms(nid or raw_nid, code, status_label="received", ts=request_ts)
+    if not success and raw_nid and raw_nid != nid:
+        success = _handle_receive_sms(raw_nid, code, status_label="received", ts=request_ts)
     if not success:
+        logger.warning("OTP not saved: applicant not found for nid=%s raw=%s", nid, raw_nid)
         raise HTTPException(status_code=404, detail="Applicant not found")
     _emit_applicants_snapshot()
     return {"status": "ok", "ts": request_ts}
@@ -540,23 +560,40 @@ def receive_sms(req: SMSRequest):
 @app.post("/manual_otp")
 @app.post("/otp/manual")
 def manual_otp(req: SMSRequest):
-    if not req.nid or not req.code:
+    raw_nid = str(req.nid or "").strip()
+    nid = _normalize_nid(raw_nid)
+    code = str(req.code or "").strip()
+    if not (nid or raw_nid) or not code:
         raise HTTPException(status_code=400, detail="Invalid payload")
 
-    success = DBHandler.save_otp(req.nid, req.code, status="received")
+    success = DBHandler.save_otp(nid or raw_nid, code, status="received")
+    if not success and raw_nid and raw_nid != nid:
+        success = DBHandler.save_otp(raw_nid, code, status="received")
     if not success:
+        logger.warning("Manual OTP not saved: applicant not found for nid=%s raw=%s", nid, raw_nid)
         raise HTTPException(status_code=404, detail="Applicant not found")
-    log_event(req.nid, None, f"OTP received manually: {req.code}", "success")
-    logger.info("Manual OTP received for %s; notifying waiters", req.nid)
+    final_nid = nid or raw_nid
+    log_event(final_nid, None, f"OTP received manually: {code}", "success")
+    logger.info("Manual OTP received for %s; notifying waiters", final_nid)
+    try:
+        event = OTP_EVENTS.get(final_nid)
+        if not event:
+            event = asyncio.Event()
+            OTP_EVENTS[final_nid] = event
+        event.set()
+    except Exception:
+        pass
     if MAIN_LOOP:
-        MAIN_LOOP.call_soon_threadsafe(lambda: asyncio.create_task(_signal_otp_event(req.nid)))
+        MAIN_LOOP.call_soon_threadsafe(lambda: asyncio.create_task(_signal_otp_event(final_nid)))
     _emit_applicants_snapshot()
     return {"status": "ok", "source": "manual"}
 
 
 @app.get("/wait_otp/{nid}")
 async def wait_otp(nid: str, timeout: int = 120, min_ts: float = 0.0):
-    if not nid:
+    raw_nid = str(nid or "").strip()
+    nid = _normalize_nid(raw_nid)
+    if not (nid or raw_nid):
         raise HTTPException(status_code=400, detail="Invalid NID")
 
     try:
@@ -568,7 +605,9 @@ async def wait_otp(nid: str, timeout: int = 120, min_ts: float = 0.0):
     logger.info("wait_otp waiting for %s (min_ts=%s)", nid, min_ts)
 
     while True:
-        record = DBHandler.get_otp_record(nid)
+        record = DBHandler.get_otp_record(nid or raw_nid)
+        if not record and raw_nid and raw_nid != nid:
+            record = DBHandler.get_otp_record(raw_nid)
         record_ts = 0.0
         if record:
             try:
@@ -604,17 +643,20 @@ async def wait_otp(nid: str, timeout: int = 120, min_ts: float = 0.0):
 @app.post("/applicants")
 async def save_applicant(req: ApplicantModel):
     try:
+        national_id = _normalize_nid(req.national_id)
+        if not national_id:
+            return {"status": "error", "msg": "Invalid national_id"}
         d_str = json.dumps(req.data, ensure_ascii=False)
         async with _open_aiosqlite() as conn:
             if req.id:
                 await conn.execute(
                     "UPDATE applicants SET full_name=?, national_id=?, data=? WHERE id=?",
-                    (req.full_name, req.national_id, d_str, req.id),
+                    (req.full_name, national_id, d_str, req.id),
                 )
             else:
                 await conn.execute(
                     "INSERT INTO applicants (full_name, national_id, data) VALUES (?, ?, ?)",
-                    (req.full_name, req.national_id, d_str),
+                    (req.full_name, national_id, d_str),
                 )
             await conn.commit()
         _emit_applicants_snapshot()

@@ -263,7 +263,7 @@ class RegistrationBot(BotCore):
                                 pass
                             continue
 
-                        self.log(f"? ???? ??: {otp}", "success", page)
+                        self.log(f"✅ کد پیامک دریافت شد: {otp}", "success", page)
                         otp_selector = "#ctl00_ContentPlaceHolder1_tbMobileConfCode, input[name='ctl00$ContentPlaceHolder1$tbMobileConfCode']"
                         otp_value = str(otp).strip()
                         try:
@@ -325,7 +325,7 @@ class RegistrationBot(BotCore):
                         except Exception:
                             pass
                         else:
-                            self.log("?? ????? ?? ?????...", "waiting sms", page)
+                            self.log("⌛ منتظر دریافت پیامک...", "waiting sms", page)
                         continue
                         continue
 
