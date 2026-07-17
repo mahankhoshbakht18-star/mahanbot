@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from scripts import apply_phase1_4_refactor as migration
+import apply_phase1_4_refactor as migration
 
 
 _original_replace_once = migration.replace_once
