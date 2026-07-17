@@ -27,14 +27,31 @@ jobs:
           python-version: "3.12"
 
       - name: Apply phase 1-4 migration in validation workspace
+        id: migration
         if: ${{ hashFiles('scripts/apply_phase1_4_refactor.py') != '' }}
         shell: bash
         run: |
           set +e
           python scripts/apply_phase1_4_refactor.py > migration.log 2>&1
           status=$?
+          echo "status=$status" >> "$GITHUB_OUTPUT"
+          exit 0
+
+      - name: Upload migration diagnostics
+        if: ${{ steps.migration.outputs.status != '0' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: migration-diagnostics
+          path: migration.log
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Stop on migration failure
+        if: ${{ steps.migration.outputs.status != '0' }}
+        shell: bash
+        run: |
           cat migration.log
-          exit $status
+          exit 1
 
       - name: Install lightweight validation dependencies
         run: |
