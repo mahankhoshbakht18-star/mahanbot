@@ -18,6 +18,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          show-progress: false
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -26,7 +28,13 @@ jobs:
 
       - name: Apply phase 1-4 migration in validation workspace
         if: ${{ hashFiles('scripts/apply_phase1_4_refactor.py') != '' }}
-        run: python scripts/apply_phase1_4_refactor.py
+        shell: bash
+        run: |
+          set +e
+          python scripts/apply_phase1_4_refactor.py > migration.log 2>&1
+          status=$?
+          cat migration.log
+          exit $status
 
       - name: Install lightweight validation dependencies
         run: |
@@ -48,6 +56,7 @@ jobs:
                "*.db-shm" \
                ".env" \
                ".env.*" \
+               "migration.log" \
                "chrome_profiles/*" \
                "screenshots/*" \
                "__pycache__/*" \
