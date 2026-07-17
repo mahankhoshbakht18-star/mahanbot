@@ -28,11 +28,11 @@ jobs:
 
       - name: Apply phase 1-4 migration in validation workspace
         id: migration
-        if: ${{ hashFiles('scripts/apply_phase1_4_refactor.py') != '' }}
+        if: ${{ hashFiles('scripts/run_phase1_4_refactor.py') != '' }}
         shell: bash
         run: |
           set +e
-          python scripts/apply_phase1_4_refactor.py > migration.log 2>&1
+          python scripts/run_phase1_4_refactor.py > migration.log 2>&1
           status=$?
           echo "status=$status" >> "$GITHUB_OUTPUT"
           exit 0
