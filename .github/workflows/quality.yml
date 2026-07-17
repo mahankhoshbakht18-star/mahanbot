@@ -13,7 +13,7 @@ permissions:
 jobs:
   quality:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
 
     steps:
       - name: Checkout
@@ -24,6 +24,10 @@ jobs:
         with:
           python-version: "3.12"
 
+      - name: Apply phase 1-4 migration in validation workspace
+        if: ${{ hashFiles('scripts/apply_phase1_4_refactor.py') != '' }}
+        run: python scripts/apply_phase1_4_refactor.py
+
       - name: Install lightweight validation dependencies
         run: |
           python -m pip install --upgrade pip
@@ -31,3 +35,28 @@ jobs:
 
       - name: Run quality gate
         run: python scripts/quality_check.py
+
+      - name: Build clean source archive
+        shell: bash
+        run: |
+          mkdir -p dist
+          zip -r dist/mahanbot-complete-source.zip . \
+            -x ".git/*" \
+               "dist/*" \
+               "*.db" \
+               "*.db-wal" \
+               "*.db-shm" \
+               ".env" \
+               ".env.*" \
+               "chrome_profiles/*" \
+               "screenshots/*" \
+               "__pycache__/*" \
+               "*/__pycache__/*"
+
+      - name: Upload clean source archive
+        uses: actions/upload-artifact@v4
+        with:
+          name: mahanbot-complete-source
+          path: dist/mahanbot-complete-source.zip
+          if-no-files-found: error
+          retention-days: 30
