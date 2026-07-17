@@ -1,0 +1,32 @@
+name: Browser Actions Tests
+
+on:
+  pull_request:
+    paths:
+      - "browser_actions.py"
+      - "tests/test_browser_actions.py"
+      - ".github/workflows/browser-actions-tests.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  unit-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Compile changed modules
+        run: python -m py_compile browser_actions.py tests/test_browser_actions.py
+
+      - name: Run unit tests
+        run: python -m unittest tests.test_browser_actions -v
