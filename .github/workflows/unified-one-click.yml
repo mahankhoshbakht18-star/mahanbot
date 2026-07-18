@@ -42,25 +42,28 @@ jobs:
 
       - name: Run focused unit tests
         run: |
-          python -m unittest tests.test_sms_notify_core tests.test_unified_launcher tests.test_ui_v2 tests.test_offline_model_lab
+          python -m unittest tests.test_sms_notify_core tests.test_unified_launcher tests.test_ui_v2 tests.test_offline_model_lab tests.test_captcha_service_local_model
 
-      - name: Validate bundled model checkpoint
+      - name: Validate bundled model checkpoint through bot core
         shell: pwsh
         run: |
           if (-not (Test-Path "my_captcha_model.pth")) { throw "my_captcha_model.pth missing" }
           @'
           import io
           from PIL import Image
+          from captcha_service import CaptchaService
           from offline_model_lab import OFFLINE_MODEL_LAB
 
-          model = OFFLINE_MODEL_LAB.load()
+          OFFLINE_MODEL_LAB.load()
           image = Image.new("L", (160, 60), color=255)
           stream = io.BytesIO()
           image.save(stream, format="PNG")
-          result = OFFLINE_MODEL_LAB.predict(stream.getvalue())
+          result = CaptchaService(local_model=OFFLINE_MODEL_LAB).predict_local(stream.getvalue())
+          assert result["integration_route"] == "CaptchaService.local_test"
           assert result["scope"] == "offline-test-only"
           assert result["live_workflow_connected"] is False
-          print("model_checkpoint_ok", result)
+          assert CaptchaService(local_model=OFFLINE_MODEL_LAB).solve(stream.getvalue(), mode="general") is None
+          print("model_core_integration_ok", result)
           '@ | python -
 
       - name: Validate JavaScript
