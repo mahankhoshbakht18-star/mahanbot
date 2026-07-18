@@ -1,0 +1,29 @@
+name: Safe non-captcha upgrades
+
+on:
+  push:
+    branches:
+      - feature/legacy-captcha-safe-upgrades
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  boundary-and-syntax:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Verify frozen captcha boundary
+        run: python scripts/check_frozen_captcha.py
+
+      - name: Compile project Python files
+        run: python -m compileall -q -x "(.venv|venv|__pycache__|dist|build)" .
