@@ -9,6 +9,8 @@ from fastapi.responses import HTMLResponse
 
 STYLE_TAG = '<link rel="stylesheet" href="/static/ui_v2.css?v=20260718" />'
 SCRIPT_TAG = '<script src="/static/ui_v2.js?v=20260718" defer></script>'
+MODEL_STYLE_TAG = '<link rel="stylesheet" href="/static/model_lab.css?v=20260719" />'
+MODEL_SCRIPT_TAG = '<script src="/static/model_lab.js?v=20260719" defer></script>'
 
 
 def _modernize_html(text: str) -> str:
@@ -32,11 +34,14 @@ def _modernize_html(text: str) -> str:
 
     if '<body class="mahan-ui-v2">' not in text:
         text = text.replace('<body>', '<body class="mahan-ui-v2">', 1)
-
     if STYLE_TAG not in text:
         text = text.replace('</head>', f'    {STYLE_TAG}\n</head>', 1)
+    if MODEL_STYLE_TAG not in text:
+        text = text.replace('</head>', f'    {MODEL_STYLE_TAG}\n</head>', 1)
     if SCRIPT_TAG not in text:
         text = text.replace('</body>', f'    {SCRIPT_TAG}\n</body>', 1)
+    if MODEL_SCRIPT_TAG not in text:
+        text = text.replace('</body>', f'    {MODEL_SCRIPT_TAG}\n</body>', 1)
     return text
 
 
