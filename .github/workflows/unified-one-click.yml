@@ -4,9 +4,13 @@ on:
   push:
     branches:
       - feature/unified-one-click
+      - feature/offline-model-lab
+      - feature/accessibility-first
   pull_request:
     branches:
       - feature/sms-notify-bridge
+      - feature/unified-one-click
+      - feature/offline-model-lab
   workflow_dispatch:
 
 permissions:
@@ -42,7 +46,7 @@ jobs:
 
       - name: Run focused unit tests
         run: |
-          python -m unittest tests.test_sms_notify_core tests.test_unified_launcher tests.test_ui_v2 tests.test_offline_model_lab tests.test_captcha_service_local_model
+          python -m unittest tests.test_sms_notify_core tests.test_unified_launcher tests.test_ui_v2 tests.test_accessibility_assets tests.test_offline_model_lab tests.test_captcha_service_local_model
 
       - name: Validate bundled model checkpoint through bot core
         shell: pwsh
@@ -71,15 +75,20 @@ jobs:
           node --check static/sms_notify_bridge.js
           node --check static/ui_v2.js
           node --check static/model_lab.js
+          node --check static/accessibility_v1.js
 
       - name: Validate dashboard assets
         shell: pwsh
         run: |
           if (-not (Test-Path "static/ui_v2.css")) { throw "ui_v2.css missing" }
           if (-not (Test-Path "static/model_lab.css")) { throw "model_lab.css missing" }
+          if (-not (Test-Path "static/accessibility_v1.css")) { throw "accessibility_v1.css missing" }
+          if (-not (Test-Path "static/accessibility_v1.js")) { throw "accessibility_v1.js missing" }
           if (-not (Test-Path "requirements-model.txt")) { throw "requirements-model.txt missing" }
           if (Select-String -Path "unified_server.py" -Pattern "open_healthcheck_page\(page" -Quiet) { throw "Healthcheck navigation still active" }
           if (Test-Path "static/healthcheck.html") { throw "Obsolete healthcheck page still packaged" }
+          if (-not (Select-String -Path "static/accessibility_v1.js" -Pattern "aria-live" -Quiet)) { throw "ARIA live region missing" }
+          if (-not (Select-String -Path "static/accessibility_v1.css" -Pattern ":focus-visible" -Quiet)) { throw "Visible focus style missing" }
 
       - name: Validate server import
         env:
@@ -102,7 +111,7 @@ jobs:
       - name: Upload package
         uses: actions/upload-artifact@v4
         with:
-          name: MahanBot-OneClick-Windows
+          name: MahanBot-OneClick-Windows-Accessible
           path: |
             dist/MahanBot-OneClick-Windows.zip
             dist/MahanBot-OneClick-Windows.zip.sha256
