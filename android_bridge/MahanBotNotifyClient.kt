@@ -1,6 +1,8 @@
 package ir.mahanvip.smsforwardmanager.mahanbot
 
 import android.content.Context
+import android.os.Handler
+import android.os.Looper
 import org.json.JSONObject
 import java.io.BufferedReader
 import java.io.InputStreamReader
@@ -25,6 +27,7 @@ object MahanBotNotifyClient {
     private val executor = Executors.newSingleThreadExecutor { runnable ->
         Thread(runnable, "mahanbot-sms-notify").apply { isDaemon = true }
     }
+    private val mainHandler = Handler(Looper.getMainLooper())
 
     fun notifyArrival(
         context: Context,
@@ -36,27 +39,26 @@ object MahanBotNotifyClient {
         val appContext = context.applicationContext
         val config = MahanBotBridgeSettings.load(appContext)
         if (!config.isUsable()) {
-            callback(MahanBotNotifyResult.Skipped("bridge_disabled_or_incomplete"))
+            deliver(callback, MahanBotNotifyResult.Skipped("bridge_disabled_or_incomplete"))
             return
         }
 
         val eventId = opaqueEventId(config.deviceId, receivedAtMillis, localEventSeed)
         executor.execute {
-            callback(
-                postJson(
-                    url = "${config.normalizedBaseUrl()}/api/v1/sms/notify",
-                    config = config,
-                    payload = JSONObject()
-                        .put("device_id", config.deviceId)
-                        .put("message_id", eventId)
-                        .put("received_at", receivedAtMillis / 1000.0)
-                        .put("source", "android")
-                        .apply {
-                            val safeHint = senderHint.orEmpty().trim().take(32)
-                            if (safeHint.isNotBlank()) put("sender_hint", safeHint)
-                        },
-                ),
+            val result = postJson(
+                url = "${config.normalizedBaseUrl()}/api/v1/sms/notify",
+                config = config,
+                payload = JSONObject()
+                    .put("device_id", config.deviceId)
+                    .put("message_id", eventId)
+                    .put("received_at", receivedAtMillis / 1000.0)
+                    .put("source", "android")
+                    .apply {
+                        val safeHint = senderHint.orEmpty().trim().take(32)
+                        if (safeHint.isNotBlank()) put("sender_hint", safeHint)
+                    },
             )
+            deliver(callback, result)
         }
     }
 
@@ -67,20 +69,30 @@ object MahanBotNotifyClient {
         val appContext = context.applicationContext
         val config = MahanBotBridgeSettings.load(appContext)
         if (!config.isUsable()) {
-            callback(MahanBotNotifyResult.Skipped("bridge_disabled_or_incomplete"))
+            deliver(callback, MahanBotNotifyResult.Skipped("bridge_disabled_or_incomplete"))
             return
         }
 
         executor.execute {
-            callback(
-                postJson(
-                    url = "${config.normalizedBaseUrl()}/api/v1/sms/notify/heartbeat",
-                    config = config,
-                    payload = JSONObject()
-                        .put("device_id", config.deviceId)
-                        .put("sent_at", System.currentTimeMillis() / 1000.0),
-                ),
+            val result = postJson(
+                url = "${config.normalizedBaseUrl()}/api/v1/sms/notify/heartbeat",
+                config = config,
+                payload = JSONObject()
+                    .put("device_id", config.deviceId)
+                    .put("sent_at", System.currentTimeMillis() / 1000.0),
             )
+            deliver(callback, result)
+        }
+    }
+
+    private fun deliver(
+        callback: (MahanBotNotifyResult) -> Unit,
+        result: MahanBotNotifyResult,
+    ) {
+        if (Looper.myLooper() == Looper.getMainLooper()) {
+            callback(result)
+        } else {
+            mainHandler.post { callback(result) }
         }
     }
 
