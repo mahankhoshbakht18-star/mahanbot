@@ -1,0 +1,11 @@
+.github export-ignore
+.gitignore export-ignore
+.gitattributes export-ignore
+setup_sms_bridge_windows.cmd export-ignore
+start_sms_bridge_windows.cmd export-ignore
+open_sms_bridge_firewall_admin.cmd export-ignore
+.env.sms-bridge.example export-ignore
+*.db export-ignore
+mahanbot.env export-ignore
+__pycache__ export-ignore
+.venv export-ignore
