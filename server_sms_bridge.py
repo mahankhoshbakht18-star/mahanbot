@@ -4,11 +4,11 @@ import logging
 import os
 import secrets
 import time
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Literal, Optional
 
 from fastapi import Depends, Header, HTTPException, Request, status
 from fastapi.responses import HTMLResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from event_logger import EVENT_BROADCASTER, build_event
 from server import app, require_api_key
@@ -20,23 +20,20 @@ SCRIPT_TAG = '<script src="/static/sms_notify_bridge.js" defer></script>'
 
 
 class SmsNotifyRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     device_id: str = Field(min_length=2, max_length=128)
     message_id: str = Field(min_length=4, max_length=256)
     received_at: Optional[float] = None
-    source: str = Field(default="android", min_length=2, max_length=32)
-    sender_hint: Optional[str] = Field(default=None, max_length=32)
-
-    class Config:
-        # Deliberately reject message text, OTP, and unknown fields.
-        extra = "forbid"
+    source: Literal["android"] = "android"
+    sender_hint: Optional[Literal["bank", "service", "unknown"]] = None
 
 
 class SmsHeartbeatRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     device_id: str = Field(min_length=2, max_length=128)
     sent_at: Optional[float] = None
-
-    class Config:
-        extra = "forbid"
 
 
 def _configured_device_key() -> str:
