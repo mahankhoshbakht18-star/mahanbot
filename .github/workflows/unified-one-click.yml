@@ -35,20 +35,29 @@ jobs:
 
       - name: Compile Python
         run: |
-          python -m py_compile unified_launcher.py unified_server.py sms_ingress.py server_sms_bridge.py sms_notify_core.py browser_launcher.py captcha_service.py
+          python -m py_compile unified_launcher.py unified_server.py ui_v2.py sms_ingress.py server_sms_bridge.py sms_notify_core.py browser_launcher.py captcha_service.py
 
       - name: Run focused unit tests
         run: |
-          python -m unittest tests.test_sms_notify_core tests.test_unified_launcher
+          python -m unittest tests.test_sms_notify_core tests.test_unified_launcher tests.test_ui_v2
 
       - name: Validate JavaScript
-        run: node --check static/sms_notify_bridge.js
+        run: |
+          node --check static/sms_notify_bridge.js
+          node --check static/ui_v2.js
+
+      - name: Validate dashboard assets
+        shell: pwsh
+        run: |
+          if (-not (Test-Path "static/ui_v2.css")) { throw "ui_v2.css missing" }
+          if (Select-String -Path "unified_server.py" -Pattern "open_healthcheck_page\(page" -Quiet) { throw "Healthcheck navigation still active" }
+          if (Test-Path "static/healthcheck.html") { throw "Obsolete healthcheck page still packaged" }
 
       - name: Validate server import
         env:
           MAHANBOT_BROWSER_CHANNEL: msedge
           MAHANBOT_SMS_DEVICE_KEY: ci-device-key
-        run: python -c "import server_sms_bridge; print('server_import_ok')"
+        run: python -c "import server_sms_bridge, ui_v2; print('server_import_ok')"
 
       - name: Build clean one-click package
         shell: pwsh
