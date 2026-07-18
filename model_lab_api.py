@@ -7,6 +7,8 @@ from typing import Any, Callable, Dict, Optional
 
 from fastapi import Depends, FastAPI, File, HTTPException, UploadFile, status
 
+from captcha_service import CaptchaService
+
 
 MODEL_PATH = Path(__file__).resolve().with_name("my_captcha_model.pth")
 MAX_IMAGE_BYTES = 2 * 1024 * 1024
@@ -48,12 +50,16 @@ def _get_service() -> Any:
             raise RuntimeError(f"Model runtime is unavailable: {exc}") from exc
 
 
+def _core_adapter() -> CaptchaService:
+    return CaptchaService(local_model=_get_service())
+
+
 def _lightweight_status() -> Dict[str, Any]:
     with _SERVICE_LOCK:
         service = _SERVICE
         import_error = _IMPORT_ERROR
     if service is not None:
-        return service.status(load=False)
+        return CaptchaService(local_model=service).local_status()
     return {
         "available": MODEL_PATH.is_file(),
         "loaded": False,
@@ -61,6 +67,7 @@ def _lightweight_status() -> Dict[str, Any]:
         "model_file": MODEL_PATH.name,
         "model_sha256": None,
         "load_error": import_error,
+        "integration_route": "CaptchaService.local_test",
         "scope": "offline-test-only",
         "live_workflow_connected": False,
     }
@@ -85,7 +92,7 @@ def install_model_lab(app: FastAPI, auth_dependency: Callable[..., Any]) -> None
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                 detail=f"Model could not be loaded: {exc}",
             ) from exc
-        model_status = service.status(load=False)
+        model_status = CaptchaService(local_model=service).local_status()
         if not model_status.get("model_sha256"):
             model_status["model_sha256"] = _file_sha256(MODEL_PATH)
         return {"status": "ok", "model": model_status}
@@ -114,7 +121,7 @@ def install_model_lab(app: FastAPI, auth_dependency: Callable[..., Any]) -> None
         if len(payload) > MAX_IMAGE_BYTES:
             raise HTTPException(status_code=413, detail="Image exceeds 2 MB")
         try:
-            result = _get_service().predict(payload)
+            result = _core_adapter().predict_local(payload)
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         except FileNotFoundError as exc:
