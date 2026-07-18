@@ -1,0 +1,143 @@
+:root {
+  --a11y-focus: #ffb703;
+  --a11y-focus-shadow: rgba(255, 183, 3, 0.45);
+}
+
+.a11y-sr-only {
+  position: absolute !important;
+  width: 1px !important;
+  height: 1px !important;
+  padding: 0 !important;
+  margin: -1px !important;
+  overflow: hidden !important;
+  clip: rect(0, 0, 0, 0) !important;
+  white-space: nowrap !important;
+  border: 0 !important;
+}
+
+.a11y-skip-link {
+  position: fixed;
+  top: 10px;
+  right: 10px;
+  z-index: 100000;
+  transform: translateY(-180%);
+  background: #111827;
+  color: #ffffff;
+  border: 3px solid var(--a11y-focus);
+  border-radius: 10px;
+  padding: 12px 18px;
+  font-weight: 800;
+  text-decoration: none;
+}
+
+.a11y-skip-link:focus {
+  transform: translateY(0);
+}
+
+.a11y-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 16px;
+  padding: 10px;
+  border: 1px solid rgba(15, 23, 42, 0.14);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.94);
+  box-shadow: 0 6px 18px rgba(15, 23, 42, 0.06);
+}
+
+.a11y-toolbar-button {
+  min-height: 44px;
+  border: 1px solid #1d4ed8;
+  border-radius: 10px;
+  background: #ffffff;
+  color: #1e3a8a;
+  padding: 8px 13px;
+  font-weight: 750;
+  cursor: pointer;
+}
+
+.a11y-toolbar-button[aria-pressed="true"] {
+  background: #1d4ed8;
+  color: #ffffff;
+}
+
+.a11y-shortcut-panel {
+  flex-basis: 100%;
+  line-height: 1.9;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: #eff6ff;
+  color: #172554;
+}
+
+.a11y-shortcut-panel strong,
+.a11y-shortcut-panel span {
+  display: block;
+}
+
+.mahan-a11y-ready :where(a, button, input, select, textarea, [tabindex], .nav-item):focus-visible {
+  outline: 4px solid var(--a11y-focus) !important;
+  outline-offset: 3px !important;
+  box-shadow: 0 0 0 6px var(--a11y-focus-shadow) !important;
+}
+
+.mahan-a11y-ready .nav-item[role="button"] {
+  border-radius: 12px;
+}
+
+.mahan-a11y-ready input,
+.mahan-a11y-ready select,
+.mahan-a11y-ready textarea,
+.mahan-a11y-ready button {
+  min-height: 44px;
+}
+
+.mahan-a11y-ready .form-label,
+.mahan-a11y-ready label {
+  font-weight: 700;
+  color: #1e293b;
+}
+
+.mahan-a11y-ready .text-muted {
+  color: #475569 !important;
+}
+
+.mahan-a11y-ready table th {
+  color: #0f172a;
+  font-weight: 800;
+}
+
+.mahan-a11y-ready .status-badge,
+.mahan-a11y-ready .badge {
+  border: 1px solid currentColor;
+}
+
+@media (prefers-contrast: more), (forced-colors: active) {
+  .a11y-toolbar,
+  .card,
+  .sidebar,
+  .table,
+  input,
+  select,
+  textarea,
+  button {
+    border-width: 2px !important;
+  }
+
+  .mahan-a11y-ready :focus-visible {
+    outline-width: 5px !important;
+  }
+}
+
+@media (max-width: 720px) {
+  .a11y-toolbar {
+    display: grid;
+    grid-template-columns: 1fr;
+  }
+
+  .a11y-toolbar-button {
+    width: 100%;
+  }
+}
