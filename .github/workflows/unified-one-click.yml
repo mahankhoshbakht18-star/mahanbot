@@ -26,30 +26,55 @@ jobs:
         with:
           python-version: "3.12"
           cache: pip
-          cache-dependency-path: requirements-unified.txt
+          cache-dependency-path: |
+            requirements-unified.txt
+            requirements-model.txt
 
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
           python -m pip install -r requirements-unified.txt
+          python -m pip install -r requirements-model.txt
 
       - name: Compile Python
         run: |
-          python -m py_compile unified_launcher.py unified_server.py ui_v2.py sms_ingress.py server_sms_bridge.py sms_notify_core.py browser_launcher.py captcha_service.py
+          python -m py_compile unified_launcher.py unified_server.py ui_v2.py model_lab_api.py offline_model_lab.py sms_ingress.py server_sms_bridge.py sms_notify_core.py browser_launcher.py captcha_service.py
 
       - name: Run focused unit tests
         run: |
-          python -m unittest tests.test_sms_notify_core tests.test_unified_launcher tests.test_ui_v2
+          python -m unittest tests.test_sms_notify_core tests.test_unified_launcher tests.test_ui_v2 tests.test_offline_model_lab
+
+      - name: Validate bundled model checkpoint
+        shell: pwsh
+        run: |
+          if (-not (Test-Path "my_captcha_model.pth")) { throw "my_captcha_model.pth missing" }
+          @'
+          import io
+          from PIL import Image
+          from offline_model_lab import OFFLINE_MODEL_LAB
+
+          model = OFFLINE_MODEL_LAB.load()
+          image = Image.new("L", (160, 60), color=255)
+          stream = io.BytesIO()
+          image.save(stream, format="PNG")
+          result = OFFLINE_MODEL_LAB.predict(stream.getvalue())
+          assert result["scope"] == "offline-test-only"
+          assert result["live_workflow_connected"] is False
+          print("model_checkpoint_ok", result)
+          '@ | python -
 
       - name: Validate JavaScript
         run: |
           node --check static/sms_notify_bridge.js
           node --check static/ui_v2.js
+          node --check static/model_lab.js
 
       - name: Validate dashboard assets
         shell: pwsh
         run: |
           if (-not (Test-Path "static/ui_v2.css")) { throw "ui_v2.css missing" }
+          if (-not (Test-Path "static/model_lab.css")) { throw "model_lab.css missing" }
+          if (-not (Test-Path "requirements-model.txt")) { throw "requirements-model.txt missing" }
           if (Select-String -Path "unified_server.py" -Pattern "open_healthcheck_page\(page" -Quiet) { throw "Healthcheck navigation still active" }
           if (Test-Path "static/healthcheck.html") { throw "Obsolete healthcheck page still packaged" }
 
@@ -57,7 +82,7 @@ jobs:
         env:
           MAHANBOT_BROWSER_CHANNEL: msedge
           MAHANBOT_SMS_DEVICE_KEY: ci-device-key
-        run: python -c "import server_sms_bridge, ui_v2; print('server_import_ok')"
+        run: python -c "import server_sms_bridge, ui_v2, model_lab_api; print('server_import_ok')"
 
       - name: Build clean one-click package
         shell: pwsh
