@@ -4,6 +4,9 @@ on:
   push:
     branches:
       - feature/unified-one-click
+  pull_request:
+    branches:
+      - feature/sms-notify-bridge
   workflow_dispatch:
 
 permissions:
