@@ -8,7 +8,7 @@ LOCAL_TEST_MODES = frozenset({"local_test", "offline_test", "synthetic_test"})
 
 
 class CaptchaService:
-    """Central CAPTCHA service with a strict live/manual boundary.
+    """Manual-only CAPTCHA boundary for live workflows, with local model tests.
 
     Live workflow modes such as ``general`` and ``firewall`` always return
     ``None`` so browser jobs switch to operator entry. The user-owned model is
