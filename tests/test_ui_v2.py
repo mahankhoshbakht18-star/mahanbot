@@ -1,6 +1,14 @@
 import unittest
 
-from ui_v2 import SCRIPT_TAG, STYLE_TAG, _modernize_html
+from ui_v2 import (
+    ACCESSIBILITY_SCRIPT_TAG,
+    ACCESSIBILITY_STYLE_TAG,
+    MODEL_SCRIPT_TAG,
+    MODEL_STYLE_TAG,
+    SCRIPT_TAG,
+    STYLE_TAG,
+    _modernize_html,
+)
 
 
 class UiV2Tests(unittest.TestCase):
@@ -9,6 +17,10 @@ class UiV2Tests(unittest.TestCase):
         result = _modernize_html(source)
         self.assertIn(STYLE_TAG, result)
         self.assertIn(SCRIPT_TAG, result)
+        self.assertIn(MODEL_STYLE_TAG, result)
+        self.assertIn(MODEL_SCRIPT_TAG, result)
+        self.assertIn(ACCESSIBILITY_STYLE_TAG, result)
+        self.assertIn(ACCESSIBILITY_SCRIPT_TAG, result)
         self.assertIn('<body class="mahan-ui-v2">', result)
 
     def test_removes_remote_vazirmatn_and_legacy_inline_theme(self):
@@ -26,8 +38,15 @@ class UiV2Tests(unittest.TestCase):
         source = '<html><head></head><body></body></html>'
         once = _modernize_html(source)
         twice = _modernize_html(once)
-        self.assertEqual(twice.count(STYLE_TAG), 1)
-        self.assertEqual(twice.count(SCRIPT_TAG), 1)
+        for tag in (
+            STYLE_TAG,
+            SCRIPT_TAG,
+            MODEL_STYLE_TAG,
+            MODEL_SCRIPT_TAG,
+            ACCESSIBILITY_STYLE_TAG,
+            ACCESSIBILITY_SCRIPT_TAG,
+        ):
+            self.assertEqual(twice.count(tag), 1)
 
 
 if __name__ == '__main__':
