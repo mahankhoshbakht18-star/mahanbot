@@ -1,0 +1,90 @@
+name: SMS Notify Bridge
+
+on:
+  push:
+    branches:
+      - feature/sms-notify-bridge
+  pull_request:
+    paths:
+      - "sms_notify_core.py"
+      - "server_sms_bridge.py"
+      - "static/sms_notify_bridge.js"
+      - "android_bridge/**"
+      - "tests/test_sms_notify_core.py"
+      - "docs/SMS_NOTIFY_BRIDGE_FA.md"
+      - "setup_sms_bridge_windows.cmd"
+      - "start_sms_bridge_windows.cmd"
+      - "open_sms_bridge_firewall_admin.cmd"
+      - ".env.sms-bridge.example"
+      - ".github/workflows/sms-notify-bridge.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Compile bridge modules
+        run: |
+          python -m py_compile sms_notify_core.py server_sms_bridge.py tests/test_sms_notify_core.py
+
+      - name: Run unit tests
+        run: |
+          python -m unittest -v tests.test_sms_notify_core
+
+      - name: Check dashboard JavaScript
+        run: |
+          node --check static/sms_notify_bridge.js
+
+      - name: Enforce notification-only contract
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          server = Path("server_sms_bridge.py").read_text(encoding="utf-8")
+          android = Path("android_bridge/MahanBotNotifyClient.kt").read_text(encoding="utf-8")
+          forbidden_model_fields = ["code: str", "otp: str", "message_body", "sms_body"]
+          for token in forbidden_model_fields:
+              assert token not in server, token
+          assert '.put("body"' not in android
+          assert '.put("otp"' not in android
+          assert '.put("code"' not in android
+          print("notification-only contract OK")
+          PY
+
+      - name: Build bridge package
+        run: |
+          mkdir -p artifact/MahanBot-SMS-Notify-Bridge/static
+          mkdir -p artifact/MahanBot-SMS-Notify-Bridge/android_bridge
+          mkdir -p artifact/MahanBot-SMS-Notify-Bridge/docs
+          mkdir -p artifact/MahanBot-SMS-Notify-Bridge/tests
+          cp sms_notify_core.py artifact/MahanBot-SMS-Notify-Bridge/
+          cp server_sms_bridge.py artifact/MahanBot-SMS-Notify-Bridge/
+          cp static/sms_notify_bridge.js artifact/MahanBot-SMS-Notify-Bridge/static/
+          cp android_bridge/*.kt artifact/MahanBot-SMS-Notify-Bridge/android_bridge/
+          cp docs/SMS_NOTIFY_BRIDGE_FA.md artifact/MahanBot-SMS-Notify-Bridge/docs/
+          cp tests/test_sms_notify_core.py artifact/MahanBot-SMS-Notify-Bridge/tests/
+          cp setup_sms_bridge_windows.cmd artifact/MahanBot-SMS-Notify-Bridge/
+          cp start_sms_bridge_windows.cmd artifact/MahanBot-SMS-Notify-Bridge/
+          cp open_sms_bridge_firewall_admin.cmd artifact/MahanBot-SMS-Notify-Bridge/
+          cp .env.sms-bridge.example artifact/MahanBot-SMS-Notify-Bridge/
+          cd artifact
+          zip -r MahanBot-SMS-Notify-Bridge.zip MahanBot-SMS-Notify-Bridge
+          sha256sum MahanBot-SMS-Notify-Bridge.zip > MahanBot-SMS-Notify-Bridge.zip.sha256
+
+      - name: Upload tested bridge package
+        uses: actions/upload-artifact@v4
+        with:
+          name: MahanBot-SMS-Notify-Bridge
+          path: |
+            artifact/MahanBot-SMS-Notify-Bridge.zip
+            artifact/MahanBot-SMS-Notify-Bridge.zip.sha256
+          if-no-files-found: error
+          retention-days: 14
