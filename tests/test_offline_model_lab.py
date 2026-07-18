@@ -1,12 +1,24 @@
 import io
 import unittest
 
-import torch
-from PIL import Image
+try:
+    import torch
+    from PIL import Image
 
-from offline_model_lab import BLANK_LABEL, CHARS, OfflineModelLab, _decode_ctc
+    from offline_model_lab import BLANK_LABEL, CHARS, OfflineModelLab, _decode_ctc
+
+    MODEL_RUNTIME_AVAILABLE = True
+except ImportError:
+    torch = None
+    Image = None
+    BLANK_LABEL = 0
+    CHARS = ""
+    OfflineModelLab = None
+    _decode_ctc = None
+    MODEL_RUNTIME_AVAILABLE = False
 
 
+@unittest.skipUnless(MODEL_RUNTIME_AVAILABLE, "offline model runtime is not installed in lightweight CI")
 class OfflineModelLabTests(unittest.TestCase):
     def test_ctc_decode_collapses_repeats_and_blank(self):
         classes = len(CHARS) + 1
