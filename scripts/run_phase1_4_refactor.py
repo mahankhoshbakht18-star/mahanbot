@@ -23,7 +23,6 @@ def _compatible_replace_once(path: str, old: str, new: str) -> bool:
 
 
 def _phase1_4_already_applied() -> bool:
-    """Detect the stable post-migration tree instead of patching it twice."""
     required_markers = {
         "database.py": "def _resolve_database_path() -> str:",
         "server.py": "api_key_is_valid",
@@ -38,9 +37,34 @@ def _phase1_4_already_applied() -> bool:
             return False
     try:
         launcher = migration._read("browser_launcher.py")
+        captcha_service = migration._read("captcha_service.py")
     except (OSError, UnicodeError):
         return False
-    return "--disable-blink-features=AutomationControlled" not in launcher
+    return (
+        "--disable-blink-features=AutomationControlled" not in launcher
+        and "Manual-only CAPTCHA boundary" in captcha_service
+    )
+
+
+def _configure_partial_migration_compatibility() -> None:
+    """Skip only patches already present in this mixed validation tree."""
+    try:
+        launcher = migration._read("browser_launcher.py")
+    except (OSError, UnicodeError):
+        launcher = ""
+    if "--disable-blink-features=AutomationControlled" not in launcher:
+        migration.patch_browser_launcher = lambda: print(
+            "browser_launcher.py is already migrated; skipping browser patch."
+        )
+
+    try:
+        captcha_service = migration._read("captcha_service.py")
+    except (OSError, UnicodeError):
+        captcha_service = ""
+    if "Manual-only CAPTCHA boundary" in captcha_service:
+        migration.patch_captcha_service = lambda: print(
+            "captcha_service.py already enforces the manual live boundary; skipping legacy patch."
+        )
 
 
 migration.replace_once = _compatible_replace_once
@@ -50,4 +74,5 @@ if __name__ == "__main__":
     if _phase1_4_already_applied():
         print("Phase 1-4 refactor is already applied; validation succeeded.")
     else:
+        _configure_partial_migration_compatibility()
         migration.main()
