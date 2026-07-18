@@ -1,0 +1,55 @@
+name: SMS Notify Bridge
+
+on:
+  push:
+    branches:
+      - feature/sms-notify-bridge
+  pull_request:
+    paths:
+      - "sms_notify_core.py"
+      - "server_sms_bridge.py"
+      - "static/sms_notify_bridge.js"
+      - "android_bridge/**"
+      - "tests/test_sms_notify_core.py"
+      - ".github/workflows/sms-notify-bridge.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Compile bridge modules
+        run: |
+          python -m py_compile sms_notify_core.py server_sms_bridge.py tests/test_sms_notify_core.py
+
+      - name: Run unit tests
+        run: |
+          python -m unittest -v tests.test_sms_notify_core
+
+      - name: Check dashboard JavaScript
+        run: |
+          node --check static/sms_notify_bridge.js
+
+      - name: Enforce notification-only contract
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          server = Path("server_sms_bridge.py").read_text(encoding="utf-8")
+          android = Path("android_bridge/MahanBotNotifyClient.kt").read_text(encoding="utf-8")
+          forbidden_model_fields = ["code: str", "otp: str", "message_body", "sms_body"]
+          for token in forbidden_model_fields:
+              assert token not in server, token
+          assert '.put("body"' not in android
+          assert '.put("otp"' not in android
+          assert '.put("code"' not in android
+          print("notification-only contract OK")
+          PY
