@@ -18,6 +18,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -51,36 +53,11 @@ jobs:
       - name: Build clean one-click package
         shell: pwsh
         run: |
-          $root = Join-Path $PWD "dist/MahanBot-OneClick"
-          New-Item -ItemType Directory -Force -Path $root | Out-Null
-          $excluded = @(
-            ".github/",
-            ".git/",
-            "setup_sms_bridge_windows.cmd",
-            "start_sms_bridge_windows.cmd",
-            "open_sms_bridge_firewall_admin.cmd",
-            ".env.sms-bridge.example",
-            "__pycache__/",
-            ".venv/"
-          )
-          $files = git ls-files
-          foreach ($file in $files) {
-            $normalized = $file.Replace("\\", "/")
-            $skip = $false
-            foreach ($pattern in $excluded) {
-              if ($normalized -eq $pattern -or $normalized.StartsWith($pattern)) {
-                $skip = $true
-                break
-              }
-            }
-            if ($skip) { continue }
-            if ($normalized.EndsWith(".db") -or $normalized -eq "mahanbot.env") { continue }
-            $destination = Join-Path $root $file
-            $parent = Split-Path -Parent $destination
-            if ($parent) { New-Item -ItemType Directory -Force -Path $parent | Out-Null }
-            Copy-Item -LiteralPath $file -Destination $destination -Force
+          New-Item -ItemType Directory -Force -Path dist | Out-Null
+          git archive --format=zip --prefix=MahanBot-OneClick/ --output=dist/MahanBot-OneClick-Windows.zip HEAD
+          if (-not (Test-Path "dist/MahanBot-OneClick-Windows.zip")) {
+            throw "Package was not created"
           }
-          Compress-Archive -Path $root -DestinationPath "dist/MahanBot-OneClick-Windows.zip" -Force
           $hash = (Get-FileHash "dist/MahanBot-OneClick-Windows.zip" -Algorithm SHA256).Hash.ToLower()
           "$hash  MahanBot-OneClick-Windows.zip" | Set-Content "dist/MahanBot-OneClick-Windows.zip.sha256" -Encoding ascii
           Get-ChildItem dist
