@@ -1,0 +1,93 @@
+name: Unified One Click Windows Package
+
+on:
+  push:
+    branches:
+      - feature/unified-one-click
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-and-test:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements-unified.txt
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements-unified.txt
+
+      - name: Compile Python
+        run: |
+          python -m py_compile unified_launcher.py unified_server.py sms_ingress.py server_sms_bridge.py sms_notify_core.py browser_launcher.py captcha_service.py
+
+      - name: Run focused unit tests
+        run: |
+          python -m unittest tests.test_sms_notify_core tests.test_unified_launcher
+
+      - name: Validate JavaScript
+        run: node --check static/sms_notify_bridge.js
+
+      - name: Validate server import
+        env:
+          MAHANBOT_BROWSER_CHANNEL: msedge
+          MAHANBOT_SMS_DEVICE_KEY: ci-device-key
+        run: python -c "import server_sms_bridge; print('server_import_ok')"
+
+      - name: Build clean one-click package
+        shell: pwsh
+        run: |
+          $root = Join-Path $PWD "dist/MahanBot-OneClick"
+          New-Item -ItemType Directory -Force -Path $root | Out-Null
+          $excluded = @(
+            ".github/",
+            ".git/",
+            "setup_sms_bridge_windows.cmd",
+            "start_sms_bridge_windows.cmd",
+            "open_sms_bridge_firewall_admin.cmd",
+            ".env.sms-bridge.example",
+            "__pycache__/",
+            ".venv/"
+          )
+          $files = git ls-files
+          foreach ($file in $files) {
+            $normalized = $file.Replace("\\", "/")
+            $skip = $false
+            foreach ($pattern in $excluded) {
+              if ($normalized -eq $pattern -or $normalized.StartsWith($pattern)) {
+                $skip = $true
+                break
+              }
+            }
+            if ($skip) { continue }
+            if ($normalized.EndsWith(".db") -or $normalized -eq "mahanbot.env") { continue }
+            $destination = Join-Path $root $file
+            $parent = Split-Path -Parent $destination
+            if ($parent) { New-Item -ItemType Directory -Force -Path $parent | Out-Null }
+            Copy-Item -LiteralPath $file -Destination $destination -Force
+          }
+          Compress-Archive -Path $root -DestinationPath "dist/MahanBot-OneClick-Windows.zip" -Force
+          $hash = (Get-FileHash "dist/MahanBot-OneClick-Windows.zip" -Algorithm SHA256).Hash.ToLower()
+          "$hash  MahanBot-OneClick-Windows.zip" | Set-Content "dist/MahanBot-OneClick-Windows.zip.sha256" -Encoding ascii
+          Get-ChildItem dist
+
+      - name: Upload package
+        uses: actions/upload-artifact@v4
+        with:
+          name: MahanBot-OneClick-Windows
+          path: |
+            dist/MahanBot-OneClick-Windows.zip
+            dist/MahanBot-OneClick-Windows.zip.sha256
+          if-no-files-found: error
+          retention-days: 30
