@@ -1,0 +1,6 @@
+fastapi>=0.110,<1
+uvicorn[standard]>=0.29,<1
+aiosqlite>=0.20,<1
+pydantic>=2.6,<3
+requests>=2.31,<3
+playwright>=1.42,<2
