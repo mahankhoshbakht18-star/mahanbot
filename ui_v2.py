@@ -11,6 +11,7 @@ STYLE_TAG = '<link rel="stylesheet" href="/static/ui_v2.css?v=20260720" />'
 MODEL_STYLE_TAG = '<link rel="stylesheet" href="/static/model_lab.css?v=20260720" />'
 SCRIPT_TAG = '<script src="/static/ui_v2.js?v=20260720" defer></script>'
 RUNTIME_FIXES_SCRIPT_TAG = '<script src="/static/runtime_fixes.js?v=20260720" defer></script>'
+ACTION_GUARD_SCRIPT_TAG = '<script src="/static/action_guard.js?v=20260720" defer></script>'
 MODEL_SCRIPT_TAG = '<script src="/static/model_lab.js?v=20260720" defer></script>'
 
 
@@ -65,6 +66,7 @@ def _modernize_html(text: str) -> str:
     text = _inject_before_closing(text, "</head>", MODEL_STYLE_TAG)
     text = _inject_before_closing(text, "</body>", SCRIPT_TAG)
     text = _inject_before_closing(text, "</body>", RUNTIME_FIXES_SCRIPT_TAG)
+    text = _inject_before_closing(text, "</body>", ACTION_GUARD_SCRIPT_TAG)
     text = _inject_before_closing(text, "</body>", MODEL_SCRIPT_TAG)
     return text
 
