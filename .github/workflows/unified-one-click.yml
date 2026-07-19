@@ -7,12 +7,14 @@ on:
       - feature/offline-model-lab
       - feature/accessibility-first
       - feature/accessible-one-click-v2
+      - feature/unified-sms-bank-archive
   pull_request:
     branches:
       - feature/sms-notify-bridge
       - feature/unified-one-click
       - feature/offline-model-lab
       - feature/accessibility-first
+      - feature/accessible-one-click-v2
   workflow_dispatch:
 
 permissions:
@@ -44,11 +46,11 @@ jobs:
 
       - name: Compile Python
         run: |
-          python -m py_compile unified_launcher.py unified_server.py ui_v2.py batch_automation.py model_lab_api.py offline_model_lab.py sms_ingress.py server_sms_bridge.py sms_notify_core.py browser_launcher.py captcha_service.py
+          python -m py_compile unified_launcher.py unified_server.py ui_v2.py batch_automation.py operation_center_api.py operation_integration.py bank_archive.py model_lab_api.py offline_model_lab.py sms_ingress.py server_sms_bridge.py sms_notify_core.py browser_launcher.py captcha_service.py
 
       - name: Run focused unit tests
         run: |
-          python -m unittest tests.test_sms_notify_core tests.test_unified_launcher tests.test_ui_v2 tests.test_accessibility_assets tests.test_batch_automation tests.test_offline_model_lab tests.test_captcha_service_local_model
+          python -m unittest tests.test_sms_notify_core tests.test_unified_launcher tests.test_ui_v2 tests.test_accessibility_assets tests.test_batch_automation tests.test_bank_archive tests.test_operation_center_assets tests.test_offline_model_lab tests.test_captcha_service_local_model
 
       - name: Validate bundled model checkpoint through bot core
         shell: pwsh
@@ -79,6 +81,7 @@ jobs:
           node --check static/model_lab.js
           node --check static/accessibility_v1.js
           node --check static/batch_automation.js
+          node --check static/operation_center.js
 
       - name: Validate dashboard assets
         shell: pwsh
@@ -89,6 +92,8 @@ jobs:
           if (-not (Test-Path "static/accessibility_v1.js")) { throw "accessibility_v1.js missing" }
           if (-not (Test-Path "static/batch_automation.css")) { throw "batch_automation.css missing" }
           if (-not (Test-Path "static/batch_automation.js")) { throw "batch_automation.js missing" }
+          if (-not (Test-Path "static/operation_center.css")) { throw "operation_center.css missing" }
+          if (-not (Test-Path "static/operation_center.js")) { throw "operation_center.js missing" }
           if (-not (Test-Path "requirements-model.txt")) { throw "requirements-model.txt missing" }
           if (Select-String -Path "unified_server.py" -Pattern "open_healthcheck_page\(page" -Quiet) { throw "Healthcheck navigation still active" }
           if (Test-Path "static/healthcheck.html") { throw "Obsolete healthcheck page still packaged" }
@@ -96,13 +101,17 @@ jobs:
           if (-not (Select-String -Path "static/accessibility_v1.css" -Pattern ":focus-visible" -Quiet)) { throw "Visible focus style missing" }
           if (-not (Select-String -Path "unified_launcher.py" -Pattern "_normalize_log_level" -Quiet)) { throw "Log level normalization missing" }
           if (-not (Select-String -Path "batch_automation.py" -Pattern "/api/v1/batch/start" -Quiet)) { throw "Batch start endpoint missing" }
+          if (-not (Select-String -Path "operation_center_api.py" -Pattern "/api/v1/operation-center/final-submit" -Quiet)) { throw "Final submit control endpoint missing" }
+          if (-not (Select-String -Path "operation_integration.py" -Pattern "bank_match_found" -Quiet)) { throw "Bank alert event missing" }
+          if (-not (Select-String -Path "operation_integration.py" -Pattern "final_submit_required" -Quiet)) { throw "Final submit checkpoint missing" }
+          if (Select-String -Path "static/operation_center.js" -Pattern '"/receive_sms"' -Quiet) { throw "Legacy duplicate SMS submit path remains in unified center" }
 
       - name: Validate server import
         env:
           MAHANBOT_BROWSER_CHANNEL: msedge
           MAHANBOT_SMS_DEVICE_KEY: ci-device-key
           MAHANBOT_LOG_LEVEL: info
-        run: python -c "import server_sms_bridge, ui_v2, model_lab_api, batch_automation, unified_server; print('server_import_ok')"
+        run: python -c "import server_sms_bridge, ui_v2, model_lab_api, batch_automation, bank_archive, operation_center_api, operation_integration, unified_server; print('server_import_ok')"
 
       - name: Build clean one-click package
         shell: pwsh
@@ -119,7 +128,7 @@ jobs:
       - name: Upload package
         uses: actions/upload-artifact@v4
         with:
-          name: MahanBot-OneClick-Windows-Complete
+          name: MahanBot-OneClick-Windows-SMS-Bank-Archive
           path: |
             dist/MahanBot-OneClick-Windows.zip
             dist/MahanBot-OneClick-Windows.zip.sha256
