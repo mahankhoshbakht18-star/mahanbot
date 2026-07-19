@@ -1,8 +1,18 @@
+import sys
 import threading
+import types
 import unittest
 from unittest.mock import patch
 
-from operation_integration import install_operation_integration
+import operation_integration
+
+
+class FakeBankSelectionBot:
+    def _process_bank_selection_v2(self, page, stop_event):
+        return "original"
+
+    def _process_branch_selection(self, page, stop_event):
+        return "original"
 
 
 class FakeBot:
@@ -43,10 +53,12 @@ class FakePage:
 class OperationIntegrationTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        install_operation_integration()
-        from bot_select import BankSelectionBot
-
-        cls.branch_method = BankSelectionBot._process_branch_selection
+        fake_module = types.ModuleType("bot_select")
+        fake_module.BankSelectionBot = FakeBankSelectionBot
+        operation_integration._INSTALLED = False
+        with patch.dict(sys.modules, {"bot_select": fake_module}):
+            operation_integration.install_operation_integration()
+        cls.branch_method = FakeBankSelectionBot._process_branch_selection
 
     def test_final_submit_off_never_clicks_save(self):
         bot = FakeBot()
