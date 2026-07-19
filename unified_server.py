@@ -5,7 +5,7 @@ import threading
 
 import uvicorn
 
-from model_lab_api import install_model_lab
+from model_lab_api import install_model_lab, warmup_model_lab
 from server_sms_bridge import app as dashboard_app, require_api_key
 from sms_ingress import app as sms_ingress_app
 from ui_v2 import install_ui_v2
@@ -32,6 +32,25 @@ def _serve_ingress(server: uvicorn.Server) -> None:
     server.run()
 
 
+def _warm_model_runtime() -> None:
+    status = warmup_model_lab()
+    if status.get("loaded"):
+        print(
+            "MahanBot local model ready: "
+            f"{status.get('model_file')} on {status.get('device')}"
+        )
+    elif status.get("available"):
+        print(
+            "MahanBot local model was found but could not be loaded: "
+            f"{status.get('load_error') or 'unknown error'}"
+        )
+    else:
+        print(
+            "MahanBot local model not found. Place my_captcha_model.pth "
+            "beside unified_server.py."
+        )
+
+
 def main() -> None:
     dashboard_host = os.getenv("MAHANBOT_DASHBOARD_HOST", "127.0.0.1")
     dashboard_port = int(os.getenv("MAHANBOT_PORT", "8000"))
@@ -42,6 +61,13 @@ def main() -> None:
     _disable_legacy_healthcheck()
     install_model_lab(dashboard_app, require_api_key)
     install_ui_v2(dashboard_app)
+
+    model_warmup_thread = threading.Thread(
+        target=_warm_model_runtime,
+        name="mahanbot-model-warmup",
+        daemon=True,
+    )
+    model_warmup_thread.start()
 
     ingress_config = uvicorn.Config(
         sms_ingress_app,
