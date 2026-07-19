@@ -85,6 +85,16 @@
     }
   }
 
+  function isApplicantActive(status) {
+    const value = safeText(status).toLowerCase();
+    return ['running', 'registering', 'selecting', 'waiting sms'].some((item) => value.includes(item));
+  }
+
+  function setCounter(id, value) {
+    const target = byId(id);
+    if (target) target.textContent = String(value);
+  }
+
   async function hardenedApiCall(path, method = 'GET', body) {
     const controller = new AbortController();
     const timer = window.setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
@@ -188,6 +198,70 @@
     };
   }
 
+  function installSafeDashboard() {
+    if (typeof renderDashboard !== 'function') return;
+    renderDashboard = function renderDashboardSafe(users) {
+      const list = Array.isArray(users) ? users : [];
+      const tbody = byId('activeBotsBody');
+      if (!tbody) return;
+      clearNode(tbody);
+
+      let runningCount = 0;
+      let successCount = 0;
+      let codeCount = 0;
+      let runningNid = null;
+      let activeUser = null;
+
+      list.forEach((user) => {
+        const data = applicantData(user);
+        const rawStatus = safeText(user?.status);
+        const normalizedStatus = rawStatus.toLowerCase();
+        if (data.tracking_code) codeCount += 1;
+        if (normalizedStatus.includes('success')) successCount += 1;
+        if (!isApplicantActive(rawStatus)) return;
+
+        runningCount += 1;
+        const nid = safeText(user?.national_id);
+        if (normalizedStatus.includes('wait')) runningNid = nid;
+        else if (!runningNid) runningNid = nid;
+        if (!activeUser || normalizedStatus.includes('running')) activeUser = user;
+
+        const row = document.createElement('tr');
+        row.dataset.nid = nid;
+        const identity = document.createElement('td');
+        const strong = document.createElement('strong');
+        strong.textContent = safeText(user?.full_name, 'بدون نام');
+        const small = document.createElement('small');
+        small.textContent = nid || '—';
+        identity.append(strong, document.createElement('br'), small);
+        row.appendChild(identity);
+        appendStatusCell(row, rawStatus);
+        actionCell(
+          row,
+          actionButton('توقف', 'btn btn-sm btn-danger rounded-circle', 'fas fa-power-off', () => stopBot(nid)),
+        );
+        tbody.appendChild(row);
+      });
+
+      if (!runningCount) {
+        const row = document.createElement('tr');
+        const cell = document.createElement('td');
+        cell.colSpan = 3;
+        cell.className = 'text-muted small py-3';
+        cell.textContent = 'عملیات فعالی وجود ندارد.';
+        row.appendChild(cell);
+        tbody.appendChild(row);
+      }
+
+      window.currentActiveBotNid = runningNid;
+      if (typeof renderActiveApplicantCard === 'function') renderActiveApplicantCard(activeUser);
+      setCounter('stat-total', list.length);
+      setCounter('stat-active', runningCount);
+      setCounter('stat-success', successCount);
+      setCounter('stat-codes', codeCount);
+    };
+  }
+
   function installSafeLists() {
     if (typeof renderMainList === 'function') {
       renderMainList = function renderMainListSafe(data) {
@@ -250,6 +324,75 @@
     }
   }
 
+  function installSafeLogs() {
+    if (typeof renderLogs !== 'function') return;
+    renderLogs = function renderLogsSafe(clearInitial = false) {
+      const terminal = byId('terminalBox');
+      if (!terminal) return;
+      clearNode(terminal);
+      const events = Array.isArray(logEvents) ? logEvents : [];
+      if (!events.length && clearInitial) {
+        const empty = document.createElement('div');
+        empty.className = 'text-muted';
+        empty.textContent = 'رویدادی ثبت نشده است.';
+        terminal.appendChild(empty);
+        return;
+      }
+
+      const filtered = events.filter((event) => {
+        if (logFilters.type && event.type !== logFilters.type) return false;
+        if (logFilters.level && safeText(event.level).toLowerCase() !== logFilters.level) return false;
+        if (logFilters.nid && !safeText(event.nid).includes(logFilters.nid)) return false;
+        if (logFilters.jobId && !safeText(event.job_id).includes(logFilters.jobId)) return false;
+        if (logFilters.text) {
+          const haystack = `${safeText(event.message)} ${safeText(event.status)} ${safeText(event.name)} ${safeText(event.value)}`.toLowerCase();
+          if (!haystack.includes(logFilters.text)) return false;
+        }
+        return true;
+      });
+
+      if (!filtered.length) {
+        const empty = document.createElement('div');
+        empty.className = 'text-muted';
+        empty.textContent = 'رویدادی مطابق فیلتر پیدا نشد.';
+        terminal.appendChild(empty);
+        return;
+      }
+
+      const levelColors = { error: '#ef5350', warning: '#ffca28', success: '#66bb6a', info: '#42a5f5' };
+      filtered.forEach((event) => {
+        const row = document.createElement('div');
+        const time = document.createElement('span');
+        time.style.color = '#888';
+        time.textContent = `[${event.ts ? new Date(Number(event.ts) * 1000).toLocaleTimeString('fa-IR') : ''}] `;
+        const type = document.createElement('span');
+        type.style.color = '#90a4ae';
+        type.textContent = `(${safeText(event.type, 'event')}) `;
+        const nid = document.createElement('span');
+        nid.style.color = '#00e5ff';
+        nid.textContent = `${safeText(event.nid, 'system')} `;
+        const job = document.createElement('span');
+        job.style.color = '#9ccc65';
+        job.textContent = event.job_id ? `#${safeText(event.job_id).slice(0, 8)} ` : '';
+        const level = document.createElement('span');
+        const levelName = safeText(event.level).toLowerCase();
+        level.style.color = levelColors[levelName] || '#cfd8dc';
+        level.textContent = levelName ? `[${levelName}] ` : '';
+        const message = document.createElement('span');
+        if (event.type === 'job_status') {
+          message.textContent = `status=${safeText(event.status)}${event.detail ? ` (${safeText(event.detail)})` : ''}`;
+        } else if (event.type === 'metric') {
+          message.textContent = `${safeText(event.name)}: ${safeText(event.value)}`;
+        } else {
+          message.textContent = safeText(event.message, '—');
+        }
+        row.append(time, type, nid, job, level, message);
+        terminal.appendChild(row);
+      });
+      terminal.scrollTop = terminal.scrollHeight;
+    };
+  }
+
   function installInputNormalization() {
     const nid = byId('inpNid');
     const otpFields = [byId('otpInput'), byId('manualOtpInput')].filter(Boolean);
@@ -275,7 +418,8 @@
     if (!sidebar || sidebar.dataset.runtimeDelegation === '1') return;
     sidebar.dataset.runtimeDelegation = '1';
     sidebar.addEventListener('click', (event) => {
-      if (event.target.closest('.nav-item')) document.body.classList.remove('mahan-sidebar-open');
+      const target = event.target instanceof Element ? event.target : null;
+      if (target?.closest('.nav-item')) document.body.classList.remove('mahan-sidebar-open');
     });
   }
 
@@ -294,7 +438,9 @@
   function init() {
     installApiHardening();
     installActiveApplicantFix();
+    installSafeDashboard();
     installSafeLists();
+    installSafeLogs();
     installInputNormalization();
     installMobileDelegation();
     installGlobalErrorNotice();
