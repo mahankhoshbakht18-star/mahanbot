@@ -10,7 +10,7 @@ from fastapi.responses import HTMLResponse
 STYLE_TAG = '<link rel="stylesheet" href="/static/ui_v2.css?v=20260718" />'
 SCRIPT_TAG = '<script src="/static/ui_v2.js?v=20260718" defer></script>'
 MODEL_STYLE_TAG = '<link rel="stylesheet" href="/static/model_lab.css?v=20260719" />'
-MODEL_SCRIPT_TAG = '<script src="/static/model_lab.js?v=20260719" defer></script>'
+MODEL_SCRIPT_TAG = '<script src="/static/model_lab.js?v=20260719-2" defer></script>'
 
 
 def _modernize_html(text: str) -> str:
