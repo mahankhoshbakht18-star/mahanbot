@@ -94,8 +94,12 @@ class CaptchaService:
 
 
 def load_captcha_resources() -> Tuple[Any, None]:
-    """Return the shared lazy model instance used by bot core and model lab."""
+    """Return the shared lazy model when its optional runtime is available."""
 
-    from offline_model_lab import OFFLINE_MODEL_LAB
-
+    try:
+        from offline_model_lab import OFFLINE_MODEL_LAB
+    except Exception:
+        # The dashboard and manual live workflow must remain usable even if the
+        # optional torch/Pillow runtime is absent or broken.
+        return None, None
     return OFFLINE_MODEL_LAB, None
