@@ -8,11 +8,11 @@ LOCAL_TEST_MODES = frozenset({"local_test", "offline_test", "synthetic_test"})
 
 
 class CaptchaService:
-    """Manual-only CAPTCHA boundary for live workflows, with local model tests.
+    """Manual CAPTCHA boundary for live workflows plus a local model adapter.
 
-    Live workflow modes such as ``general`` and ``firewall`` always return
-    ``None`` so browser jobs switch to operator entry. The user-owned model is
-    available only through an explicit local-test mode and is lazy-loaded.
+    Live workflow modes always return ``None`` so browser jobs remain on the
+    visible operator-entry path. The local checkpoint can be exercised only by
+    the explicit test/review methods, which have no page or submit callback.
     """
 
     def __init__(
@@ -23,7 +23,7 @@ class CaptchaService:
         local_model: Any = None,
     ) -> None:
         # Legacy constructor arguments are accepted for compatibility but are
-        # never used by live workflows.
+        # intentionally not used by live workflows.
         self._model = None
         self._ocr_firewall = None
         self._local_model = local_model
@@ -47,37 +47,37 @@ class CaptchaService:
 
     def _get_local_model(self) -> Any:
         if self._local_model is None:
-            # Lazy import keeps the main bot lightweight until the developer
-            # explicitly opens the local model test path.
+            # Lazy import keeps the main bot available even when the optional
+            # model runtime is not installed yet.
             from offline_model_lab import OFFLINE_MODEL_LAB
 
             self._local_model = OFFLINE_MODEL_LAB
         return self._local_model
 
-    def predict_local(self, image_bytes: Any) -> Dict[str, Any]:
-        """Run the user-owned checkpoint through the bot's core service.
+    @staticmethod
+    def _decorate_review_boundary(result: Dict[str, Any]) -> Dict[str, Any]:
+        normalized = dict(result)
+        normalized["prediction"] = str(normalized.get("prediction") or "").strip()
+        normalized["integration_route"] = "CaptchaService.local_test"
+        normalized["scope"] = "offline-test-only"
+        normalized["live_workflow_connected"] = False
+        normalized["browser_autofill"] = False
+        normalized["requires_operator_confirmation"] = True
+        return normalized
 
-        This method is intended for synthetic or user-owned local test images.
-        It never receives a browser page, URL, locator, or submit callback.
-        """
+    def predict_local(self, image_bytes: Any) -> Dict[str, Any]:
+        """Run a synthetic or operator-provided image through the local model."""
 
         payload = self._normalize_image_bytes(image_bytes)
         result = self._get_local_model().predict(payload)
         if not isinstance(result, dict):
             raise RuntimeError("Local model returned an invalid result")
-
-        normalized = dict(result)
-        prediction = str(normalized.get("prediction") or "").strip()
-        normalized["prediction"] = prediction
-        normalized["integration_route"] = "CaptchaService.local_test"
-        normalized["scope"] = "offline-test-only"
-        normalized["live_workflow_connected"] = False
-        return normalized
+        return self._decorate_review_boundary(result)
 
     def solve(self, image_bytes: Any, mode: str = "general") -> Optional[str]:
         normalized_mode = str(mode or "general").strip().lower()
         if normalized_mode not in LOCAL_TEST_MODES:
-            # Returning None tells all live bots to use the visible manual flow.
+            # Returning None tells all live bots to use visible operator entry.
             return None
         result = self.predict_local(image_bytes)
         return str(result.get("prediction") or "").strip() or None
@@ -86,12 +86,10 @@ class CaptchaService:
         model = self._get_local_model()
         status = model.status(load=False)
         result = dict(status) if isinstance(status, dict) else {}
-        result["integration_route"] = "CaptchaService.local_test"
-        result["scope"] = "offline-test-only"
-        result["live_workflow_connected"] = False
-        return result
+        return self._decorate_review_boundary(result)
 
 
 def load_captcha_resources() -> Tuple[None, None]:
     """Compatibility helper retained for legacy server startup."""
+
     return None, None
