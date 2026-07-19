@@ -1,5 +1,7 @@
 import io
+import tempfile
 import unittest
+from pathlib import Path
 
 try:
     import torch
@@ -48,10 +50,33 @@ class OfflineModelLabTests(unittest.TestCase):
         with self.assertRaises(FileNotFoundError):
             lab.predict(stream.getvalue())
 
+    def test_oversized_image_dimensions_are_rejected(self):
+        image = Image.new("L", (5000, 5000), color=255)
+        stream = io.BytesIO()
+        image.save(stream, format="PNG")
+        lab = OfflineModelLab(model_path="missing-test-model.pth")
+
+        with self.assertRaisesRegex(ValueError, "dimensions"):
+            lab.predict(stream.getvalue())
+
     def test_status_marks_live_workflow_disconnected(self):
         status = OfflineModelLab(model_path="missing-test-model.pth").status(load=False)
         self.assertFalse(status["live_workflow_connected"])
+        self.assertFalse(status["browser_autofill"])
+        self.assertTrue(status["requires_operator_confirmation"])
         self.assertEqual(status["scope"], "offline-test-only")
+
+    def test_checkpoint_hash_is_cached_until_file_changes(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "model.pth"
+            path.write_bytes(b"first")
+            lab = OfflineModelLab(path)
+            first = lab._model_sha256()
+            second = lab._model_sha256()
+            self.assertEqual(first, second)
+            path.write_bytes(b"second-version")
+            third = lab._model_sha256()
+            self.assertNotEqual(first, third)
 
 
 if __name__ == "__main__":
