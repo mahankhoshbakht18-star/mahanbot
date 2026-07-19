@@ -18,6 +18,20 @@ class FinalSubmitRequest(BaseModel):
     enabled: bool
 
 
+def _ensure_archive_folders() -> int:
+    created = 0
+    for applicant in DBHandler.get_all_applicants():
+        nid = sanitize_nid(applicant.get("national_id"))
+        if not nid:
+            continue
+        try:
+            BANK_ARCHIVE_STORE.applicant_dir(nid)
+            created += 1
+        except Exception:
+            continue
+    return created
+
+
 def _archive_payload(nid: str) -> Dict[str, Any]:
     records = BANK_ARCHIVE_STORE.list_for_applicant(nid)
     result = []
@@ -44,12 +58,22 @@ def install_operation_center(app: FastAPI, auth_dependency: Callable[..., Any]) 
         return
     app.state.operation_center_installed = True
 
+    @app.on_event("startup")
+    async def create_archive_folders_on_startup() -> None:
+        _ensure_archive_folders()
+
     @app.get("/api/v1/operation-center/status")
     def operation_center_status(_: Any = Depends(auth_dependency)) -> Dict[str, Any]:
         settings = DBHandler.get_config() or {}
         applicants = DBHandler.get_all_applicants()
         active = []
         for applicant in applicants:
+            nid = sanitize_nid(applicant.get("national_id"))
+            if nid:
+                try:
+                    BANK_ARCHIVE_STORE.applicant_dir(nid)
+                except Exception:
+                    pass
             status = str(applicant.get("status") or "")
             if any(token in status.lower() for token in ("running", "register", "select", "waiting", "awaiting")):
                 active.append({
@@ -88,6 +112,10 @@ def install_operation_center(app: FastAPI, auth_dependency: Callable[..., Any]) 
         normalized = sanitize_nid(nid)
         if not normalized:
             raise HTTPException(status_code=400, detail="Invalid applicant national ID")
+        try:
+            BANK_ARCHIVE_STORE.applicant_dir(normalized)
+        except Exception:
+            pass
         return _archive_payload(normalized)
 
     @app.get("/api/v1/archives/{nid}/file/{relative_path:path}")
@@ -110,8 +138,15 @@ def install_operation_center(app: FastAPI, auth_dependency: Callable[..., Any]) 
             ".html": "text/html; charset=utf-8",
             ".json": "application/json",
         }.get(suffix, "application/octet-stream")
+        filename = quote(path.name)
+        headers = {
+            "Content-Disposition": f"inline; filename*=UTF-8''{filename}",
+            "X-Content-Type-Options": "nosniff",
+        }
+        if suffix == ".html":
+            headers["Content-Security-Policy"] = "sandbox; default-src 'none'; img-src data:; style-src 'unsafe-inline'"
         return FileResponse(
             path=Path(path),
             media_type=media_type,
-            filename=path.name,
+            headers=headers,
         )
