@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import os
 import threading
+from typing import Any
 
 import uvicorn
+from fastapi import FastAPI, Request
 
 from model_lab_api import install_model_lab, warmup_model_lab
 from server_sms_bridge import app as dashboard_app, require_api_key
@@ -11,8 +13,9 @@ from sms_ingress import app as sms_ingress_app
 from ui_v2 import install_ui_v2
 
 
-def _disabled_healthcheck(*_args, **_kwargs) -> bool:
+def _disabled_healthcheck(*_args: Any, **_kwargs: Any) -> bool:
     """Compatibility no-op: legacy bots may still call this name."""
+
     return True
 
 
@@ -28,6 +31,38 @@ def _disable_legacy_healthcheck() -> None:
     bot_status.open_healthcheck_page = _disabled_healthcheck
 
 
+def _env_port(name: str, default: int) -> int:
+    try:
+        value = int(str(os.getenv(name, default)).strip())
+    except (TypeError, ValueError):
+        value = default
+    if not 1 <= value <= 65535:
+        return default
+    return value
+
+
+def _env_log_level() -> str:
+    allowed = {"critical", "error", "warning", "info", "debug", "trace"}
+    value = str(os.getenv("MAHANBOT_LOG_LEVEL", "warning")).strip().lower()
+    return value if value in allowed else "warning"
+
+
+def _install_common_headers(app: FastAPI) -> None:
+    if getattr(app.state, "mahanbot_common_headers_installed", False):
+        return
+    app.state.mahanbot_common_headers_installed = True
+
+    @app.middleware("http")
+    async def add_common_headers(request: Request, call_next):
+        response = await call_next(request)
+        response.headers.setdefault("X-Content-Type-Options", "nosniff")
+        response.headers.setdefault("Referrer-Policy", "no-referrer")
+        response.headers.setdefault("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
+        if request.url.path.startswith("/api/") or request.url.path in {"/applicants", "/settings"}:
+            response.headers["Cache-Control"] = "no-store, max-age=0"
+        return response
+
+
 def _serve_ingress(server: uvicorn.Server) -> None:
     server.run()
 
@@ -36,7 +71,7 @@ def _warm_model_runtime() -> None:
     status = warmup_model_lab()
     if status.get("loaded"):
         print(
-            "MahanBot local model ready: "
+            "MahanBot local model ready for operator review: "
             f"{status.get('model_file')} on {status.get('device')}"
         )
     elif status.get("available"):
@@ -52,15 +87,20 @@ def _warm_model_runtime() -> None:
 
 
 def main() -> None:
-    dashboard_host = os.getenv("MAHANBOT_DASHBOARD_HOST", "127.0.0.1")
-    dashboard_port = int(os.getenv("MAHANBOT_PORT", "8000"))
-    sms_host = os.getenv("MAHANBOT_SMS_HOST", "0.0.0.0")
-    sms_port = int(os.getenv("MAHANBOT_SMS_PORT", "8010"))
-    log_level = os.getenv("MAHANBOT_LOG_LEVEL", "warning").lower()
+    dashboard_host = str(os.getenv("MAHANBOT_DASHBOARD_HOST", "127.0.0.1")).strip() or "127.0.0.1"
+    dashboard_port = _env_port("MAHANBOT_PORT", 8000)
+    sms_host = str(os.getenv("MAHANBOT_SMS_HOST", "0.0.0.0")).strip() or "0.0.0.0"
+    sms_port = _env_port("MAHANBOT_SMS_PORT", 8010)
+    log_level = _env_log_level()
+
+    if dashboard_port == sms_port and dashboard_host in {sms_host, "0.0.0.0"}:
+        raise RuntimeError("Dashboard and SMS ingress cannot use the same host and port")
 
     _disable_legacy_healthcheck()
     install_model_lab(dashboard_app, require_api_key)
     install_ui_v2(dashboard_app)
+    _install_common_headers(dashboard_app)
+    _install_common_headers(sms_ingress_app)
 
     model_warmup_thread = threading.Thread(
         target=_warm_model_runtime,
