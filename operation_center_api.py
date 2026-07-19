@@ -1,21 +1,40 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import Any, Callable, Dict
 from urllib.parse import quote
 
 from fastapi import Depends, FastAPI, HTTPException
 from fastapi.responses import FileResponse
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 from bank_archive import BANK_ARCHIVE_STORE, sanitize_nid
 from database import DBHandler
 
 
+FINAL_SUBMIT_KEY = "bank_final_submit_enabled"
+
+
 class FinalSubmitRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
+    nid: str = Field(min_length=1, max_length=32)
     enabled: bool
+
+
+def _applicant_data(nid: str) -> Dict[str, Any]:
+    row = DBHandler.get_applicant(nid)
+    if not row:
+        raise HTTPException(status_code=404, detail="Applicant not found")
+    try:
+        row_data = dict(row) if not isinstance(row, dict) else row
+        value = row_data.get("data")
+        if isinstance(value, dict):
+            return dict(value)
+        return json.loads(value or "{}")
+    except Exception:
+        return {}
 
 
 def _ensure_archive_folders() -> int:
@@ -64,7 +83,6 @@ def install_operation_center(app: FastAPI, auth_dependency: Callable[..., Any]) 
 
     @app.get("/api/v1/operation-center/status")
     def operation_center_status(_: Any = Depends(auth_dependency)) -> Dict[str, Any]:
-        settings = DBHandler.get_config() or {}
         applicants = DBHandler.get_all_applicants()
         active = []
         for applicant in applicants:
@@ -83,10 +101,26 @@ def install_operation_center(app: FastAPI, auth_dependency: Callable[..., Any]) 
                 })
         return {
             "status": "ok",
-            "final_submit": bool(settings.get("final_submit", False)),
             "active_applicants": active,
             "archive_root": str(BANK_ARCHIVE_STORE.root),
             "sms_mode": "arrival-notification-plus-manual-code-submit",
+            "final_submit_mode": "per-applicant-one-shot",
+        }
+
+    @app.get("/api/v1/operation-center/final-submit/{nid}")
+    def get_final_submit_permission(
+        nid: str,
+        _: Any = Depends(auth_dependency),
+    ) -> Dict[str, Any]:
+        normalized = sanitize_nid(nid)
+        if not normalized:
+            raise HTTPException(status_code=400, detail="Invalid applicant national ID")
+        data = _applicant_data(normalized)
+        return {
+            "status": "ok",
+            "nid": normalized,
+            "enabled": bool(data.get(FINAL_SUBMIT_KEY, False)),
+            "mode": "one-shot",
         }
 
     @app.post("/api/v1/operation-center/final-submit")
@@ -94,16 +128,21 @@ def install_operation_center(app: FastAPI, auth_dependency: Callable[..., Any]) 
         req: FinalSubmitRequest,
         _: Any = Depends(auth_dependency),
     ) -> Dict[str, Any]:
-        settings = DBHandler.get_config() or {}
-        settings["final_submit"] = bool(req.enabled)
-        DBHandler.update_config(settings)
+        normalized = sanitize_nid(req.nid)
+        if not normalized:
+            raise HTTPException(status_code=400, detail="Invalid applicant national ID")
+        _applicant_data(normalized)
+        if not DBHandler.update_applicant_data(normalized, {FINAL_SUBMIT_KEY: bool(req.enabled)}):
+            raise HTTPException(status_code=500, detail="Final-submit permission could not be saved")
         return {
             "status": "ok",
-            "final_submit": bool(req.enabled),
+            "nid": normalized,
+            "enabled": bool(req.enabled),
+            "mode": "one-shot",
             "message": (
-                "Final submission is enabled for waiting jobs"
+                "One final submission is permitted for this applicant"
                 if req.enabled
-                else "Final submission is disabled; jobs will only notify"
+                else "Final submission permission was revoked for this applicant"
             ),
         }
 
