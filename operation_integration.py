@@ -1,7 +1,8 @@
 from __future__ import annotations
 
+import json
 import time
-from typing import Any, Dict, Iterable, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 from bank_archive import BANK_ARCHIVE_STORE
 from database import DBHandler
@@ -9,6 +10,7 @@ from event_logger import EVENT_BROADCASTER, build_event
 
 
 _INSTALLED = False
+FINAL_SUBMIT_KEY = "bank_final_submit_enabled"
 
 
 def _bank_name(value: Any) -> str:
@@ -81,6 +83,28 @@ def _user_banks(bot: Any) -> Tuple[List[str], List[str]]:
     )
 
 
+def _applicant_data(nid: str) -> Dict[str, Any]:
+    row = DBHandler.get_applicant(nid)
+    if not row:
+        return {}
+    try:
+        row_data = dict(row) if not isinstance(row, dict) else row
+        value = row_data.get("data")
+        if isinstance(value, dict):
+            return dict(value)
+        return json.loads(value or "{}")
+    except Exception:
+        return {}
+
+
+def _final_submit_enabled(nid: str) -> bool:
+    return bool(_applicant_data(nid).get(FINAL_SUBMIT_KEY, False))
+
+
+def _revoke_final_submit(nid: str) -> None:
+    DBHandler.update_applicant_data(nid, {FINAL_SUBMIT_KEY: False})
+
+
 def _emit_bank_matches(bot: Any, page: Any) -> None:
     available = _available_banks(page)
     if not available:
@@ -142,8 +166,7 @@ def _emit_bank_matches(bot: Any, page: Any) -> None:
 def _wait_for_final_permission(bot: Any, page: Any, stop_event: Any, bank: str, branch: str) -> bool:
     announced = False
     while not stop_event.is_set():
-        settings = DBHandler.get_config() or {}
-        if bool(settings.get("final_submit", False)):
+        if _final_submit_enabled(bot.nid):
             return True
         if not announced:
             announced = True
@@ -154,7 +177,7 @@ def _wait_for_final_permission(bot: Any, page: Any, stop_event: Any, bank: str, 
                     nid=bot.nid,
                     bank=bank,
                     branch=branch,
-                    message="بانک و شعبه آماده است؛ ثبت نهایی غیرفعال است.",
+                    message="بانک و شعبه آماده است؛ ثبت نهایی برای این متقاضی مجوز ندارد.",
                 )
             )
             try:
@@ -240,8 +263,13 @@ def install_operation_integration() -> None:
             if not _wait_for_final_permission(self, page, stop_event, bank_name, branch_name):
                 return "waiting"
 
-            page.click("#ctl00_ContentPlaceHolder1_btnSave")
-            DBHandler.update_status(self.nid, "Submitted", "Final submit clicked by enabled operator policy")
+            try:
+                page.click("#ctl00_ContentPlaceHolder1_btnSave")
+            finally:
+                # Permission is one-shot even if the site rejects or interrupts the click.
+                _revoke_final_submit(self.nid)
+
+            DBHandler.update_status(self.nid, "Submitted", "Final submit clicked with one-shot applicant permission")
             EVENT_BROADCASTER.emit_event(
                 build_event(
                     "final_submit_clicked",
@@ -250,7 +278,7 @@ def install_operation_integration() -> None:
                     branch=branch_name,
                 )
             )
-            self.log("✅ ثبت نهایی با مجوز فعال کاربر انجام شد.", "success", page)
+            self.log("✅ ثبت نهایی با مجوز یک‌بارمصرف همین متقاضی انجام شد.", "success", page)
             try:
                 BANK_ARCHIVE_STORE.capture(
                     page,
