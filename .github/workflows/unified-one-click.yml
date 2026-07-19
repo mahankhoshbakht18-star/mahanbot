@@ -50,7 +50,7 @@ jobs:
 
       - name: Run focused unit tests
         run: |
-          python -m unittest tests.test_sms_notify_core tests.test_unified_launcher tests.test_ui_v2 tests.test_accessibility_assets tests.test_batch_automation tests.test_bank_archive tests.test_operation_center_assets tests.test_offline_model_lab tests.test_captcha_service_local_model
+          python -m unittest tests.test_sms_notify_core tests.test_unified_launcher tests.test_ui_v2 tests.test_accessibility_assets tests.test_batch_automation tests.test_bank_archive tests.test_operation_center_assets tests.test_operation_integration tests.test_offline_model_lab tests.test_captcha_service_local_model
 
       - name: Validate bundled model checkpoint through bot core
         shell: pwsh
