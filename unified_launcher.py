@@ -16,6 +16,7 @@ from typing import Dict, Iterable, Optional
 ROOT = Path(__file__).resolve().parent
 ENV_FILE = ROOT / "mahanbot.env"
 DB_FILE = ROOT / "cbi_ultimate.db"
+MODEL_FILE = ROOT / "my_captcha_model.pth"
 PHONE_SETUP_FILE = ROOT / "PHONE_SETUP.txt"
 DASHBOARD_URL = "http://127.0.0.1:8000/"
 SMS_PORT = 8010
@@ -153,6 +154,7 @@ def _prepare_environment() -> Dict[str, str]:
     values.setdefault("MAHANBOT_PORT", "8000")
     values.setdefault("MAHANBOT_SMS_HOST", "0.0.0.0")
     values.setdefault("MAHANBOT_SMS_PORT", str(SMS_PORT))
+    values.setdefault("MAHANBOT_CAPTCHA_MODEL_PATH", str(MODEL_FILE))
     values["MAHANBOT_LOG_LEVEL"] = _normalize_log_level(values.get("MAHANBOT_LOG_LEVEL"))
     values["MAHANBOT_DB_PATH"] = str(DB_FILE)
     # Dashboard is bound only to localhost, so no API-key prompt is needed.
@@ -185,6 +187,7 @@ def main() -> int:
     imported = _import_database_once()
     env = _prepare_environment()
     phone_endpoint = _write_phone_setup(env)
+    model_path = Path(os.path.expandvars(env["MAHANBOT_CAPTCHA_MODEL_PATH"])).expanduser()
 
     print("=" * 68)
     print("MahanBot unified launcher")
@@ -196,6 +199,11 @@ def main() -> int:
     else:
         print("A new database will be created automatically.")
     print(f"Browser runtime: {env['MAHANBOT_BROWSER_CHANNEL']}")
+    if model_path.is_file():
+        print(f"Local model: detected and connected ({model_path})")
+    else:
+        print(f"Local model: not found ({model_path})")
+        print("Place my_captcha_model.pth beside unified_server.py and restart MahanBot.")
     print(f"Dashboard: {DASHBOARD_URL}")
     print(f"Android notification endpoint: {phone_endpoint}")
     print(f"Phone setup file: {PHONE_SETUP_FILE}")
