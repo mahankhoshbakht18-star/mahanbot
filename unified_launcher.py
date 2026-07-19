@@ -88,17 +88,25 @@ def _candidate_databases() -> Iterable[Path]:
 
 
 def _is_valid_sqlite(path: Path) -> bool:
-    if not path.is_file() or path.stat().st_size < 100:
+    try:
+        if not path.is_file() or path.stat().st_size < 100:
+            return False
+    except OSError:
         return False
+
     connection: Optional[sqlite3.Connection] = None
+    cursor: Optional[sqlite3.Cursor] = None
     try:
         connection = sqlite3.connect(str(path), timeout=5)
         connection.execute("PRAGMA query_only=ON")
-        result = connection.execute("PRAGMA quick_check").fetchone()
+        cursor = connection.execute("PRAGMA quick_check")
+        result = cursor.fetchone()
         return bool(result and str(result[0]).lower() == "ok")
-    except sqlite3.Error:
+    except (sqlite3.Error, OSError):
         return False
     finally:
+        if cursor is not None:
+            cursor.close()
         if connection is not None:
             connection.close()
 
@@ -139,32 +147,53 @@ def _import_database_once() -> Optional[Path]:
 def _backup_database(path: Path = DB_FILE) -> Optional[Path]:
     if not _is_valid_sqlite(path):
         return None
-    BACKUP_DIR.mkdir(parents=True, exist_ok=True)
+
+    try:
+        BACKUP_DIR.mkdir(parents=True, exist_ok=True)
+    except OSError:
+        return None
+
     stamp = time.strftime("%Y%m%d-%H%M%S")
-    destination = BACKUP_DIR / f"cbi_ultimate-{stamp}.db"
+    suffix = f"{time.time_ns() % 1_000_000:06d}"
+    destination = BACKUP_DIR / f"cbi_ultimate-{stamp}-{suffix}.db"
     source_conn: Optional[sqlite3.Connection] = None
     target_conn: Optional[sqlite3.Connection] = None
+    backup_ok = False
     try:
         source_conn = sqlite3.connect(str(path), timeout=10)
         target_conn = sqlite3.connect(str(destination), timeout=10)
         source_conn.backup(target_conn)
-        target_conn.execute("PRAGMA quick_check")
-        target_conn.close()
-        target_conn = None
-        if not _is_valid_sqlite(destination):
-            destination.unlink(missing_ok=True)
-            return None
+        target_conn.commit()
+        backup_ok = True
     except (sqlite3.Error, OSError):
-        destination.unlink(missing_ok=True)
-        return None
+        backup_ok = False
     finally:
         if target_conn is not None:
-            target_conn.close()
+            try:
+                target_conn.close()
+            except sqlite3.Error:
+                backup_ok = False
         if source_conn is not None:
-            source_conn.close()
+            try:
+                source_conn.close()
+            except sqlite3.Error:
+                backup_ok = False
+
+    # Windows keeps SQLite files locked until every connection and cursor is
+    # closed. Validate and delete only after both handles are released.
+    if not backup_ok or not _is_valid_sqlite(destination):
+        try:
+            destination.unlink(missing_ok=True)
+        except OSError:
+            pass
+        return None
 
     try:
-        backups = sorted(BACKUP_DIR.glob("cbi_ultimate-*.db"), key=lambda item: item.stat().st_mtime, reverse=True)
+        backups = sorted(
+            BACKUP_DIR.glob("cbi_ultimate-*.db"),
+            key=lambda item: item.stat().st_mtime,
+            reverse=True,
+        )
         for old in backups[MAX_DATABASE_BACKUPS:]:
             old.unlink(missing_ok=True)
     except OSError:
