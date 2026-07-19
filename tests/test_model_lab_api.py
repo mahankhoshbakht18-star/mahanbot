@@ -40,6 +40,7 @@ class ModelLabApiTests(unittest.TestCase):
         self.assertFalse(result["available"])
         self.assertFalse(result["loaded"])
         self.assertEqual(result["integration_route"], "CaptchaService.local_test")
+        self.assertTrue(result["shared_with_bot_core"])
         self.assertFalse(result["live_workflow_connected"])
         self.assertFalse(result["browser_autofill"])
         self.assertTrue(result["requires_operator_confirmation"])
@@ -50,6 +51,7 @@ class ModelLabApiTests(unittest.TestCase):
             result = model_lab_api._decorate_status({"loaded": False}, path)
 
         self.assertEqual(result["scope"], "offline-test-only")
+        self.assertTrue(result["shared_with_bot_core"])
         self.assertFalse(result["live_workflow_connected"])
         self.assertFalse(result["browser_autofill"])
         self.assertTrue(result["requires_operator_confirmation"])
