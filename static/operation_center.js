@@ -4,6 +4,7 @@
   const state = {
     currentNid: "",
     currentName: "",
+    currentStatus: "",
     finalSubmit: false,
     socket: null,
     reconnectTimer: null,
@@ -13,8 +14,9 @@
 
   const byId = (id) => document.getElementById(id);
 
-  function apiHeaders() {
-    const headers = { "Content-Type": "application/json", Accept: "application/json" };
+  function requestHeaders(hasBody = false) {
+    const headers = { Accept: "application/json" };
+    if (hasBody) headers["Content-Type"] = "application/json";
     const key =
       sessionStorage.getItem("mahanbot_api_key") ||
       sessionStorage.getItem("mahanbot.apiKey") ||
@@ -25,10 +27,11 @@
   }
 
   async function api(path, options = {}) {
+    const hasBody = options.body !== undefined && options.body !== null;
     const response = await fetch(path, {
       cache: "no-store",
       ...options,
-      headers: { ...apiHeaders(), ...(options.headers || {}) },
+      headers: { ...requestHeaders(hasBody), ...(options.headers || {}) },
     });
     const payload = await response.json().catch(() => ({}));
     if (!response.ok) throw new Error(payload.detail || `HTTP ${response.status}`);
@@ -148,29 +151,37 @@
   }
 
   function activeApplicantFromRows(rows) {
-    const activeTokens = ["running", "register", "select", "waiting", "awaiting", "submitted"];
+    const activeTokens = ["running", "registering", "selecting", "waiting sms"];
     return rows.find((item) => {
-      const status = String(item.status || "").toLowerCase();
+      const status = String(item.status || "").trim().toLowerCase();
       return activeTokens.some((token) => status.includes(token));
-    }) || rows[0] || null;
+    }) || null;
   }
 
   async function refreshApplicant() {
     try {
-      const rows = await api("/applicants", { method: "GET", headers: { "Content-Type": undefined } });
+      const rows = await api("/applicants", { method: "GET" });
       const list = Array.isArray(rows) ? rows : [];
       const user = activeApplicantFromRows(list);
       state.currentNid = String(user?.national_id || "");
       state.currentName = String(user?.full_name || "");
+      state.currentStatus = String(user?.status || "");
       const label = byId("mocActiveApplicant");
       if (label) {
         label.textContent = user
-          ? `متقاضی فعال: ${state.currentName || "بدون نام"} — ${state.currentNid}`
+          ? `متقاضی فعال: ${state.currentName || "بدون نام"} — ${state.currentNid} — ${state.currentStatus}`
           : "متقاضی فعالی وجود ندارد";
       }
-      if (!state.currentNid) setSmsStatus("ابتدا یک متقاضی را اجرا کنید", "wait");
+      const sendButton = byId("mocOtpSend");
+      const input = byId("mocOtpInput");
+      if (sendButton) sendButton.disabled = !state.currentNid;
+      if (input) input.disabled = !state.currentNid;
+      if (!state.currentNid) setSmsStatus("ابتدا یک Job ثبت یا انتخاب بانک را اجرا کنید", "wait");
       return user;
     } catch (error) {
+      state.currentNid = "";
+      state.currentName = "";
+      state.currentStatus = "";
       setSmsStatus(`خطا در دریافت متقاضی: ${error}`, "alert");
       return null;
     }
@@ -178,12 +189,28 @@
 
   async function refreshOperationStatus() {
     try {
-      const payload = await api("/api/v1/operation-center/status", { method: "GET", headers: { "Content-Type": undefined } });
+      const payload = await api("/api/v1/operation-center/status", { method: "GET" });
       state.finalSubmit = Boolean(payload.final_submit);
       const toggle = byId("mocFinalToggle");
       if (toggle) toggle.checked = state.finalSubmit;
       updateFinalLabel();
     } catch (_) {}
+  }
+
+  async function refreshSmsDeviceStatus() {
+    if (state.latestSmsAt && Date.now() / 1000 - state.latestSmsAt < 45) return;
+    try {
+      const payload = await api("/api/v1/sms/notify/devices", { method: "GET" });
+      const devices = Array.isArray(payload.devices) ? payload.devices : [];
+      const online = devices.filter((item) => Boolean(item.online));
+      if (online.length) {
+        setSmsStatus(`${online.length.toLocaleString("fa-IR")} دستگاه پیامک آنلاین است`, "ok");
+      } else {
+        setSmsStatus("دستگاه پیامک آفلاین است؛ تنظیم اتصال گوشی را بررسی کنید", "wait");
+      }
+    } catch (_) {
+      setSmsStatus("وضعیت اتصال گوشی در دسترس نیست", "alert");
+    }
   }
 
   function updateFinalLabel() {
@@ -218,11 +245,12 @@
   }
 
   async function sendOtp() {
+    await refreshApplicant();
     const input = byId("mocOtpInput");
     const button = byId("mocOtpSend");
     const code = String(input?.value || "").replace(/\D/g, "");
     if (!state.currentNid) {
-      setSmsStatus("متقاضی فعال پیدا نشد", "alert");
+      setSmsStatus("Job فعالی برای دریافت کد وجود ندارد", "alert");
       return;
     }
     if (!/^\d{4,8}$/.test(code)) {
@@ -231,7 +259,7 @@
       return;
     }
     if (button) button.disabled = true;
-    setSmsStatus("در حال ارسال کد به Job فعال…", "wait");
+    setSmsStatus(`در حال ارسال کد برای ${state.currentName || state.currentNid}…`, "wait");
     try {
       await api("/manual_otp", {
         method: "POST",
@@ -243,7 +271,7 @@
     } catch (error) {
       setSmsStatus(`ارسال کد ناموفق بود: ${error}`, "alert");
     } finally {
-      if (button) button.disabled = false;
+      if (button) button.disabled = !state.currentNid;
     }
   }
 
@@ -253,7 +281,7 @@
     box.classList.add("show");
     box.textContent = "در حال دریافت تنظیمات اتصال گوشی…";
     try {
-      const payload = await api("/api/v1/sms/setup", { method: "GET", headers: { "Content-Type": undefined } });
+      const payload = await api("/api/v1/sms/setup", { method: "GET" });
       box.textContent = `Server URL: ${payload.notify_url || "-"}\nHeartbeat URL: ${payload.heartbeat_url || "-"}\nDevice key: ${payload.device_key || "-"}`;
     } catch (error) {
       box.textContent = `تنظیمات اتصال در دسترس نیست: ${error}`;
@@ -264,8 +292,7 @@
     state.latestSmsAt = Number(event?.received_at || event?.created_at || Date.now() / 1000);
     const time = new Date(state.latestSmsAt * 1000).toLocaleTimeString("fa-IR");
     setSmsStatus(`پیامک جدید در ساعت ${time} رسید؛ کد را وارد و ارسال کنید`, "ok");
-    const input = byId("mocOtpInput");
-    input?.focus();
+    byId("mocOtpInput")?.focus();
     beep();
     speak("پیامک جدید دریافت شد. کد را وارد کنید.");
   }
@@ -275,16 +302,13 @@
     const count = byId("mocArchiveCount");
     if (!list || !count) return;
     if (!state.currentNid) {
-      list.textContent = "متقاضی فعال انتخاب نشده است.";
+      list.textContent = "برای مشاهده آرشیو، یک Job مربوط به متقاضی را اجرا کنید.";
       count.textContent = "۰ فایل";
       return;
     }
     list.textContent = "در حال دریافت آرشیو…";
     try {
-      const payload = await api(`/api/v1/archives/${encodeURIComponent(state.currentNid)}`, {
-        method: "GET",
-        headers: { "Content-Type": undefined },
-      });
+      const payload = await api(`/api/v1/archives/${encodeURIComponent(state.currentNid)}`, { method: "GET" });
       const records = Array.isArray(payload.archives) ? payload.archives : [];
       count.textContent = `${records.length.toLocaleString("fa-IR")} رکورد`;
       list.innerHTML = "";
@@ -404,16 +428,18 @@
     buildPanel();
     hideLegacySmsUi();
     bind();
-    await Promise.all([refreshApplicant(), refreshOperationStatus()]);
+    await Promise.all([refreshApplicant(), refreshOperationStatus(), refreshSmsDeviceStatus()]);
     connectEventSocket();
     window.setInterval(refreshApplicant, 2500);
     window.setInterval(refreshOperationStatus, 5000);
+    window.setInterval(refreshSmsDeviceStatus, 5000);
   }
 
   window.MahanBotOperationCenter = {
     onSmsArrival: handleSmsArrival,
     refreshArchives,
     refreshApplicant,
+    refreshSmsDeviceStatus,
   };
 
   if (document.readyState === "loading") {
