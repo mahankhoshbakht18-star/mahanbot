@@ -1,6 +1,7 @@
 import unittest
 
 from ui_v2 import (
+    ACTION_GUARD_SCRIPT_TAG,
     MODEL_SCRIPT_TAG,
     MODEL_STYLE_TAG,
     RUNTIME_FIXES_SCRIPT_TAG,
@@ -18,8 +19,10 @@ class UiV2Tests(unittest.TestCase):
         self.assertIn(MODEL_STYLE_TAG, result)
         self.assertIn(SCRIPT_TAG, result)
         self.assertIn(RUNTIME_FIXES_SCRIPT_TAG, result)
+        self.assertIn(ACTION_GUARD_SCRIPT_TAG, result)
         self.assertIn(MODEL_SCRIPT_TAG, result)
         self.assertIn('<body class="mahan-ui-v2">', result)
+        self.assertLess(result.index(RUNTIME_FIXES_SCRIPT_TAG), result.index(ACTION_GUARD_SCRIPT_TAG))
 
     def test_preserves_existing_body_classes(self):
         source = '<html><head></head><body class="legacy compact"><main>ok</main></body></html>'
@@ -31,6 +34,7 @@ class UiV2Tests(unittest.TestCase):
         result = _modernize_html(source)
         self.assertIn(STYLE_TAG, result)
         self.assertIn(RUNTIME_FIXES_SCRIPT_TAG, result)
+        self.assertIn(ACTION_GUARD_SCRIPT_TAG, result)
 
     def test_removes_remote_vazirmatn_and_legacy_inline_theme(self):
         source = '''
@@ -52,6 +56,7 @@ class UiV2Tests(unittest.TestCase):
             MODEL_STYLE_TAG,
             SCRIPT_TAG,
             RUNTIME_FIXES_SCRIPT_TAG,
+            ACTION_GUARD_SCRIPT_TAG,
             MODEL_SCRIPT_TAG,
         ):
             self.assertEqual(twice.count(asset), 1)
