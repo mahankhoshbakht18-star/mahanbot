@@ -5,6 +5,7 @@ import threading
 
 import uvicorn
 
+from batch_automation import install_batch_automation
 from model_lab_api import install_model_lab
 from server_sms_bridge import app as dashboard_app, require_api_key
 from sms_ingress import app as sms_ingress_app
@@ -37,10 +38,11 @@ def main() -> None:
     dashboard_port = int(os.getenv("MAHANBOT_PORT", "8000"))
     sms_host = os.getenv("MAHANBOT_SMS_HOST", "0.0.0.0")
     sms_port = int(os.getenv("MAHANBOT_SMS_PORT", "8010"))
-    log_level = os.getenv("MAHANBOT_LOG_LEVEL", "warning").lower()
+    log_level = os.getenv("MAHANBOT_LOG_LEVEL", "WARNING").strip().lower()
 
     _disable_legacy_healthcheck()
     install_model_lab(dashboard_app, require_api_key)
+    install_batch_automation(dashboard_app, require_api_key)
     install_ui_v2(dashboard_app)
 
     ingress_config = uvicorn.Config(

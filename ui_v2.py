@@ -13,6 +13,8 @@ MODEL_STYLE_TAG = '<link rel="stylesheet" href="/static/model_lab.css?v=20260719
 MODEL_SCRIPT_TAG = '<script src="/static/model_lab.js?v=20260719" defer></script>'
 ACCESSIBILITY_STYLE_TAG = '<link rel="stylesheet" href="/static/accessibility_v1.css?v=20260719" />'
 ACCESSIBILITY_SCRIPT_TAG = '<script src="/static/accessibility_v1.js?v=20260719" defer></script>'
+BATCH_STYLE_TAG = '<link rel="stylesheet" href="/static/batch_automation.css?v=20260719" />'
+BATCH_SCRIPT_TAG = '<script src="/static/batch_automation.js?v=20260719" defer></script>'
 
 
 def _modernize_html(text: str) -> str:
@@ -36,18 +38,12 @@ def _modernize_html(text: str) -> str:
 
     if '<body class="mahan-ui-v2">' not in text:
         text = text.replace('<body>', '<body class="mahan-ui-v2">', 1)
-    if STYLE_TAG not in text:
-        text = text.replace('</head>', f'    {STYLE_TAG}\n</head>', 1)
-    if MODEL_STYLE_TAG not in text:
-        text = text.replace('</head>', f'    {MODEL_STYLE_TAG}\n</head>', 1)
-    if ACCESSIBILITY_STYLE_TAG not in text:
-        text = text.replace('</head>', f'    {ACCESSIBILITY_STYLE_TAG}\n</head>', 1)
-    if SCRIPT_TAG not in text:
-        text = text.replace('</body>', f'    {SCRIPT_TAG}\n</body>', 1)
-    if MODEL_SCRIPT_TAG not in text:
-        text = text.replace('</body>', f'    {MODEL_SCRIPT_TAG}\n</body>', 1)
-    if ACCESSIBILITY_SCRIPT_TAG not in text:
-        text = text.replace('</body>', f'    {ACCESSIBILITY_SCRIPT_TAG}\n</body>', 1)
+    for tag in (STYLE_TAG, MODEL_STYLE_TAG, ACCESSIBILITY_STYLE_TAG, BATCH_STYLE_TAG):
+        if tag not in text:
+            text = text.replace('</head>', f'    {tag}\n</head>', 1)
+    for tag in (SCRIPT_TAG, MODEL_SCRIPT_TAG, ACCESSIBILITY_SCRIPT_TAG, BATCH_SCRIPT_TAG):
+        if tag not in text:
+            text = text.replace('</body>', f'    {tag}\n</body>', 1)
     return text
 
 

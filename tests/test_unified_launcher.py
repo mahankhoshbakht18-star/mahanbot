@@ -17,6 +17,12 @@ class UnifiedLauncherTests(unittest.TestCase):
             unified_launcher._write_env(path, expected)
             self.assertEqual(unified_launcher._read_env(path), expected)
 
+    def test_log_level_is_case_insensitive_and_has_safe_fallback(self):
+        self.assertEqual(unified_launcher._normalize_log_level("info"), "INFO")
+        self.assertEqual(unified_launcher._normalize_log_level("Warning"), "WARNING")
+        self.assertEqual(unified_launcher._normalize_log_level("invalid"), "INFO")
+        self.assertEqual(unified_launcher._normalize_log_level(None), "INFO")
+
     def test_phone_setup_contains_notification_only_notice(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             original = unified_launcher.PHONE_SETUP_FILE

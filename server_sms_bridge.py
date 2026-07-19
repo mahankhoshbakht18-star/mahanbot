@@ -12,8 +12,13 @@ from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, ConfigDict, Field
 
 from event_logger import EVENT_BROADCASTER, build_event
-from server import app, require_api_key
-from sms_notify_core import SMS_NOTIFY_REGISTRY, SmsArrivalSignal
+
+_VALID_LOG_LEVELS = {"CRITICAL", "ERROR", "WARNING", "INFO", "DEBUG", "NOTSET"}
+_raw_log_level = str(os.getenv("MAHANBOT_LOG_LEVEL") or "INFO").strip().upper()
+os.environ["MAHANBOT_LOG_LEVEL"] = _raw_log_level if _raw_log_level in _VALID_LOG_LEVELS else "INFO"
+
+from server import app, require_api_key  # noqa: E402
+from sms_notify_core import SMS_NOTIFY_REGISTRY, SmsArrivalSignal  # noqa: E402
 
 
 logger = logging.getLogger("mahanbot.sms_notify")
