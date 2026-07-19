@@ -7,6 +7,8 @@ from ui_v2 import (
     BATCH_STYLE_TAG,
     MODEL_SCRIPT_TAG,
     MODEL_STYLE_TAG,
+    OPERATION_SCRIPT_TAG,
+    OPERATION_STYLE_TAG,
     SCRIPT_TAG,
     STYLE_TAG,
     _modernize_html,
@@ -25,6 +27,8 @@ class UiV2Tests(unittest.TestCase):
         self.assertIn(ACCESSIBILITY_SCRIPT_TAG, result)
         self.assertIn(BATCH_STYLE_TAG, result)
         self.assertIn(BATCH_SCRIPT_TAG, result)
+        self.assertIn(OPERATION_STYLE_TAG, result)
+        self.assertIn(OPERATION_SCRIPT_TAG, result)
         self.assertIn('<body class="mahan-ui-v2">', result)
 
     def test_removes_remote_vazirmatn_and_legacy_inline_theme(self):
@@ -51,6 +55,8 @@ class UiV2Tests(unittest.TestCase):
             ACCESSIBILITY_SCRIPT_TAG,
             BATCH_STYLE_TAG,
             BATCH_SCRIPT_TAG,
+            OPERATION_STYLE_TAG,
+            OPERATION_SCRIPT_TAG,
         ):
             self.assertEqual(twice.count(tag), 1)
 
