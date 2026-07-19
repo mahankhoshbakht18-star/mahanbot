@@ -43,8 +43,19 @@ jobs:
       - name: Test SMS notification core
         run: python -m unittest tests.test_sms_notify_core
 
-      - name: Test Windows launcher
-        run: python -m unittest tests.test_unified_launcher
+      - name: Test launcher environment files
+        run: |
+          python -m unittest tests.test_unified_launcher.UnifiedLauncherTests.test_env_round_trip
+          python -m unittest tests.test_unified_launcher.UnifiedLauncherTests.test_env_reader_ignores_invalid_keys
+
+      - name: Test launcher phone setup
+        run: python -m unittest tests.test_unified_launcher.UnifiedLauncherTests.test_phone_setup_contains_notification_only_notice
+
+      - name: Test launcher SQLite validation
+        run: python -m unittest tests.test_unified_launcher.UnifiedLauncherTests.test_sqlite_validation_rejects_corrupt_file
+
+      - name: Test launcher database backup
+        run: python -m unittest tests.test_unified_launcher.UnifiedLauncherTests.test_database_backup_is_valid_and_preserves_rows
 
       - name: Test dashboard UI injection
         run: python -m unittest tests.test_ui_v2
