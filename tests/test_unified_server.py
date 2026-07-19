@@ -1,8 +1,16 @@
 import unittest
 
-from unified_server import _env_port, _origin_is_local
+try:
+    from unified_server import _env_port, _origin_is_local
+
+    SERVER_RUNTIME_AVAILABLE = True
+except ImportError:
+    _env_port = None
+    _origin_is_local = None
+    SERVER_RUNTIME_AVAILABLE = False
 
 
+@unittest.skipUnless(SERVER_RUNTIME_AVAILABLE, "full unified server dependencies are not installed")
 class UnifiedServerTests(unittest.TestCase):
     def test_local_dashboard_origins_are_allowed(self):
         self.assertTrue(_origin_is_local("http://127.0.0.1:8000", 8000))
