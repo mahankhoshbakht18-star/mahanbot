@@ -58,7 +58,7 @@ class OperationIntegrationTests(unittest.TestCase):
         operation_integration._INSTALLED = False
         with patch.dict(sys.modules, {"bot_select": fake_module}):
             operation_integration.install_operation_integration()
-        cls.branch_method = FakeBankSelectionBot._process_branch_selection
+        cls.branch_method = staticmethod(FakeBankSelectionBot._process_branch_selection)
 
     def test_final_submit_off_never_clicks_save(self):
         bot = FakeBot()
