@@ -47,6 +47,13 @@ def resolve_model_path() -> Path:
         return expanded.absolute()
 
 
+def _normalized_path(path: Path) -> Path:
+    try:
+        return path.resolve(strict=False)
+    except OSError:
+        return path.absolute()
+
+
 def _file_sha256(path: Path) -> Optional[str]:
     global _HASH_CACHE_KEY, _HASH_CACHE_VALUE
     if not path.is_file():
@@ -86,9 +93,10 @@ def _get_service() -> Any:
             return _SERVICE
         previous = _SERVICE
         try:
-            from offline_model_lab import OfflineModelLab
+            from offline_model_lab import OFFLINE_MODEL_LAB, OfflineModelLab
 
-            service = OfflineModelLab(target_path)
+            shared_path = _normalized_path(Path(OFFLINE_MODEL_LAB.model_path))
+            service = OFFLINE_MODEL_LAB if shared_path == target_path else OfflineModelLab(target_path)
             _SERVICE = service
             _SERVICE_PATH = target_path
             _IMPORT_ERROR = None
@@ -121,6 +129,7 @@ def _decorate_status(result: Dict[str, Any], path: Path) -> Dict[str, Any]:
     decorated["model_path"] = str(path)
     decorated["integration_route"] = "CaptchaService.local_test"
     decorated["runtime_connected"] = bool(_runtime_dependencies_present() and not decorated.get("runtime_error"))
+    decorated["shared_with_bot_core"] = True
     decorated["scope"] = "offline-test-only"
     decorated["live_workflow_connected"] = False
     decorated["browser_autofill"] = False
@@ -163,7 +172,7 @@ def _lightweight_status() -> Dict[str, Any]:
 
 
 def warmup_model_lab() -> Dict[str, Any]:
-    """Load the local checkpoint in a background thread without blocking UI."""
+    """Load the shared checkpoint in a background thread without blocking UI."""
 
     path = resolve_model_path()
     if not path.is_file():
@@ -236,6 +245,7 @@ def install_model_lab(app: FastAPI, auth_dependency: Callable[..., Any]) -> None
             raise HTTPException(status_code=500, detail=f"Offline inference failed: {exc}") from exc
 
         result["runtime_connected"] = True
+        result["shared_with_bot_core"] = True
         result["browser_autofill"] = False
         result["requires_operator_confirmation"] = True
         return {"status": "ok", "result": result}
