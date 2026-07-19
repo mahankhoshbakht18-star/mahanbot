@@ -38,7 +38,7 @@ jobs:
 
       - name: Compile Python
         run: |
-          python -m py_compile unified_launcher.py unified_server.py ui_v2.py model_lab_api.py offline_model_lab.py sms_ingress.py server_sms_bridge.py sms_notify_core.py browser_launcher.py captcha_service.py
+          python -m py_compile unified_launcher.py unified_server.py ui_v2.py model_lab_api.py offline_model_lab.py sms_ingress.py server_sms_bridge.py sms_notify_core.py browser_launcher.py browser_actions.py captcha_service.py
 
       - name: Run focused unit tests
         run: |
@@ -62,6 +62,8 @@ jobs:
           assert result["integration_route"] == "CaptchaService.local_test"
           assert result["scope"] == "offline-test-only"
           assert result["live_workflow_connected"] is False
+          assert result["browser_autofill"] is False
+          assert result["requires_operator_confirmation"] is True
           assert CaptchaService(local_model=OFFLINE_MODEL_LAB).solve(stream.getvalue(), mode="general") is None
           print("model_core_integration_ok", result)
           '@ | python -
@@ -70,6 +72,7 @@ jobs:
         run: |
           node --check static/sms_notify_bridge.js
           node --check static/ui_v2.js
+          node --check static/runtime_fixes.js
           node --check static/model_lab.js
 
       - name: Validate dashboard assets
@@ -77,15 +80,17 @@ jobs:
         run: |
           if (-not (Test-Path "static/ui_v2.css")) { throw "ui_v2.css missing" }
           if (-not (Test-Path "static/model_lab.css")) { throw "model_lab.css missing" }
+          if (-not (Test-Path "static/runtime_fixes.js")) { throw "runtime_fixes.js missing" }
           if (-not (Test-Path "requirements-model.txt")) { throw "requirements-model.txt missing" }
           if (Select-String -Path "unified_server.py" -Pattern "open_healthcheck_page\(page" -Quiet) { throw "Healthcheck navigation still active" }
           if (Test-Path "static/healthcheck.html") { throw "Obsolete healthcheck page still packaged" }
+          if (-not (Select-String -Path "ui_v2.py" -Pattern "runtime_fixes.js" -Quiet)) { throw "Runtime fixes are not injected" }
 
       - name: Validate server import
         env:
           MAHANBOT_BROWSER_CHANNEL: msedge
           MAHANBOT_SMS_DEVICE_KEY: ci-device-key
-        run: python -c "import server_sms_bridge, ui_v2, model_lab_api; print('server_import_ok')"
+        run: python -c "import server_sms_bridge, ui_v2, model_lab_api, unified_server; print('server_import_ok')"
 
       - name: Build clean one-click package
         shell: pwsh
