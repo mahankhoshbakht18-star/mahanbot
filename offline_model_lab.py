@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import gc
 import hashlib
 import io
 import math
@@ -11,7 +12,7 @@ from typing import Any, Callable, Dict, Optional, Tuple
 import torch
 import torch.nn as nn
 from fastapi import Depends, FastAPI, File, HTTPException, UploadFile, status
-from PIL import Image, UnidentifiedImageError
+from PIL import Image, ImageOps, UnidentifiedImageError
 
 
 IMAGE_WIDTH = 160
@@ -20,13 +21,30 @@ CHARS = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ"
 IDX2CHAR = {index + 1: char for index, char in enumerate(CHARS)}
 BLANK_LABEL = 0
 MAX_IMAGE_BYTES = 2 * 1024 * 1024
+MAX_SOURCE_PIXELS = 20_000_000
 ALLOWED_IMAGE_TYPES = {
     "image/png",
     "image/jpeg",
     "image/webp",
     "image/bmp",
+    "application/octet-stream",
 }
-MODEL_PATH = Path(__file__).resolve().with_name("my_captcha_model.pth")
+
+
+def _default_model_path() -> Path:
+    configured = str(os.getenv("MAHANBOT_CAPTCHA_MODEL_PATH") or "").strip()
+    if configured:
+        path = Path(os.path.expandvars(configured)).expanduser()
+        if not path.is_absolute():
+            path = Path(__file__).resolve().parent / path
+        try:
+            return path.resolve(strict=False)
+        except OSError:
+            return path.absolute()
+    return Path(__file__).resolve().with_name("my_captcha_model.pth")
+
+
+MODEL_PATH = _default_model_path()
 
 
 class CRNN(nn.Module):
@@ -105,8 +123,8 @@ def _decode_ctc(output: torch.Tensor) -> Tuple[str, float]:
     ids = predicted[:, 0].detach().cpu().tolist()
     probs = max_probabilities[:, 0].detach().cpu().tolist()
 
-    chars = []
-    emitted_probabilities = []
+    chars: list[str] = []
+    emitted_probabilities: list[float] = []
     previous = -1
     for index, probability in zip(ids, probs):
         if index != BLANK_LABEL and index != previous:
@@ -126,28 +144,57 @@ def _decode_ctc(output: torch.Tensor) -> Tuple[str, float]:
     return "".join(chars), round(confidence, 4)
 
 
-class OfflineModelLab:
-    """Lazy, local-only inference service for synthetic or user-owned test images.
+def _resolve_device() -> Tuple[torch.device, str]:
+    policy = str(os.getenv("MAHANBOT_MODEL_DEVICE") or "auto").strip().lower()
+    if policy == "cpu":
+        return torch.device("cpu"), policy
+    if policy.startswith("cuda"):
+        if not torch.cuda.is_available():
+            raise RuntimeError("CUDA was requested but is not available")
+        return torch.device(policy), policy
+    return torch.device("cuda" if torch.cuda.is_available() else "cpu"), "auto"
 
-    It is intentionally separate from CaptchaService and is never called by live
-    browser jobs. Uploaded test images are processed in memory and are not saved.
+
+class OfflineModelLab:
+    """Lazy local inference for synthetic or operator-provided test images.
+
+    The result is shown for human review only. This service has no browser page,
+    locator or submit callback and cannot populate a live form automatically.
     """
 
-    def __init__(self, model_path: Path = MODEL_PATH) -> None:
+    def __init__(self, model_path: Path | str = MODEL_PATH) -> None:
         self.model_path = Path(model_path)
-        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        self.device, self._device_policy = _resolve_device()
         self._model: Optional[CRNN] = None
         self._load_error: Optional[str] = None
         self._lock = threading.RLock()
+        self._sha_cache_key: Optional[Tuple[int, int]] = None
+        self._sha_cache_value: Optional[str] = None
 
     def _model_sha256(self) -> Optional[str]:
         if not self.model_path.is_file():
             return None
+        try:
+            stat = self.model_path.stat()
+        except OSError:
+            return None
+        key = (int(stat.st_size), int(stat.st_mtime_ns))
+        with self._lock:
+            if key == self._sha_cache_key:
+                return self._sha_cache_value
+
         digest = hashlib.sha256()
-        with self.model_path.open("rb") as stream:
-            for chunk in iter(lambda: stream.read(1024 * 1024), b""):
-                digest.update(chunk)
-        return digest.hexdigest()
+        try:
+            with self.model_path.open("rb") as stream:
+                for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+                    digest.update(chunk)
+        except OSError:
+            return None
+        value = digest.hexdigest()
+        with self._lock:
+            self._sha_cache_key = key
+            self._sha_cache_value = value
+        return value
 
     def load(self, *, force: bool = False) -> CRNN:
         with self._lock:
@@ -158,10 +205,21 @@ class OfflineModelLab:
             if not self.model_path.is_file():
                 self._load_error = f"Model file not found: {self.model_path.name}"
                 raise FileNotFoundError(self._load_error)
+
             try:
-                model = CRNN(num_chars=len(CHARS)).to(self.device)
-                state_dict = _load_state_dict(self.model_path, self.device)
+                # Load and validate on CPU first. Moving a valid model to the
+                # selected accelerator afterwards produces clearer errors.
+                cpu = torch.device("cpu")
+                model = CRNN(num_chars=len(CHARS))
+                state_dict = _load_state_dict(self.model_path, cpu)
                 model.load_state_dict(state_dict, strict=True)
+                try:
+                    model = model.to(self.device)
+                except Exception:
+                    if self._device_policy != "auto":
+                        raise
+                    self.device = cpu
+                    model = model.to(cpu)
                 model.eval()
                 self._model = model
                 return model
@@ -170,20 +228,26 @@ class OfflineModelLab:
                 raise
 
     def status(self, *, load: bool = False) -> Dict[str, Any]:
-        if load and self._model is None:
+        if load:
             try:
                 self.load()
             except Exception:
                 pass
+        with self._lock:
+            loaded = self._model is not None
+            load_error = self._load_error
+            device = str(self.device)
         return {
             "available": self.model_path.is_file(),
-            "loaded": self._model is not None,
-            "device": str(self.device),
+            "loaded": loaded,
+            "device": device,
             "model_file": self.model_path.name,
             "model_sha256": self._model_sha256(),
-            "load_error": self._load_error,
+            "load_error": load_error,
             "scope": "offline-test-only",
             "live_workflow_connected": False,
+            "browser_autofill": False,
+            "requires_operator_confirmation": True,
         }
 
     def predict(self, image_bytes: bytes) -> Dict[str, Any]:
@@ -194,20 +258,24 @@ class OfflineModelLab:
 
         try:
             with Image.open(io.BytesIO(image_bytes)) as source:
-                source.verify()
-            with Image.open(io.BytesIO(image_bytes)) as source:
-                image = source.convert("L").resize(
+                source.load()
+                width, height = source.size
+                if width <= 0 or height <= 0 or width * height > MAX_SOURCE_PIXELS:
+                    raise ValueError("Image dimensions are not accepted")
+                image = ImageOps.exif_transpose(source).convert("L").resize(
                     (IMAGE_WIDTH, IMAGE_HEIGHT),
                     Image.Resampling.LANCZOS,
                 )
-        except (UnidentifiedImageError, OSError) as exc:
+        except ValueError:
+            raise
+        except (UnidentifiedImageError, OSError, Image.DecompressionBombError) as exc:
             raise ValueError("Unsupported or corrupted image") from exc
 
-        pixels = torch.tensor(list(image.getdata()), dtype=torch.float32)
+        pixels = torch.tensor(bytearray(image.tobytes()), dtype=torch.uint8).to(torch.float32)
         tensor = pixels.reshape(1, 1, IMAGE_HEIGHT, IMAGE_WIDTH).div_(255.0)
         model = self.load()
         with self._lock, torch.inference_mode():
-            output = model(tensor.to(self.device))
+            output = model(tensor.to(self.device, non_blocking=False))
         text, confidence = _decode_ctc(output)
         return {
             "prediction": text,
@@ -217,20 +285,29 @@ class OfflineModelLab:
             "scope": "offline-test-only",
             "saved": False,
             "live_workflow_connected": False,
+            "browser_autofill": False,
+            "requires_operator_confirmation": True,
         }
 
     def unload(self) -> None:
         with self._lock:
             self._model = None
             self._load_error = None
-            if torch.cuda.is_available():
-                torch.cuda.empty_cache()
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
 
 
 OFFLINE_MODEL_LAB = OfflineModelLab()
 
 
 def install_model_lab(app: FastAPI, auth_dependency: Callable[..., Any]) -> None:
+    """Compatibility installer retained for older imports.
+
+    The unified application uses model_lab_api.install_model_lab, but keeping this
+    function avoids breaking standalone users of the earlier module.
+    """
+
     if getattr(app.state, "offline_model_lab_installed", False):
         return
     app.state.offline_model_lab_installed = True
@@ -260,11 +337,14 @@ def install_model_lab(app: FastAPI, auth_dependency: Callable[..., Any]) -> None
         image: UploadFile = File(...),
         _: Any = Depends(auth_dependency),
     ) -> Dict[str, Any]:
-        content_type = str(image.content_type or "").lower()
+        content_type = str(image.content_type or "application/octet-stream").split(";", 1)[0].strip().lower()
         if content_type not in ALLOWED_IMAGE_TYPES:
+            await image.close()
             raise HTTPException(status_code=415, detail="Only PNG, JPEG, WEBP or BMP images are accepted")
         payload = await image.read(MAX_IMAGE_BYTES + 1)
         await image.close()
+        if len(payload) > MAX_IMAGE_BYTES:
+            raise HTTPException(status_code=413, detail="Image exceeds 2 MB")
         try:
             result = OFFLINE_MODEL_LAB.predict(payload)
         except ValueError as exc:
