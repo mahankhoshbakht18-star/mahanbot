@@ -22,11 +22,15 @@ class CaptchaService:
         *,
         local_model: Any = None,
     ) -> None:
-        # Legacy constructor arguments are accepted for compatibility but are
-        # intentionally not used by live workflows.
+        # The legacy server passes its model through the first positional
+        # argument. Adopt it only when it exposes the local review interface.
+        candidate = local_model
+        if candidate is None and model is not None:
+            if callable(getattr(model, "predict", None)) and callable(getattr(model, "status", None)):
+                candidate = model
         self._model = None
         self._ocr_firewall = None
-        self._local_model = local_model
+        self._local_model = candidate
 
     @staticmethod
     def _normalize_image_bytes(image_bytes: Any) -> bytes:
@@ -89,7 +93,9 @@ class CaptchaService:
         return self._decorate_review_boundary(result)
 
 
-def load_captcha_resources() -> Tuple[None, None]:
-    """Compatibility helper retained for legacy server startup."""
+def load_captcha_resources() -> Tuple[Any, None]:
+    """Return the shared lazy model instance used by bot core and model lab."""
 
-    return None, None
+    from offline_model_lab import OFFLINE_MODEL_LAB
+
+    return OFFLINE_MODEL_LAB, None
