@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import json
 import os
 import threading
 from typing import Any
+from urllib.parse import urlsplit
 
 import uvicorn
 from fastapi import FastAPI, Request
@@ -45,6 +47,62 @@ def _env_log_level() -> str:
     allowed = {"critical", "error", "warning", "info", "debug", "trace"}
     value = str(os.getenv("MAHANBOT_LOG_LEVEL", "warning")).strip().lower()
     return value if value in allowed else "warning"
+
+
+def _origin_is_local(origin: str, dashboard_port: int) -> bool:
+    value = str(origin or "").strip()
+    if not value:
+        return True
+    try:
+        parsed = urlsplit(value)
+        hostname = str(parsed.hostname or "").lower()
+        port = parsed.port or (443 if parsed.scheme == "https" else 80)
+    except (TypeError, ValueError):
+        return False
+    return parsed.scheme in {"http", "https"} and hostname in {"127.0.0.1", "localhost", "::1"} and port == dashboard_port
+
+
+class LocalDashboardOriginGuard:
+    """Reject browser cross-origin access to the localhost dashboard.
+
+    Android SMS ingress is served by a separate app and is authenticated with a
+    device key. This guard protects both dashboard HTTP and WebSocket traffic.
+    """
+
+    def __init__(self, app: Any, dashboard_port: int) -> None:
+        self.app = app
+        self.dashboard_port = dashboard_port
+
+    async def __call__(self, scope: dict, receive: Any, send: Any) -> None:
+        if scope.get("type") not in {"http", "websocket"}:
+            await self.app(scope, receive, send)
+            return
+        headers = {
+            key.decode("latin-1").lower(): value.decode("latin-1")
+            for key, value in scope.get("headers", [])
+        }
+        origin = headers.get("origin", "")
+        if _origin_is_local(origin, self.dashboard_port):
+            await self.app(scope, receive, send)
+            return
+
+        if scope.get("type") == "websocket":
+            await send({"type": "websocket.close", "code": 1008, "reason": "Origin not allowed"})
+            return
+
+        payload = json.dumps({"detail": "Origin not allowed"}).encode("utf-8")
+        await send(
+            {
+                "type": "http.response.start",
+                "status": 403,
+                "headers": [
+                    (b"content-type", b"application/json; charset=utf-8"),
+                    (b"content-length", str(len(payload)).encode("ascii")),
+                    (b"cache-control", b"no-store"),
+                ],
+            }
+        )
+        await send({"type": "http.response.body", "body": payload})
 
 
 def _install_common_headers(app: FastAPI) -> None:
@@ -126,8 +184,9 @@ def main() -> None:
     )
     ingress_thread.start()
 
+    guarded_dashboard_app = LocalDashboardOriginGuard(dashboard_app, dashboard_port)
     dashboard_config = uvicorn.Config(
-        dashboard_app,
+        guarded_dashboard_app,
         host=dashboard_host,
         port=dashboard_port,
         log_level=log_level,
