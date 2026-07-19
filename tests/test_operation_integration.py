@@ -69,8 +69,12 @@ class OperationIntegrationTests(unittest.TestCase):
             stop_event.set()
 
         with (
-            patch("operation_integration.DBHandler.get_config", return_value={"final_submit": False}),
+            patch(
+                "operation_integration.DBHandler.get_applicant",
+                return_value={"data": '{"bank_final_submit_enabled": false}'},
+            ),
             patch("operation_integration.DBHandler.update_status"),
+            patch("operation_integration.DBHandler.update_applicant_data"),
             patch("operation_integration.BANK_ARCHIVE_STORE.capture", return_value={}),
             patch("operation_integration.EVENT_BROADCASTER.emit_event"),
             patch("operation_integration.time.sleep", side_effect=stop_after_wait),
@@ -80,14 +84,18 @@ class OperationIntegrationTests(unittest.TestCase):
         self.assertEqual(result, "waiting")
         self.assertEqual(page.clicked, [])
 
-    def test_final_submit_on_clicks_save_once(self):
+    def test_final_submit_on_clicks_save_once_and_revokes_permission(self):
         bot = FakeBot()
         page = FakePage()
         stop_event = threading.Event()
 
         with (
-            patch("operation_integration.DBHandler.get_config", return_value={"final_submit": True}),
+            patch(
+                "operation_integration.DBHandler.get_applicant",
+                return_value={"data": '{"bank_final_submit_enabled": true}'},
+            ),
             patch("operation_integration.DBHandler.update_status"),
+            patch("operation_integration.DBHandler.update_applicant_data", return_value=True) as update_data,
             patch("operation_integration.BANK_ARCHIVE_STORE.capture", return_value={}),
             patch("operation_integration.EVENT_BROADCASTER.emit_event"),
         ):
@@ -95,6 +103,7 @@ class OperationIntegrationTests(unittest.TestCase):
 
         self.assertEqual(result, "submitted")
         self.assertEqual(page.clicked, ["#ctl00_ContentPlaceHolder1_btnSave"])
+        update_data.assert_called_with("1234567890", {"bank_final_submit_enabled": False})
 
 
 if __name__ == "__main__":
