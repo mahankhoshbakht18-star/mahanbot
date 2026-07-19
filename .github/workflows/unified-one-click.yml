@@ -51,20 +51,22 @@ jobs:
           @'
           import io
           from PIL import Image
-          from captcha_service import CaptchaService
+          from captcha_service import CaptchaService, load_captcha_resources
           from offline_model_lab import OFFLINE_MODEL_LAB
 
+          shared_model, _ = load_captcha_resources()
+          assert shared_model is OFFLINE_MODEL_LAB
           OFFLINE_MODEL_LAB.load()
           image = Image.new("L", (160, 60), color=255)
           stream = io.BytesIO()
           image.save(stream, format="PNG")
-          result = CaptchaService(local_model=OFFLINE_MODEL_LAB).predict_local(stream.getvalue())
+          result = CaptchaService(model=shared_model).predict_local(stream.getvalue())
           assert result["integration_route"] == "CaptchaService.local_test"
           assert result["scope"] == "offline-test-only"
           assert result["live_workflow_connected"] is False
           assert result["browser_autofill"] is False
           assert result["requires_operator_confirmation"] is True
-          assert CaptchaService(local_model=OFFLINE_MODEL_LAB).solve(stream.getvalue(), mode="general") is None
+          assert CaptchaService(model=shared_model).solve(stream.getvalue(), mode="general") is None
           print("model_core_integration_ok", result)
           '@ | python -
 
@@ -73,6 +75,7 @@ jobs:
           node --check static/sms_notify_bridge.js
           node --check static/ui_v2.js
           node --check static/runtime_fixes.js
+          node --check static/action_guard.js
           node --check static/model_lab.js
 
       - name: Validate dashboard assets
@@ -81,10 +84,12 @@ jobs:
           if (-not (Test-Path "static/ui_v2.css")) { throw "ui_v2.css missing" }
           if (-not (Test-Path "static/model_lab.css")) { throw "model_lab.css missing" }
           if (-not (Test-Path "static/runtime_fixes.js")) { throw "runtime_fixes.js missing" }
+          if (-not (Test-Path "static/action_guard.js")) { throw "action_guard.js missing" }
           if (-not (Test-Path "requirements-model.txt")) { throw "requirements-model.txt missing" }
           if (Select-String -Path "unified_server.py" -Pattern "open_healthcheck_page\(page" -Quiet) { throw "Healthcheck navigation still active" }
           if (Test-Path "static/healthcheck.html") { throw "Obsolete healthcheck page still packaged" }
           if (-not (Select-String -Path "ui_v2.py" -Pattern "runtime_fixes.js" -Quiet)) { throw "Runtime fixes are not injected" }
+          if (-not (Select-String -Path "ui_v2.py" -Pattern "action_guard.js" -Quiet)) { throw "Action guard is not injected" }
 
       - name: Validate server import
         env:
