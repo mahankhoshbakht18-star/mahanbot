@@ -7,6 +7,8 @@ import uvicorn
 
 from batch_automation import install_batch_automation
 from model_lab_api import install_model_lab
+from operation_center_api import install_operation_center
+from operation_integration import install_operation_integration
 from server_sms_bridge import app as dashboard_app, require_api_key
 from sms_ingress import app as sms_ingress_app
 from ui_v2 import install_ui_v2
@@ -41,8 +43,10 @@ def main() -> None:
     log_level = os.getenv("MAHANBOT_LOG_LEVEL", "WARNING").strip().lower()
 
     _disable_legacy_healthcheck()
+    install_operation_integration()
     install_model_lab(dashboard_app, require_api_key)
     install_batch_automation(dashboard_app, require_api_key)
+    install_operation_center(dashboard_app, require_api_key)
     install_ui_v2(dashboard_app)
 
     ingress_config = uvicorn.Config(
