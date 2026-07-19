@@ -19,6 +19,7 @@ DB_FILE = ROOT / "cbi_ultimate.db"
 PHONE_SETUP_FILE = ROOT / "PHONE_SETUP.txt"
 DASHBOARD_URL = "http://127.0.0.1:8000/"
 SMS_PORT = 8010
+VALID_LOG_LEVELS = frozenset({"CRITICAL", "ERROR", "WARNING", "INFO", "DEBUG", "NOTSET"})
 
 
 def _read_env(path: Path) -> Dict[str, str]:
@@ -138,6 +139,11 @@ def _wait_for(url: str, timeout: float = 45.0) -> bool:
     return False
 
 
+def _normalize_log_level(value: object) -> str:
+    level = str(value or "INFO").strip().upper()
+    return level if level in VALID_LOG_LEVELS else "INFO"
+
+
 def _prepare_environment() -> Dict[str, str]:
     values = _read_env(ENV_FILE)
     values.setdefault("MAHANBOT_SMS_DEVICE_KEY", secrets.token_urlsafe(32))
@@ -147,7 +153,7 @@ def _prepare_environment() -> Dict[str, str]:
     values.setdefault("MAHANBOT_PORT", "8000")
     values.setdefault("MAHANBOT_SMS_HOST", "0.0.0.0")
     values.setdefault("MAHANBOT_SMS_PORT", str(SMS_PORT))
-    values.setdefault("MAHANBOT_LOG_LEVEL", "info")
+    values["MAHANBOT_LOG_LEVEL"] = _normalize_log_level(values.get("MAHANBOT_LOG_LEVEL"))
     values["MAHANBOT_DB_PATH"] = str(DB_FILE)
     # Dashboard is bound only to localhost, so no API-key prompt is needed.
     values["MAHANBOT_API_KEY"] = ""
