@@ -3,6 +3,7 @@
 
   const API_BASE = `${location.protocol}//${location.host}`;
   let selectedFile = null;
+  let statusRefreshTimer = null;
 
   function byId(id) {
     return document.getElementById(id);
@@ -24,13 +25,24 @@
     if (loader) loader.hidden = !isBusy;
   }
 
+  function setControlBusy(isBusy) {
+    const loadButton = byId('modelLabLoadButton');
+    const unloadButton = byId('modelLabUnloadButton');
+    if (loadButton) loadButton.disabled = isBusy;
+    if (unloadButton) unloadButton.disabled = isBusy;
+  }
+
   function renderStatus(model) {
     const target = byId('modelLabStatus');
     if (!target) return;
     const available = Boolean(model?.available);
     const loaded = Boolean(model?.loaded);
     const stateClass = loaded ? 'is-ready' : available ? 'is-idle' : 'is-error';
-    const stateText = loaded ? 'مدل آماده است' : available ? 'مدل موجود است؛ هنگام تست بارگذاری می‌شود' : 'فایل مدل پیدا نشد';
+    const stateText = loaded
+      ? 'مدل به هسته بات متصل و آماده است'
+      : available
+        ? 'فایل مدل شناسایی شد؛ در حال آماده‌سازی'
+        : 'فایل مدل پیدا نشد';
     target.className = `model-lab-status ${stateClass}`;
     target.innerHTML = `
       <div class="model-lab-status-icon"><i class="fas fa-brain"></i></div>
@@ -39,9 +51,20 @@
         <div class="model-lab-meta">
           دستگاه پردازش: ${escapeHtml(model?.device || '--')} · فایل: ${escapeHtml(model?.model_file || '--')}
         </div>
+        <div class="model-lab-meta">مسیر اتصال: CaptchaService.local_test</div>
         ${model?.load_error ? `<div class="model-lab-error">${escapeHtml(model.load_error)}</div>` : ''}
       </div>
     `;
+  }
+
+  function scheduleStatusRefresh(model) {
+    if (statusRefreshTimer) {
+      clearTimeout(statusRefreshTimer);
+      statusRefreshTimer = null;
+    }
+    if (model?.available && !model?.loaded && !model?.load_error && !document.hidden) {
+      statusRefreshTimer = setTimeout(refreshStatus, 1500);
+    }
   }
 
   async function refreshStatus() {
@@ -49,9 +72,15 @@
       const response = await fetch(`${API_BASE}/api/v1/model/status`, { cache: 'no-store' });
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
       const payload = await response.json();
-      renderStatus(payload.model || {});
+      const model = payload.model || {};
+      renderStatus(model);
+      scheduleStatusRefresh(model);
+      return model;
     } catch (error) {
-      renderStatus({ available: false, load_error: String(error) });
+      const model = { available: false, load_error: String(error) };
+      renderStatus(model);
+      scheduleStatusRefresh(model);
+      return model;
     }
   }
 
@@ -71,6 +100,21 @@
       preview.hidden = false;
     });
     reader.readAsDataURL(file);
+  }
+
+  async function loadModel() {
+    setControlBusy(true);
+    try {
+      const response = await fetch(`${API_BASE}/api/v1/model/load`, { method: 'POST' });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(payload.detail || `HTTP ${response.status}`);
+      renderStatus(payload.model || {});
+    } catch (error) {
+      renderStatus({ available: true, loaded: false, load_error: String(error) });
+    } finally {
+      setControlBusy(false);
+      await refreshStatus();
+    }
   }
 
   async function predict() {
@@ -95,14 +139,14 @@
       if (resultBox) {
         resultBox.className = 'model-lab-result is-success';
         resultBox.innerHTML = `
-          <div class="model-lab-result-label">خروجی مدل آفلاین</div>
+          <div class="model-lab-result-label">خروجی مدل محلی بات</div>
           <div class="model-lab-prediction" dir="ltr">${escapeHtml(result.prediction || '—')}</div>
           <div class="model-lab-confidence">
             <span>اطمینان تقریبی</span>
             <strong>${percentage.toLocaleString('fa-IR')}٪</strong>
           </div>
           <div class="model-lab-progress"><span style="width:${Math.max(0, Math.min(100, percentage))}%"></span></div>
-          <small>تصویر ذخیره نشد و این نتیجه به Job یا مرورگر زنده ارسال نشده است.</small>
+          <small>مدل به هسته بات متصل است، اما نتیجه به Job یا مرورگر زنده ارسال و ثبت خودکار نمی‌شود.</small>
         `;
       }
       await refreshStatus();
@@ -117,12 +161,11 @@
   }
 
   async function unloadModel() {
-    const button = byId('modelLabUnloadButton');
-    if (button) button.disabled = true;
+    setControlBusy(true);
     try {
       await fetch(`${API_BASE}/api/v1/model/unload`, { method: 'POST' });
     } finally {
-      if (button) button.disabled = false;
+      setControlBusy(false);
       await refreshStatus();
     }
   }
@@ -153,18 +196,23 @@
         <div>
           <span class="model-lab-kicker">پردازش محلی</span>
           <h2>آزمایشگاه مدل</h2>
-          <p>بررسی مدل اختصاصی فقط با تصاویر ساختگی یا تصاویر آزمایشی متعلق به خودتان.</p>
+          <p>مدل اختصاصی از مسیر پروژه بارگذاری و در هسته محلی بات اجرا می‌شود.</p>
         </div>
-        <button id="modelLabUnloadButton" class="btn btn-outline-secondary" type="button">
-          <i class="fas fa-power-off"></i> آزادسازی حافظه مدل
-        </button>
+        <div class="model-lab-actions">
+          <button id="modelLabLoadButton" class="btn btn-primary" type="button">
+            <i class="fas fa-plug"></i> بارگذاری مدل
+          </button>
+          <button id="modelLabUnloadButton" class="btn btn-outline-secondary" type="button">
+            <i class="fas fa-power-off"></i> آزادسازی حافظه
+          </button>
+        </div>
       </div>
 
       <div class="model-lab-notice">
         <i class="fas fa-shield-alt"></i>
         <div>
-          <strong>جریان زنده همچنان دستی است</strong>
-          <span>این بخش به مرورگر، Job بانکی یا کپچای سایت زنده متصل نیست و فقط برای ارزیابی آفلاین مدل استفاده می‌شود.</span>
+          <strong>اتصال مدل به بات فعال است؛ جریان زنده همچنان دستی است</strong>
+          <span>مدل برای ارزیابی محلی در دسترس است و خروجی آن بدون تأیید اپراتور وارد Job بانکی یا مرورگر زنده نمی‌شود.</span>
         </div>
       </div>
 
@@ -185,7 +233,7 @@
           </label>
           <button id="modelLabPredictButton" class="btn btn-primary model-lab-run" type="button" disabled>
             <span id="modelLabLoader" class="spinner-border spinner-border-sm" hidden></span>
-            <i class="fas fa-play"></i> اجرای مدل آفلاین
+            <i class="fas fa-play"></i> اجرای مدل محلی
           </button>
         </section>
 
@@ -222,8 +270,12 @@
       }
       setBusy(false);
     });
+    byId('modelLabLoadButton')?.addEventListener('click', loadModel);
     byId('modelLabPredictButton')?.addEventListener('click', predict);
     byId('modelLabUnloadButton')?.addEventListener('click', unloadModel);
+    document.addEventListener('visibilitychange', () => {
+      if (!document.hidden) refreshStatus();
+    });
     refreshStatus();
   }
 
