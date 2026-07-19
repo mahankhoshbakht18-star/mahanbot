@@ -1,3 +1,4 @@
+import sqlite3
 import tempfile
 import unittest
 from pathlib import Path
@@ -17,6 +18,12 @@ class UnifiedLauncherTests(unittest.TestCase):
             unified_launcher._write_env(path, expected)
             self.assertEqual(unified_launcher._read_env(path), expected)
 
+    def test_env_reader_ignores_invalid_keys(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "mahanbot.env"
+            path.write_text("VALID_KEY=ok\nBAD KEY=no\n# comment\n", encoding="utf-8")
+            self.assertEqual(unified_launcher._read_env(path), {"VALID_KEY": "ok"})
+
     def test_phone_setup_contains_notification_only_notice(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             original = unified_launcher.PHONE_SETUP_FILE
@@ -34,6 +41,34 @@ class UnifiedLauncherTests(unittest.TestCase):
                 self.assertNotIn("otp=", text.lower())
             finally:
                 unified_launcher.PHONE_SETUP_FILE = original
+
+    def test_sqlite_validation_rejects_corrupt_file(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            corrupt = Path(temp_dir) / "corrupt.db"
+            corrupt.write_bytes(b"this is not sqlite")
+            self.assertFalse(unified_launcher._is_valid_sqlite(corrupt))
+
+    def test_database_backup_is_valid_and_preserves_rows(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            source = root / "source.db"
+            with sqlite3.connect(source) as connection:
+                connection.execute("CREATE TABLE sample (id INTEGER PRIMARY KEY, value TEXT)")
+                connection.execute("INSERT INTO sample(value) VALUES (?)", ("kept",))
+                connection.commit()
+
+            original_backup_dir = unified_launcher.BACKUP_DIR
+            try:
+                unified_launcher.BACKUP_DIR = root / "backups"
+                backup = unified_launcher._backup_database(source)
+            finally:
+                unified_launcher.BACKUP_DIR = original_backup_dir
+
+            self.assertIsNotNone(backup)
+            self.assertTrue(unified_launcher._is_valid_sqlite(backup))
+            with sqlite3.connect(backup) as connection:
+                row = connection.execute("SELECT value FROM sample").fetchone()
+            self.assertEqual(row, ("kept",))
 
 
 if __name__ == "__main__":
