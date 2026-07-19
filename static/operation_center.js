@@ -42,7 +42,6 @@
     const manual = byId("manualOtpInput");
     const manualRow = manual?.closest(".d-flex.align-items-center.gap-2");
     if (manualRow) manualRow.hidden = true;
-
     const otp = byId("otpInput");
     const otpCard = otp?.closest(".card");
     if (otpCard) otpCard.hidden = true;
@@ -81,8 +80,8 @@
         <section class="moc-card" aria-labelledby="mocBankTitle">
           <h3 id="mocBankTitle"><i class="fas fa-university"></i> بانک منتخب و ثبت نهایی</h3>
           <div class="moc-final">
-            <div><strong id="mocFinalLabel">ثبت نهایی خاموش است</strong><small>خاموش: فقط اعلان؛ روشن: دکمه ذخیره زده می‌شود</small></div>
-            <input id="mocFinalToggle" class="moc-switch" type="checkbox" role="switch" aria-label="فعال‌سازی ثبت نهایی">
+            <div><strong id="mocFinalLabel">ثبت نهایی مجوز ندارد</strong><small>مجوز فقط برای متقاضی فعال و فقط یک بار مصرف می‌شود</small></div>
+            <button id="mocFinalButton" class="moc-button danger" type="button">ثبت نهایی این متقاضی</button>
           </div>
           <div id="mocBankAlert" class="moc-alert-box" aria-live="assertive">هنوز بانک منتخب مشاهده نشده است.</div>
         </section>
@@ -151,21 +150,38 @@
   }
 
   function activeApplicantFromRows(rows) {
-    const activeTokens = ["running", "registering", "selecting", "waiting sms"];
+    const activeTokens = ["running", "registering", "selecting", "waiting sms", "awaiting final submit"];
     return rows.find((item) => {
       const status = String(item.status || "").trim().toLowerCase();
       return activeTokens.some((token) => status.includes(token));
     }) || null;
   }
 
+  function updateFinalUi() {
+    const label = byId("mocFinalLabel");
+    const button = byId("mocFinalButton");
+    if (label) {
+      label.textContent = state.finalSubmit
+        ? "مجوز یک‌بارمصرف ثبت نهایی صادر شده است"
+        : "ثبت نهایی مجوز ندارد";
+      label.style.color = state.finalSubmit ? "#047857" : "#b45309";
+    }
+    if (button) {
+      button.disabled = !state.currentNid || state.finalSubmit;
+      button.textContent = state.finalSubmit ? "منتظر ثبت نهایی…" : "ثبت نهایی این متقاضی";
+    }
+  }
+
   async function refreshApplicant() {
     try {
       const rows = await api("/applicants", { method: "GET" });
       const list = Array.isArray(rows) ? rows : [];
+      const previousNid = state.currentNid;
       const user = activeApplicantFromRows(list);
       state.currentNid = String(user?.national_id || "");
       state.currentName = String(user?.full_name || "");
       state.currentStatus = String(user?.status || "");
+      if (previousNid !== state.currentNid) state.finalSubmit = false;
       const label = byId("mocActiveApplicant");
       if (label) {
         label.textContent = user
@@ -176,25 +192,34 @@
       const input = byId("mocOtpInput");
       if (sendButton) sendButton.disabled = !state.currentNid;
       if (input) input.disabled = !state.currentNid;
+      updateFinalUi();
       if (!state.currentNid) setSmsStatus("ابتدا یک Job ثبت یا انتخاب بانک را اجرا کنید", "wait");
       return user;
     } catch (error) {
       state.currentNid = "";
       state.currentName = "";
       state.currentStatus = "";
+      state.finalSubmit = false;
+      updateFinalUi();
       setSmsStatus(`خطا در دریافت متقاضی: ${error}`, "alert");
       return null;
     }
   }
 
-  async function refreshOperationStatus() {
+  async function refreshFinalPermission() {
+    if (!state.currentNid) {
+      state.finalSubmit = false;
+      updateFinalUi();
+      return;
+    }
     try {
-      const payload = await api("/api/v1/operation-center/status", { method: "GET" });
-      state.finalSubmit = Boolean(payload.final_submit);
-      const toggle = byId("mocFinalToggle");
-      if (toggle) toggle.checked = state.finalSubmit;
-      updateFinalLabel();
-    } catch (_) {}
+      const payload = await api(`/api/v1/operation-center/final-submit/${encodeURIComponent(state.currentNid)}`, { method: "GET" });
+      state.finalSubmit = Boolean(payload.enabled);
+      updateFinalUi();
+    } catch (_) {
+      state.finalSubmit = false;
+      updateFinalUi();
+    }
   }
 
   async function refreshSmsDeviceStatus() {
@@ -213,34 +238,28 @@
     }
   }
 
-  function updateFinalLabel() {
-    const label = byId("mocFinalLabel");
-    if (!label) return;
-    label.textContent = state.finalSubmit ? "ثبت نهایی روشن است" : "ثبت نهایی خاموش است";
-    label.style.color = state.finalSubmit ? "#047857" : "#b45309";
-  }
-
-  async function setFinalSubmit(enabled) {
-    const toggle = byId("mocFinalToggle");
-    if (toggle) toggle.disabled = true;
+  async function grantFinalSubmit() {
+    await refreshApplicant();
+    if (!state.currentNid) {
+      setBankAlert("Job فعالی برای صدور مجوز ثبت نهایی وجود ندارد.", true);
+      return;
+    }
+    const button = byId("mocFinalButton");
+    if (button) button.disabled = true;
     try {
       const payload = await api("/api/v1/operation-center/final-submit", {
         method: "POST",
-        body: JSON.stringify({ enabled: Boolean(enabled) }),
+        body: JSON.stringify({ nid: state.currentNid, enabled: true }),
       });
-      state.finalSubmit = Boolean(payload.final_submit);
-      if (toggle) toggle.checked = state.finalSubmit;
-      updateFinalLabel();
-      const text = state.finalSubmit
-        ? "ثبت نهایی فعال شد؛ Job منتظر اجازه می‌تواند دکمه ذخیره را بزند."
-        : "ثبت نهایی غیرفعال شد؛ فقط اعلان بانک و شعبه نمایش داده می‌شود.";
-      setBankAlert(text, state.finalSubmit);
+      state.finalSubmit = Boolean(payload.enabled);
+      updateFinalUi();
+      const text = `مجوز یک‌بارمصرف ثبت نهایی برای ${state.currentName || state.currentNid} صادر شد.`;
+      setBankAlert(text, true);
       speak(text);
     } catch (error) {
-      if (toggle) toggle.checked = state.finalSubmit;
-      setBankAlert(`تغییر تنظیم ثبت نهایی ناموفق بود: ${error}`, true);
-    } finally {
-      if (toggle) toggle.disabled = false;
+      state.finalSubmit = false;
+      updateFinalUi();
+      setBankAlert(`صدور مجوز ثبت نهایی ناموفق بود: ${error}`, true);
     }
   }
 
@@ -365,12 +384,15 @@
       speak(text);
       refreshArchives();
     } else if (payload.type === "final_submit_required") {
-      const text = `ثبت نهایی برای بانک ${payload.bank || ""} غیرفعال است؛ فقط اعلان انجام شد.`;
+      const text = `ثبت نهایی برای بانک ${payload.bank || ""} مجوز ندارد؛ دکمه ثبت نهایی همین متقاضی را بزنید.`;
       setBankAlert(text, true);
+      byId("mocFinalButton")?.focus();
       beep();
       speak(text);
     } else if (payload.type === "final_submit_clicked") {
-      const text = `ثبت نهایی بانک ${payload.bank || ""} انجام شد.`;
+      state.finalSubmit = false;
+      updateFinalUi();
+      const text = `ثبت نهایی بانک ${payload.bank || ""} انجام شد و مجوز مصرف شد.`;
       setBankAlert(text, true);
       beep();
       speak(text);
@@ -411,9 +433,12 @@
     byId("mocOtpInput")?.addEventListener("input", (event) => {
       event.target.value = String(event.target.value || "").replace(/\D/g, "");
     });
-    byId("mocFinalToggle")?.addEventListener("change", (event) => setFinalSubmit(event.target.checked));
+    byId("mocFinalButton")?.addEventListener("click", grantFinalSubmit);
     byId("mocPhoneSetup")?.addEventListener("click", showPhoneSetup);
-    byId("mocRefreshApplicant")?.addEventListener("click", refreshApplicant);
+    byId("mocRefreshApplicant")?.addEventListener("click", async () => {
+      await refreshApplicant();
+      await refreshFinalPermission();
+    });
     byId("mocArchiveRefresh")?.addEventListener("click", refreshArchives);
     window.addEventListener("mahanbot:sms-arrived", (event) => handleSmsArrival(event.detail || {}));
     document.addEventListener("click", () => {
@@ -424,15 +449,18 @@
     }, { once: true });
   }
 
+  async function refreshAll() {
+    await refreshApplicant();
+    await Promise.all([refreshFinalPermission(), refreshSmsDeviceStatus()]);
+  }
+
   async function init() {
     buildPanel();
     hideLegacySmsUi();
     bind();
-    await Promise.all([refreshApplicant(), refreshOperationStatus(), refreshSmsDeviceStatus()]);
+    await refreshAll();
     connectEventSocket();
-    window.setInterval(refreshApplicant, 2500);
-    window.setInterval(refreshOperationStatus, 5000);
-    window.setInterval(refreshSmsDeviceStatus, 5000);
+    window.setInterval(refreshAll, 3000);
   }
 
   window.MahanBotOperationCenter = {
@@ -440,6 +468,7 @@
     refreshArchives,
     refreshApplicant,
     refreshSmsDeviceStatus,
+    refreshFinalPermission,
   };
 
   if (document.readyState === "loading") {
