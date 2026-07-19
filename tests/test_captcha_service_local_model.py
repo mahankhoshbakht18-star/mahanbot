@@ -33,6 +33,13 @@ class CaptchaServiceLocalModelTests(unittest.TestCase):
         self.assertIsNone(service.solve(b"image", mode="firewall"))
         self.assertEqual(model.calls, 0)
 
+    def test_legacy_server_model_argument_is_adopted(self):
+        model = FakeLocalModel()
+        service = CaptchaService(model=model)
+
+        self.assertEqual(service.solve(b"image", mode="local_test"), "AB12")
+        self.assertEqual(model.calls, 1)
+
     def test_local_test_mode_uses_core_adapter(self):
         model = FakeLocalModel()
         service = CaptchaService(local_model=model)
@@ -51,6 +58,8 @@ class CaptchaServiceLocalModelTests(unittest.TestCase):
         self.assertEqual(result["integration_route"], "CaptchaService.local_test")
         self.assertEqual(result["scope"], "offline-test-only")
         self.assertFalse(result["live_workflow_connected"])
+        self.assertFalse(result["browser_autofill"])
+        self.assertTrue(result["requires_operator_confirmation"])
 
     def test_empty_image_is_rejected(self):
         service = CaptchaService(local_model=FakeLocalModel())
@@ -64,6 +73,8 @@ class CaptchaServiceLocalModelTests(unittest.TestCase):
 
         self.assertEqual(status["integration_route"], "CaptchaService.local_test")
         self.assertFalse(status["live_workflow_connected"])
+        self.assertFalse(status["browser_autofill"])
+        self.assertTrue(status["requires_operator_confirmation"])
 
 
 if __name__ == "__main__":
