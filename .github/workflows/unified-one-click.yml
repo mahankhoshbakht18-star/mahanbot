@@ -40,8 +40,11 @@ jobs:
         run: |
           python -m py_compile unified_launcher.py unified_server.py ui_v2.py model_lab_api.py offline_model_lab.py sms_ingress.py server_sms_bridge.py sms_notify_core.py browser_launcher.py browser_actions.py captcha_service.py
 
-      - name: Test SMS core and launcher
-        run: python -m unittest tests.test_sms_notify_core tests.test_unified_launcher
+      - name: Test SMS notification core
+        run: python -m unittest tests.test_sms_notify_core
+
+      - name: Test Windows launcher
+        run: python -m unittest tests.test_unified_launcher
 
       - name: Test dashboard UI injection
         run: python -m unittest tests.test_ui_v2
