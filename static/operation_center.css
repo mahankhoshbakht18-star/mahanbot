@@ -1,0 +1,32 @@
+#mahanOperationCenter{margin:0 0 22px;border:1px solid rgba(14,165,233,.22);border-radius:22px;background:linear-gradient(145deg,rgba(255,255,255,.98),rgba(239,246,255,.96));box-shadow:0 16px 45px rgba(15,23,42,.1);overflow:hidden}
+#mahanOperationCenter .moc-head{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:18px 20px;background:linear-gradient(135deg,#0f766e,#1d4ed8);color:#fff}
+#mahanOperationCenter .moc-head h2{font-size:1.15rem;margin:0 0 3px;font-weight:900}
+#mahanOperationCenter .moc-head p{margin:0;opacity:.86;font-size:.84rem}
+#mahanOperationCenter .moc-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px;padding:16px}
+#mahanOperationCenter .moc-card{background:#fff;border:1px solid #dbeafe;border-radius:17px;padding:15px;min-width:0}
+#mahanOperationCenter .moc-card h3{font-size:.96rem;font-weight:900;margin:0 0 12px;color:#0f172a;display:flex;align-items:center;gap:8px}
+#mahanOperationCenter .moc-status{display:flex;align-items:center;gap:8px;min-height:28px;font-size:.86rem;color:#475569;margin-bottom:10px}
+#mahanOperationCenter .moc-dot{width:10px;height:10px;border-radius:50%;background:#94a3b8;box-shadow:0 0 0 5px rgba(148,163,184,.14)}
+#mahanOperationCenter .moc-dot.ok{background:#16a34a;box-shadow:0 0 0 5px rgba(22,163,74,.14)}
+#mahanOperationCenter .moc-dot.wait{background:#f59e0b;box-shadow:0 0 0 5px rgba(245,158,11,.16)}
+#mahanOperationCenter .moc-dot.alert{background:#dc2626;box-shadow:0 0 0 5px rgba(220,38,38,.14)}
+#mahanOperationCenter .moc-row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+#mahanOperationCenter input[type=text]{flex:1 1 150px;min-width:0;text-align:center;font-size:1.1rem;font-weight:800;letter-spacing:.15em;direction:ltr}
+#mahanOperationCenter .moc-button{border:0;border-radius:12px;padding:9px 13px;font:inherit;font-size:.86rem;font-weight:800;cursor:pointer;transition:transform .15s ease,opacity .15s ease}
+#mahanOperationCenter .moc-button:hover{transform:translateY(-1px)}
+#mahanOperationCenter .moc-button:disabled{opacity:.55;cursor:not-allowed;transform:none}
+#mahanOperationCenter .primary{background:#1d4ed8;color:#fff}.moc-button.success{background:#047857;color:#fff}.moc-button.warning{background:#f59e0b;color:#172554}.moc-button.secondary{background:#e2e8f0;color:#0f172a}.moc-button.danger{background:#b91c1c;color:#fff}
+#mahanOperationCenter .moc-final{display:flex;align-items:center;justify-content:space-between;gap:12px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:13px;padding:10px 12px;margin-bottom:10px}
+#mahanOperationCenter .moc-final strong{display:block;font-size:.9rem}.moc-final small{display:block;color:#64748b;margin-top:2px}
+#mahanOperationCenter .moc-switch{width:48px;height:26px;accent-color:#047857;cursor:pointer}
+#mahanOperationCenter .moc-alert-box{min-height:56px;border-radius:13px;background:#f8fafc;border:1px dashed #cbd5e1;padding:10px 12px;font-size:.85rem;line-height:1.8;color:#334155}
+#mahanOperationCenter .moc-alert-box.hot{background:#fff7ed;border-color:#fb923c;color:#9a3412;font-weight:800}
+#mahanOperationCenter .moc-archive-list{margin-top:10px;max-height:190px;overflow:auto;display:flex;flex-direction:column;gap:7px}
+#mahanOperationCenter .moc-archive-item{border:1px solid #e2e8f0;border-radius:11px;padding:8px 10px;background:#fff;font-size:.8rem}
+#mahanOperationCenter .moc-archive-links{display:flex;gap:8px;margin-top:5px}.moc-archive-links a{font-weight:800;text-decoration:none}
+#mahanOperationCenter .moc-setup{display:none;margin:12px 16px 16px;padding:12px;border:1px solid #bfdbfe;border-radius:14px;background:#eff6ff;direction:ltr;text-align:left;overflow-wrap:anywhere;font:12px/1.8 Consolas,monospace}
+#mahanOperationCenter .moc-setup.show{display:block}
+body.mahan-operation-center-ready #mahanbot-sms-notify-root,body.mahan-operation-center-ready #mahanbot-sms-device-chip{display:none!important}
+@media(max-width:1050px){#mahanOperationCenter .moc-grid{grid-template-columns:1fr 1fr}#mahanOperationCenter .moc-card:last-child{grid-column:1/-1}}
+@media(max-width:680px){#mahanOperationCenter .moc-head{align-items:flex-start;flex-direction:column}#mahanOperationCenter .moc-grid{grid-template-columns:1fr;padding:11px}#mahanOperationCenter .moc-card:last-child{grid-column:auto}}
+@media(prefers-reduced-motion:reduce){#mahanOperationCenter *{transition:none!important}}
