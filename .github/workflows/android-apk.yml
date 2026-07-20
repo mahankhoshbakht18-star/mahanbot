@@ -1,0 +1,61 @@
+name: Build installable Android APK
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [android-apk-build]
+    paths:
+      - android-source/SMSForwardManager-2.5.1-GitHubBuild-source.zip
+
+permissions:
+  contents: read
+
+jobs:
+  build-apk:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Install Android SDK API 35
+        shell: bash
+        run: |
+          set -euo pipefail
+          SDKMANAGER="${ANDROID_HOME}/cmdline-tools/latest/bin/sdkmanager"
+          if [ ! -x "$SDKMANAGER" ]; then SDKMANAGER="$(command -v sdkmanager || true)"; fi
+          test -x "$SDKMANAGER"
+          yes | "$SDKMANAGER" --licenses >/dev/null || true
+          "$SDKMANAGER" "platform-tools" "platforms;android-35" "build-tools;35.0.0"
+
+      - name: Extract source
+        run: |
+          mkdir -p android-build
+          unzip -q android-source/SMSForwardManager-2.5.1-GitHubBuild-source.zip -d android-build
+          chmod +x android-build/SMSForwardManager-2.5.1/gradlew
+
+      - name: Test and build APK
+        working-directory: android-build/SMSForwardManager-2.5.1
+        run: ./gradlew --no-daemon --stacktrace clean :app:testDebugUnitTest :app:assembleDebug
+
+      - name: Prepare APK
+        run: |
+          mkdir -p delivery
+          cp android-build/SMSForwardManager-2.5.1/app/build/outputs/apk/debug/app-debug.apk delivery/SMSForwardManager-2.5.1-MahanBot-debug.apk
+          sha256sum delivery/*.apk > delivery/SHA256SUMS.txt
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: SMSForwardManager-2.5.1-MahanBot-installable-apk
+          path: delivery/*
+          retention-days: 30
+          if-no-files-found: error
