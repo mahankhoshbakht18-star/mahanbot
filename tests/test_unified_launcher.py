@@ -70,6 +70,14 @@ class UnifiedLauncherTests(unittest.TestCase):
                 row = connection.execute("SELECT value FROM sample").fetchone()
             self.assertEqual(row, ("kept",))
 
+            # Regression test for WinError 32: the launcher must close every
+            # SQLite handle before returning the backup path. Windows refuses
+            # to rename a database while any connection still owns the file.
+            renamed = backup.with_name("renamed-backup.db")
+            backup.replace(renamed)
+            self.assertTrue(renamed.is_file())
+            self.assertTrue(unified_launcher._is_valid_sqlite(renamed))
+
 
 if __name__ == "__main__":
     unittest.main()
