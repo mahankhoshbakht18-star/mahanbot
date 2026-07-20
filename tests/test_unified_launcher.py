@@ -1,6 +1,7 @@
 import sqlite3
 import tempfile
 import unittest
+from contextlib import closing
 from pathlib import Path
 
 import unified_launcher
@@ -52,7 +53,7 @@ class UnifiedLauncherTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
             source = root / "source.db"
-            with sqlite3.connect(source) as connection:
+            with closing(sqlite3.connect(source)) as connection:
                 connection.execute("CREATE TABLE sample (id INTEGER PRIMARY KEY, value TEXT)")
                 connection.execute("INSERT INTO sample(value) VALUES (?)", ("kept",))
                 connection.commit()
@@ -66,7 +67,7 @@ class UnifiedLauncherTests(unittest.TestCase):
 
             self.assertIsNotNone(backup)
             self.assertTrue(unified_launcher._is_valid_sqlite(backup))
-            with sqlite3.connect(backup) as connection:
+            with closing(sqlite3.connect(backup)) as connection:
                 row = connection.execute("SELECT value FROM sample").fetchone()
             self.assertEqual(row, ("kept",))
 
