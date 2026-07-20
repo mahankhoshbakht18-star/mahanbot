@@ -5,7 +5,7 @@ on:
   push:
     branches: [android-apk-build]
     paths:
-      - android-source/SMSForwardManager-2.5.1-GitHubBuild-source.zip
+      - SMSForwardManager-2.5.1-GitHubBuild-source.zip
 
 permissions:
   contents: read
@@ -39,8 +39,14 @@ jobs:
       - name: Extract source
         run: |
           mkdir -p android-build
-          unzip -q android-source/SMSForwardManager-2.5.1-GitHubBuild-source.zip -d android-build
+          unzip -q SMSForwardManager-2.5.1-GitHubBuild-source.zip -d android-build
           chmod +x android-build/SMSForwardManager-2.5.1/gradlew
+
+      - name: Verify Gradle wrapper
+        working-directory: android-build/SMSForwardManager-2.5.1
+        run: |
+          sha256sum gradle/wrapper/gradle-wrapper.jar
+          ./gradlew --version
 
       - name: Test and build APK
         working-directory: android-build/SMSForwardManager-2.5.1
