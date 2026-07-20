@@ -9,12 +9,21 @@ from playwright.sync_api import sync_playwright
 from allowlist import is_url_allowed, get_allowed_domains
 
 ALLOWED_BROWSERS = {"chromium", "firefox", "webkit"}
+ALLOWED_SYSTEM_CHANNELS = {
+    "chrome",
+    "chrome-beta",
+    "chrome-dev",
+    "chrome-canary",
+    "msedge",
+    "msedge-beta",
+    "msedge-dev",
+    "msedge-canary",
+}
 DEFAULT_TIMEOUT_MS = 30000
 DEFAULT_VIEWPORT = {"width": 1280, "height": 720}
 PROFILE_ROOT = Path(os.getenv("MAHANBOT_PROFILE_ROOT", Path.cwd() / "browser_profiles")).resolve()
 DEFAULT_HEALTHCHECK_URL = "http://127.0.0.1:8000/static/healthcheck.html"
 
-# Hardcoded never-block allowlist (exact URLs requested)
 HARD_ALLOWED_URLS = {
     "https://ve.cbi.ir/Register.aspx",
     "https://ve.cbi.ir/SelectBnkShb.aspx",
@@ -36,6 +45,40 @@ class BrowserLaunchError(Exception):
 
     def to_dict(self) -> Dict[str, Any]:
         return {"code": self.code, "message": self.message, "details": self.details}
+
+
+def _find_system_chromium() -> Optional[str]:
+    configured = str(os.getenv("MAHANBOT_BROWSER_EXECUTABLE") or "").strip()
+    if configured:
+        candidate = Path(os.path.expandvars(configured)).expanduser()
+        if candidate.is_file():
+            return str(candidate)
+        raise BrowserLaunchError(
+            "browser_executable_missing",
+            "Configured browser executable does not exist",
+            {"path": str(candidate)},
+        )
+
+    if os.name != "nt":
+        return None
+
+    roots = [
+        os.getenv("PROGRAMFILES"),
+        os.getenv("PROGRAMFILES(X86)"),
+        os.getenv("LOCALAPPDATA"),
+    ]
+    relative_paths = [
+        Path("Microsoft/Edge/Application/msedge.exe"),
+        Path("Google/Chrome/Application/chrome.exe"),
+    ]
+    for root in roots:
+        if not root:
+            continue
+        for relative in relative_paths:
+            candidate = Path(root) / relative
+            if candidate.is_file():
+                return str(candidate)
+    return None
 
 
 def get_default_browser_profile() -> Dict[str, Any]:
@@ -98,7 +141,6 @@ def normalize_browser_profile(profile: Optional[Dict[str, Any]]) -> Dict[str, An
             {"allowed": sorted(ALLOWED_BROWSERS), "received": browser},
         )
     data["browser"] = browser
-
     data["headless"] = bool(data.get("headless", False))
 
     try:
@@ -112,7 +154,6 @@ def normalize_browser_profile(profile: Optional[Dict[str, Any]]) -> Dict[str, An
             {"min": 0, "max": 10000, "received": slow_mo_ms},
         )
     data["slow_mo_ms"] = slow_mo_ms
-
     data["viewport"] = _normalize_viewport(data.get("viewport"))
 
     try:
@@ -129,7 +170,6 @@ def normalize_browser_profile(profile: Optional[Dict[str, Any]]) -> Dict[str, An
 
     proxy = data.get("proxy")
     data["proxy"] = proxy.strip() if isinstance(proxy, str) and proxy.strip() else None
-
     data["user_data_dir"] = _resolve_user_data_dir(data.get("user_data_dir"))
     return data
 
@@ -150,12 +190,6 @@ def merge_browser_profiles(base: Dict[str, Any], override: Optional[Dict[str, An
 
 
 def _normalize_url(url: str) -> str:
-    """
-    QA-friendly normalizer:
-    - Accepts bare host like 've.cbi.ir' -> 'https://ve.cbi.ir'
-    - Keeps path/query/fragment intact
-    - Lowercases scheme + hostname for consistent comparisons
-    """
     if not isinstance(url, str):
         raise BrowserLaunchError("invalid_url", "URL must be a string", {"received_type": str(type(url))})
     raw = url.strip()
@@ -163,59 +197,30 @@ def _normalize_url(url: str) -> str:
         raise BrowserLaunchError("invalid_url", "URL is empty")
 
     parts = urlsplit(raw)
-
-    # If no scheme, assume https for navigation
     if not parts.scheme:
         parts = urlsplit("https://" + raw.lstrip("/"))
 
     scheme = (parts.scheme or "https").lower()
     hostname = (parts.hostname or "").lower()
-
     netloc = parts.netloc
     if hostname:
-        # rebuild netloc using normalized hostname + original port if present
         port = parts.port
-        if port:
-            netloc = f"{hostname}:{port}"
-        else:
-            netloc = hostname
-
-    normalized = urlunsplit((scheme, netloc, parts.path or "", parts.query or "", parts.fragment or ""))
-    return normalized
+        netloc = f"{hostname}:{port}" if port else hostname
+    return urlunsplit((scheme, netloc, parts.path or "", parts.query or "", parts.fragment or ""))
 
 
 def _canonical_for_allowlist(url: str) -> str:
-    """
-    Canonical form for comparing to HARD_ALLOWED_URLS:
-    - scheme https
-    - lowercase hostname
-    - exact path (case-sensitive)
-    - no query/fragment
-    """
     normalized = _normalize_url(url)
     parts = urlsplit(normalized)
-    scheme = "https"
-    hostname = (parts.hostname or "").lower()
-    path = parts.path or ""
-    return urlunsplit((scheme, hostname, path, "", ""))
+    return urlunsplit(("https", (parts.hostname or "").lower(), parts.path or "", "", ""))
 
 
 def ensure_allowed_url(url: str, allowed_domains: Optional[Iterable[str]] = None) -> None:
-    """
-    Robust allow check:
-    - Always extracts hostname reliably from ANY URL-like input.
-    - Never blocks the HARD_ALLOWED_URLS list (exact allowlist requested).
-    - Otherwise respects allowed_domains (db/env) if provided/available.
-    """
     normalized = _normalize_url(url)
     canonical = _canonical_for_allowlist(normalized)
-
-    # 1) Hard allow (never block)
     if canonical in HARD_ALLOWED_URLS:
         return
 
-    # 2) If caller provided an allowlist, use it; otherwise use the global allowlist,
-    #    but make sure ve.cbi.ir is always allowed (to prevent internal self-blocks).
     domains = list(allowed_domains) if allowed_domains is not None else get_allowed_domains()
     if "ve.cbi.ir" not in domains:
         domains.append("ve.cbi.ir")
@@ -230,10 +235,6 @@ def ensure_allowed_url(url: str, allowed_domains: Optional[Iterable[str]] = None
 
 
 def safe_goto(page, url: str, *, allowed_domains: Optional[Iterable[str]] = None, log_callback=None, **kwargs):
-    """
-    - Normalizes URL (fixes bare host inputs)
-    - Runs allowlist validation (with hard allow overrides)
-    """
     try:
         ensure_allowed_url(url, allowed_domains=allowed_domains)
         normalized = _normalize_url(url)
@@ -292,11 +293,14 @@ def launch_browser(profile: Dict[str, Any]) -> Tuple[Any, Any, Any, Any]:
             "slow_mo": normalized["slow_mo_ms"],
         }
 
-        # ✅ Required: prevent soft blocks / reduce automation fingerprint
         if normalized["browser"] == "chromium":
-            args = launch_options.setdefault("args", [])
-            if "--disable-blink-features=AutomationControlled" not in args:
-                args.append("--disable-blink-features=AutomationControlled")
+            channel = str(os.getenv("MAHANBOT_BROWSER_CHANNEL") or "").strip().lower()
+            if channel in ALLOWED_SYSTEM_CHANNELS:
+                launch_options["channel"] = channel
+            else:
+                system_browser = _find_system_chromium()
+                if system_browser:
+                    launch_options["executable_path"] = system_browser
 
         if normalized["proxy"]:
             launch_options["proxy"] = {"server": normalized["proxy"]}
@@ -318,7 +322,11 @@ def launch_browser(profile: Dict[str, Any]) -> Tuple[Any, Any, Any, Any]:
     except BrowserLaunchError:
         raise
     except Exception as exc:
-        raise BrowserLaunchError("launch_failed", "Failed to launch browser", {"error": str(exc)})
+        raise BrowserLaunchError(
+            "launch_failed",
+            f"Failed to launch browser: {exc}",
+            {"error": str(exc)},
+        )
     finally:
         if playwright is None and browser is None and context is None and page is None:
             return

@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 import os
 import secrets
+import socket
 import time
 from typing import Any, Dict, Literal, Optional
 
@@ -40,6 +41,20 @@ def _configured_device_key() -> str:
     return str(os.getenv("MAHANBOT_SMS_DEVICE_KEY") or "").strip()
 
 
+def _lan_ip() -> str:
+    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        sock.connect(("8.8.8.8", 80))
+        return str(sock.getsockname()[0])
+    except OSError:
+        try:
+            return socket.gethostbyname(socket.gethostname())
+        except OSError:
+            return "127.0.0.1"
+    finally:
+        sock.close()
+
+
 def require_sms_device_key(
     x_device_key: Optional[str] = Header(None, alias="X-DEVICE-KEY"),
     x_device_id: Optional[str] = Header(None, alias="X-DEVICE-ID"),
@@ -70,7 +85,6 @@ def _safe_received_at(value: Optional[float]) -> float:
         parsed = float(value)
     except (TypeError, ValueError):
         return now
-    # Avoid accepting wildly stale/future timestamps from a broken phone clock.
     if parsed <= 0 or abs(parsed - now) > 24 * 60 * 60:
         return now
     return parsed
@@ -109,6 +123,21 @@ def sms_notify_health() -> Dict[str, Any]:
         "status": "ok",
         "mode": "arrival-notification-only",
         "device_key_configured": bool(_configured_device_key()),
+        "message_content_accepted": False,
+        "otp_content_accepted": False,
+    }
+
+
+@app.get("/api/v1/sms/setup")
+def sms_phone_setup(_: bool = Depends(require_api_key)) -> Dict[str, Any]:
+    port = int(os.getenv("MAHANBOT_SMS_PORT", "8010"))
+    base = f"http://{_lan_ip()}:{port}"
+    return {
+        "status": "ok",
+        "notify_url": f"{base}/api/v1/sms/notify",
+        "heartbeat_url": f"{base}/api/v1/sms/notify/heartbeat",
+        "device_key": _configured_device_key(),
+        "mode": "arrival-notification-only",
         "message_content_accepted": False,
         "otp_content_accepted": False,
     }

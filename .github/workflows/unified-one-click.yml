@@ -1,0 +1,148 @@
+name: Unified One Click Windows Package
+
+on:
+  push:
+    branches:
+      - feature/unified-one-click
+  pull_request:
+    branches:
+      - feature/sms-notify-bridge
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-and-test:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: |
+            requirements-unified.txt
+            requirements-model.txt
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements-unified.txt
+          python -m pip install -r requirements-model.txt
+
+      - name: Compile Python
+        run: |
+          python -m py_compile unified_launcher.py unified_server.py ui_v2.py model_lab_api.py offline_model_lab.py sms_ingress.py server_sms_bridge.py sms_notify_core.py browser_launcher.py browser_actions.py captcha_service.py
+
+      - name: Test SMS notification core
+        run: python -m unittest tests.test_sms_notify_core
+
+      - name: Test launcher environment files
+        run: |
+          python -m unittest tests.test_unified_launcher.UnifiedLauncherTests.test_env_round_trip
+          python -m unittest tests.test_unified_launcher.UnifiedLauncherTests.test_env_reader_ignores_invalid_keys
+
+      - name: Test launcher phone setup
+        run: python -m unittest tests.test_unified_launcher.UnifiedLauncherTests.test_phone_setup_contains_notification_only_notice
+
+      - name: Test launcher SQLite validation
+        run: python -m unittest tests.test_unified_launcher.UnifiedLauncherTests.test_sqlite_validation_rejects_corrupt_file
+
+      - name: Test launcher database backup
+        run: python -m unittest tests.test_unified_launcher.UnifiedLauncherTests.test_database_backup_is_valid_and_preserves_rows
+
+      - name: Test dashboard UI injection
+        run: python -m unittest tests.test_ui_v2
+
+      - name: Test CAPTCHA core adapter
+        run: python -m unittest tests.test_captcha_service_local_model
+
+      - name: Test model lab API
+        run: python -m unittest tests.test_model_lab_api
+
+      - name: Run unified server unit tests
+        run: python -m unittest tests.test_unified_server
+
+      - name: Run offline model unit tests
+        run: python -m unittest tests.test_offline_model_lab
+
+      - name: Validate bundled model checkpoint through bot core
+        shell: pwsh
+        run: |
+          if (-not (Test-Path "my_captcha_model.pth")) { throw "my_captcha_model.pth missing" }
+          @'
+          import io
+          from PIL import Image
+          from captcha_service import CaptchaService, load_captcha_resources
+          from offline_model_lab import OFFLINE_MODEL_LAB
+
+          shared_model, _ = load_captcha_resources()
+          assert shared_model is OFFLINE_MODEL_LAB
+          OFFLINE_MODEL_LAB.load()
+          image = Image.new("L", (160, 60), color=255)
+          stream = io.BytesIO()
+          image.save(stream, format="PNG")
+          result = CaptchaService(model=shared_model).predict_local(stream.getvalue())
+          assert result["integration_route"] == "CaptchaService.local_test"
+          assert result["scope"] == "offline-test-only"
+          assert result["live_workflow_connected"] is False
+          assert result["browser_autofill"] is False
+          assert result["requires_operator_confirmation"] is True
+          assert CaptchaService(model=shared_model).solve(stream.getvalue(), mode="general") is None
+          print("model_core_integration_ok", result)
+          '@ | python -
+
+      - name: Validate JavaScript
+        run: |
+          node --check static/sms_notify_bridge.js
+          node --check static/ui_v2.js
+          node --check static/runtime_fixes.js
+          node --check static/action_guard.js
+          node --check static/model_lab.js
+
+      - name: Validate dashboard assets
+        shell: pwsh
+        run: |
+          if (-not (Test-Path "static/ui_v2.css")) { throw "ui_v2.css missing" }
+          if (-not (Test-Path "static/model_lab.css")) { throw "model_lab.css missing" }
+          if (-not (Test-Path "static/runtime_fixes.js")) { throw "runtime_fixes.js missing" }
+          if (-not (Test-Path "static/action_guard.js")) { throw "action_guard.js missing" }
+          if (-not (Test-Path "requirements-model.txt")) { throw "requirements-model.txt missing" }
+          if (Select-String -Path "unified_server.py" -Pattern "open_healthcheck_page\(page" -Quiet) { throw "Healthcheck navigation still active" }
+          if (Test-Path "static/healthcheck.html") { throw "Obsolete healthcheck page still packaged" }
+          if (-not (Select-String -Path "ui_v2.py" -Pattern "runtime_fixes.js" -Quiet)) { throw "Runtime fixes are not injected" }
+          if (-not (Select-String -Path "ui_v2.py" -Pattern "action_guard.js" -Quiet)) { throw "Action guard is not injected" }
+
+      - name: Validate server import
+        env:
+          MAHANBOT_BROWSER_CHANNEL: msedge
+          MAHANBOT_SMS_DEVICE_KEY: ci-device-key
+        run: python -c "import server_sms_bridge, ui_v2, model_lab_api, unified_server; print('server_import_ok')"
+
+      - name: Build clean one-click package
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path dist | Out-Null
+          git archive --format=zip --prefix=MahanBot-OneClick/ --output=dist/MahanBot-OneClick-Windows.zip HEAD
+          if (-not (Test-Path "dist/MahanBot-OneClick-Windows.zip")) {
+            throw "Package was not created"
+          }
+          $hash = (Get-FileHash "dist/MahanBot-OneClick-Windows.zip" -Algorithm SHA256).Hash.ToLower()
+          "$hash  MahanBot-OneClick-Windows.zip" | Set-Content "dist/MahanBot-OneClick-Windows.zip.sha256" -Encoding ascii
+          Get-ChildItem dist
+
+      - name: Upload package
+        uses: actions/upload-artifact@v4
+        with:
+          name: MahanBot-OneClick-Windows
+          path: |
+            dist/MahanBot-OneClick-Windows.zip
+            dist/MahanBot-OneClick-Windows.zip.sha256
+          if-no-files-found: error
+          retention-days: 30
