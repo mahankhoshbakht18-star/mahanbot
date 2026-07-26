@@ -1,0 +1,79 @@
+name: Apply phase 1-4 refactor
+
+on:
+  push:
+    branches:
+      - refactor/phase-0-cleanup
+    paths:
+      - "scripts/apply_phase1_4_refactor.py"
+      - "runtime_config.py"
+      - ".github/workflows/apply-phase1-4.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  refactor:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout refactor branch
+        uses: actions/checkout@v4
+        with:
+          ref: refactor/phase-0-cleanup
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Apply deterministic migration
+        run: python scripts/apply_phase1_4_refactor.py
+
+      - name: Install lightweight test dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install fastapi
+
+      - name: Run quality gate
+        run: python scripts/quality_check.py
+
+      - name: Commit migrated sources
+        shell: bash
+        run: |
+          if git diff --quiet; then
+            echo "No source changes to commit."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add browser_launcher.py database.py captcha_service.py bot_core.py server.py bot_register.py bot_select.py
+          git commit -m "refactor: apply phase 1-4 stabilization"
+          git push origin HEAD:refactor/phase-0-cleanup
+
+      - name: Build clean source archive
+        shell: bash
+        run: |
+          mkdir -p dist
+          zip -r dist/mahanbot-phase1-4.zip . \
+            -x ".git/*" \
+               "dist/*" \
+               "*.db" \
+               "*.db-wal" \
+               "*.db-shm" \
+               ".env" \
+               ".env.*" \
+               "chrome_profiles/*" \
+               "screenshots/*" \
+               "__pycache__/*" \
+               "*/__pycache__/*"
+
+      - name: Upload source archive
+        uses: actions/upload-artifact@v4
+        with:
+          name: mahanbot-phase1-4-source
+          path: dist/mahanbot-phase1-4.zip
+          if-no-files-found: error
+          retention-days: 30
