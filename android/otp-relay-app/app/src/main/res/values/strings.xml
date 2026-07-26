@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">رابط پیامک MahanBot</string>
+    <string name="notification_channel_name">ارتباط پایدار MahanBot</string>
+    <string name="notification_idle">متصل به سرور؛ منتظر پیامک</string>
+</resources>
