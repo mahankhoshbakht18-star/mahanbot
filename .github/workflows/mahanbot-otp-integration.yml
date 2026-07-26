@@ -1,0 +1,12 @@
+name: MahanBot OTP integration
+on: [push, pull_request]
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - run: pip install pytest requests
+      - run: pytest -q tests/test_otp_relay_client_v2.py tests/test_captcha_freeze_guard.py
+      - run: '! rg "python-ke7tg2\.chbk\.dev|min_ts\s*=\s*0" bot_core.py bot_register.py bot_select.py'

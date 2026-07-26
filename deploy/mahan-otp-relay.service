@@ -1,0 +1,19 @@
+[Unit]
+Description=MahanBot OTP Relay v2
+After=network-online.target postgresql.service
+
+[Service]
+User=mahan-otp
+Group=mahan-otp
+EnvironmentFile=/etc/mahan-otp-relay.env
+WorkingDirectory=/opt/mahan-otp-relay/current
+ExecStart=/opt/mahan-otp-relay/current/.venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 18019 --workers 2
+Restart=on-failure
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/mahan-otp-relay
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,9 @@
+name: Site contract fixtures
+on: [push, pull_request]
+jobs:
+  contract:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: test -s docs/VE_CBI_SITE_CONTRACT.md
+      - run: '! rg "xpath=|/html/body" bot_register.py bot_select.py bot_status.py'
