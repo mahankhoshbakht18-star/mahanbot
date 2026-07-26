@@ -13,14 +13,22 @@
 - اپ کل متن پیامک را ذخیره نمی‌کند؛ فقط OTP، کد ملی، شناسه پیام و زمان دریافت در صف کوتاه‌مدت نگهداری می‌شود.
 - کلید داخلی Bot به Relay همچنان فقط سمت سرور باقی می‌ماند؛ گوشی هیچ کلید دستی ندارد.
 
-## ساخت
+## ساخت محلی
 
 ```bash
 gradle :app:testDebugUnitTest :app:assembleDebug
 ```
 
-APK در مسیر زیر ساخته می‌شود:
+APK محلی در مسیر زیر ساخته می‌شود:
 
 ```text
 app/build/outputs/apk/debug/app-debug.apk
+```
+
+## ساخت در GitHub Actions
+
+Workflow با هر تغییر در این پروژه، تست‌ها را اجرا و APK را با نام Artifact زیر منتشر می‌کند:
+
+```text
+MahanOtpRelay-2.8.0-apk
 ```

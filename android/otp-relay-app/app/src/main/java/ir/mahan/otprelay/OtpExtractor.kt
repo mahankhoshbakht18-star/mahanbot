@@ -12,11 +12,23 @@ object OtpExtractor {
         return normalize(message).contains(normalize(keyword))
     }
 
-    private fun normalize(value: String): String = RelayPreferences.normalizeDigits(value)
+    private fun normalize(value: String): String = toLatinDigits(value)
         .replace('ي', 'ی')
         .replace('ك', 'ک')
         .replace("‌", " ")
         .lowercase()
         .replace(Regex("\\s+"), " ")
         .trim()
+
+    private fun toLatinDigits(value: String): String = buildString(value.length) {
+        value.forEach { char ->
+            append(
+                when (char) {
+                    in '۰'..'۹' -> '0' + (char.code - '۰'.code)
+                    in '٠'..'٩' -> '0' + (char.code - '٠'.code)
+                    else -> char
+                },
+            )
+        }
+    }
 }
