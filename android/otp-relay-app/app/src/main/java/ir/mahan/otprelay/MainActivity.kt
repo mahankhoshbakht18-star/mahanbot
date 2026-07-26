@@ -3,6 +3,7 @@ package ir.mahan.otprelay
 import android.Manifest
 import android.app.Activity
 import android.content.pm.PackageManager
+import android.content.res.ColorStateList
 import android.graphics.Color
 import android.os.Build
 import android.os.Bundle
@@ -22,7 +23,7 @@ import android.widget.Toast
 
 class MainActivity : Activity() {
     private lateinit var preferences: RelayPreferences
-    private lateinit var statusView: TextView
+    private lateinit var connectionButton: Button
     private lateinit var sim1Input: EditText
     private lateinit var sim2Input: EditText
     private lateinit var keywordInput: EditText
@@ -49,6 +50,7 @@ class MainActivity : Activity() {
 
     override fun onResume() {
         super.onResume()
+        if (preferences.isReady()) RelayForegroundService.wake(this)
         handler.post(statusRefresh)
     }
 
@@ -84,14 +86,23 @@ class MainActivity : Activity() {
             setPadding(0, 0, 0, dp(18))
         }, matchWrap())
 
-        statusView = TextView(this).apply {
+        connectionButton = Button(this).apply {
             textSize = 16f
             gravity = Gravity.CENTER
-            setTextColor(Color.rgb(0, 92, 83))
-            setBackgroundColor(Color.rgb(223, 246, 242))
+            isAllCaps = false
+            setTextColor(Color.WHITE)
             setPadding(dp(14), dp(14), dp(14), dp(14))
+            setOnClickListener { testConnection() }
         }
-        container.addView(statusView, matchWrap())
+        container.addView(connectionButton, matchWrap())
+
+        container.addView(TextView(this).apply {
+            text = "برای بررسی فوری ارتباط، دکمه وضعیت را لمس کنید."
+            textSize = 12f
+            gravity = Gravity.CENTER
+            setTextColor(Color.GRAY)
+            setPadding(0, dp(5), 0, 0)
+        }, matchWrap())
 
         sim1Input = input("کد ملی سیم‌کارت ۱", numeric = true)
         sim2Input = input("کد ملی سیم‌کارت ۲ (اختیاری)", numeric = true)
@@ -114,18 +125,13 @@ class MainActivity : Activity() {
 
         val saveButton = Button(this).apply {
             text = "ذخیره و شروع ارتباط"
+            isAllCaps = false
             setOnClickListener { saveAndStart() }
         }
         container.addView(saveButton, matchWrap(top = 18))
 
-        val testButton = Button(this).apply {
-            text = "آزمایش اتصال به MahanBot"
-            setOnClickListener { testConnection() }
-        }
-        container.addView(testButton, matchWrap(top = 8))
-
         container.addView(TextView(this).apply {
-            text = "برای پایداری، اعلان دائمی وضعیت نمایش داده می‌شود و سرویس پس از روشن‌شدن گوشی یا به‌روزرسانی اپ دوباره فعال خواهد شد."
+            text = "سرویس هر ۲۰ ثانیه سرور را بررسی می‌کند، در پس‌زمینه منتظر پیامک می‌ماند و پس از روشن‌شدن گوشی یا به‌روزرسانی اپ دوباره فعال می‌شود."
             textSize = 13f
             gravity = Gravity.CENTER
             setTextColor(Color.GRAY)
@@ -170,6 +176,7 @@ class MainActivity : Activity() {
             RelayForegroundService.start(this)
             preferences.lastStatus = "در حال برقراری ارتباط با سرور…"
             toast("ارتباط پایدار فعال شد")
+            handler.postDelayed({ testConnection() }, 700)
         } else {
             preferences.lastStatus = "ارتباط غیرفعال است"
             stopService(android.content.Intent(this, RelayForegroundService::class.java))
@@ -185,14 +192,17 @@ class MainActivity : Activity() {
             toast("ابتدا یک کد ملی معتبر وارد کنید")
             return
         }
-        statusView.text = "در حال آزمایش اتصال…"
+        preferences.lastStatus = "در حال آزمایش ارتباط اپ، سرور و MahanBot…"
+        renderStatus()
+        RelayForegroundService.wake(this)
         Thread {
             val result = RelayApi.checkStatus(DeviceIdentity.getOrCreate(this), nationalId)
             runOnUiThread {
                 val message = when {
-                    result.success && result.waiting == true -> "اتصال برقرار است؛ MahanBot منتظر OTP است"
-                    result.success -> "اتصال برقرار است؛ منتظر شروع درخواست از MahanBot"
-                    else -> "اتصال ناموفق: HTTP ${result.code}"
+                    result.success && result.waiting == true -> "متصل؛ MahanBot منتظر پیامک است"
+                    result.success -> "متصل به سرور؛ منتظر درخواست OTP از MahanBot"
+                    result.code == -1 -> "ارتباط شبکه برقرار نیست؛ تلاش مجدد خودکار"
+                    else -> "ارتباط ناموفق: HTTP ${result.code}"
                 }
                 preferences.lastStatus = message
                 renderStatus()
@@ -215,12 +225,46 @@ class MainActivity : Activity() {
     }
 
     private fun renderStatus() {
+        val status = preferences.lastStatus
         val ageSeconds = if (preferences.lastStatusAt > 0) {
-            (System.currentTimeMillis() - preferences.lastStatusAt) / 1000
+            (System.currentTimeMillis() - preferences.lastStatusAt).coerceAtLeast(0L) / 1000
         } else {
-            0
+            Long.MAX_VALUE
         }
-        statusView.text = "وضعیت: ${preferences.lastStatus}\nآخرین بررسی: ${ageSeconds}s قبل"
+        val freshHeartbeat = ageSeconds <= STATUS_FRESH_SECONDS
+        val connected = freshHeartbeat && (
+            status.startsWith("متصل") ||
+                status.contains("با موفقیت تحویل سرور شد")
+            )
+        val connecting = freshHeartbeat && (
+            status.contains("در حال") ||
+                status.contains("تلاش مجدد") ||
+                status.contains("در صف")
+            )
+
+        val color = when {
+            connected -> Color.rgb(18, 142, 82)
+            connecting -> Color.rgb(239, 145, 20)
+            !preferences.enabled -> Color.rgb(117, 117, 117)
+            else -> Color.rgb(198, 50, 50)
+        }
+        val marker = when {
+            connected -> "🟢"
+            connecting -> "🟠"
+            !preferences.enabled -> "⚪"
+            else -> "🔴"
+        }
+        val ageText = if (ageSeconds == Long.MAX_VALUE) "هنوز بررسی نشده" else "$ageSeconds ثانیه قبل"
+        connectionButton.backgroundTintList = ColorStateList.valueOf(color)
+        connectionButton.text = "$marker ${connectionTitle(status, connected, connecting)}\n$status\nآخرین بررسی: $ageText"
+    }
+
+    private fun connectionTitle(status: String, connected: Boolean, connecting: Boolean): String = when {
+        connected && status.contains("MahanBot منتظر") -> "ارتباط اپ، سرور و MahanBot برقرار است"
+        connected -> "ارتباط اپ و سرور برقرار است"
+        connecting -> "در حال برقراری ارتباط"
+        !preferences.enabled -> "ارتباط غیرفعال است"
+        else -> "ارتباط قطع است"
     }
 
     private fun input(hint: String, numeric: Boolean): EditText = EditText(this).apply {
@@ -249,5 +293,6 @@ class MainActivity : Activity() {
 
     companion object {
         private const val REQUEST_PERMISSIONS = 280
+        private const val STATUS_FRESH_SECONDS = 65L
     }
 }
