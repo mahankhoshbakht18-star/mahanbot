@@ -1,0 +1,15 @@
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
+*.db
+mahanbot.env
+chrome_profiles/
+android/**/.gradle/
+android/**/build/
+android/**/local.properties
+*.apk
+*.aab
+*.jks
+*.keystore
+*.png

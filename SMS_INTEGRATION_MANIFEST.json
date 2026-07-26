@@ -1,0 +1,30 @@
+{
+  "release": "MahanBot-SMSForwardManager-OTP-Integration",
+  "date": "2026-07-20",
+  "mahanbot_base": "MahanBot-Master-Baseline-Captcha-Restored-2026-07-20",
+  "sms_app_base": "SMSForwardManager-2.4.0-complete-source",
+  "sms_app_version": "2.5.0",
+  "otp_contract": {
+    "endpoint": "/api/v1/sms/otp",
+    "status_endpoint": "/api/v1/sms/otp/status",
+    "match_key": "national_id",
+    "requires_waiting_state": true,
+    "freshness_required": true,
+    "one_time_consumption": true,
+    "full_sms_body_transferred": false,
+    "sender_transferred": false,
+    "explicit_consent_required": true
+  },
+  "captcha": {
+    "changed": false,
+    "sha256": "2c9b15a1664f0ee3f74b048d8d2b6acaff89945314ae063e195a59d8cd087ef6"
+  },
+  "tests": {
+    "mahanbot_non_captcha": "37 passed, 4 skipped",
+    "otp_state_machine": "2 passed",
+    "sqlite_integrity": "ok",
+    "android_xml": "ok",
+    "kotlin_endpoint_validator": "compiled with kotlinc",
+    "android_gradle_build": "not run: Gradle distribution/network and Android SDK unavailable in review environment"
+  }
+}
