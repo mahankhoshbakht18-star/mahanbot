@@ -52,8 +52,8 @@ class RelayPreferences(context: Context) {
 
     companion object {
         const val SERVER_BASE_URL = "https://otp.mahanvip.ir"
-        const val OTP_ENDPOINT = "$SERVER_BASE_URL/api/v1/sms/otp"
-        const val STATUS_ENDPOINT = "$OTP_ENDPOINT/status"
+        const val OTP_ENDPOINT = "$SERVER_BASE_URL/receive_sms"
+        const val STATUS_ENDPOINT = "$SERVER_BASE_URL/health"
         const val DEFAULT_KEYWORD = "سامانه ازدواج"
 
         private const val PREFS_NAME = "mahan_otp_relay"
