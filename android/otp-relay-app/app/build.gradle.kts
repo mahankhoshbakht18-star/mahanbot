@@ -11,8 +11,8 @@ android {
         applicationId = "ir.mahan.otprelay"
         minSdk = 28
         targetSdk = 35
-        versionCode = 28
-        versionName = "2.8.0"
+        versionCode = 29
+        versionName = "2.8.1"
 
         testInstrumentationRunner = "android.test.InstrumentationTestRunner"
     }
