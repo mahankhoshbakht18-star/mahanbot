@@ -15,20 +15,24 @@ object RelayApi {
     )
 
     fun checkStatus(deviceId: String, nationalId: String): Result {
-        val url = URL("${RelayPreferences.STATUS_ENDPOINT}?national_id=$nationalId")
-        return request(url, "GET", deviceId, null, null)
+        // The lightweight FastAPI health endpoint does not require a national ID.
+        // Keep the argument in the public contract so the current UI needs no migration.
+        nationalId.length
+        return request(
+            url = URL(RelayPreferences.STATUS_ENDPOINT),
+            method = "GET",
+            deviceId = deviceId,
+            idempotencyKey = null,
+            body = null,
+        )
     }
 
     fun sendOtp(deviceId: String, item: PendingOtpStore.PendingOtp): Result {
         val payload = JSONObject()
-            .put("device_id", deviceId)
-            .put("message_id", item.messageId)
-            .put("national_id", item.nationalId)
-            .put("otp", item.otp)
-            .put("received_at", item.receivedAtSeconds)
-            .put("source", "android")
-            .put("consent_version", "3")
+            .put("nid", item.nationalId)
+            .put("code", item.otp)
             .toString()
+
         return request(
             url = URL(RelayPreferences.OTP_ENDPOINT),
             method = "POST",
@@ -55,7 +59,7 @@ object RelayApi {
                 doInput = true
                 setRequestProperty("Accept", "application/json")
                 setRequestProperty("Cache-Control", "no-store")
-                setRequestProperty("User-Agent", "MahanOtpRelay/2.8.0")
+                setRequestProperty("User-Agent", "MahanOtpRelay/2.8.1")
                 setRequestProperty("X-DEVICE-ID", deviceId)
                 if (!idempotencyKey.isNullOrBlank()) {
                     setRequestProperty("Idempotency-Key", idempotencyKey)
@@ -65,15 +69,18 @@ object RelayApi {
                     setRequestProperty("Content-Type", "application/json; charset=utf-8")
                 }
             }
+
             if (body != null) {
                 connection.outputStream.use { output ->
                     output.write(body.toByteArray(Charsets.UTF_8))
                 }
             }
+
             val code = connection.responseCode
             val stream = if (code in 200..299) connection.inputStream else connection.errorStream
             val responseBody = stream?.bufferedReader(Charsets.UTF_8)?.use { it.readText() }.orEmpty()
             val json = runCatching { JSONObject(responseBody) }.getOrNull()
+
             Result(
                 success = code in 200..299,
                 retryable = code == 408 || code == 425 || code == 429 || code >= 500,
