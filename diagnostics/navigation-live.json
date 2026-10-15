@@ -1,0 +1,30 @@
+{
+  "mode": "automatic",
+  "profile": "fresh",
+  "proxy": false,
+  "rejection": {
+    "support_id": "16331313243122684947"
+  },
+  "challenge_input": false,
+  "challenge_markers": [],
+  "entry_form": false,
+  "outcome": "site_rejected",
+  "final_url": "https://ve.cbi.ir/SelectBnkShb.aspx",
+  "events": [
+    {
+      "event": "response",
+      "url": "https://ve.cbi.ir/SelectBnkShb.aspx",
+      "method": "GET",
+      "status": 200,
+      "redirect": false
+    },
+    {
+      "event": "response",
+      "url": "https://ve.cbi.ir/SelectBnkShb.aspx",
+      "method": "GET",
+      "status": 200,
+      "redirect": false
+    }
+  ],
+  "support_id": "16331313243122684947"
+}

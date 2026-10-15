@@ -1,0 +1,22 @@
+[
+  {
+    "path": "__pycache__",
+    "files": 21,
+    "reason": "regenerable Python bytecode cache"
+  },
+  {
+    "path": "core\\__pycache__",
+    "files": 7,
+    "reason": "regenerable Python bytecode cache"
+  },
+  {
+    "path": "routes\\__pycache__",
+    "files": 7,
+    "reason": "regenerable Python bytecode cache"
+  },
+  {
+    "path": "tests\\__pycache__",
+    "files": 2,
+    "reason": "regenerable Python bytecode cache"
+  }
+]

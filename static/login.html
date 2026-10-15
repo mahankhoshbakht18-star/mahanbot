@@ -1,0 +1,301 @@
+<!doctype html>
+<html lang="fa" dir="rtl">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>ورود به ماهان‌بات</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Vazirmatn:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
+  <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css" rel="stylesheet">
+  <style>
+    *{box-sizing:border-box;margin:0;padding:0}
+    
+    body{
+      min-height:100vh;display:flex;align-items:center;justify-content:center;
+      font-family:'Vazirmatn',Tahoma,sans-serif;
+      background:#0a1a17;color:#e0f0eb;overflow:hidden;
+    }
+
+    /* ══════ Animated Background ══════ */
+    .bg-layer{position:fixed;inset:0;z-index:0;overflow:hidden}
+    .bg-gradient{position:absolute;inset:0;background:linear-gradient(135deg,#071f1b 0%,#0b3d33 30%,#0d5a4a 60%,#071f1b 100%);animation:bgShift 12s ease infinite alternate}
+    @keyframes bgShift{0%{filter:hue-rotate(0deg)}100%{filter:hue-rotate(15deg)}}
+    
+    .bg-orb{position:absolute;border-radius:50%;filter:blur(80px);opacity:.35;animation:orbFloat 8s ease-in-out infinite alternate}
+    .bg-orb-1{width:400px;height:400px;background:radial-gradient(circle,#23b69d,transparent 70%);top:-100px;right:-80px;animation-delay:0s;animation-duration:10s}
+    .bg-orb-2{width:300px;height:300px;background:radial-gradient(circle,#0ea5e9,transparent 70%);bottom:-60px;left:-60px;animation-delay:2s;animation-duration:8s}
+    .bg-orb-3{width:250px;height:250px;background:radial-gradient(circle,#a78bfa,transparent 70%);top:40%;left:30%;animation-delay:4s;animation-duration:12s}
+    @keyframes orbFloat{0%{transform:translate(0,0) scale(1)}100%{transform:translate(30px,-25px) scale(1.15)}}
+
+    .bg-grid{position:absolute;inset:0;background-image:radial-gradient(rgba(255,255,255,.04) 1px,transparent 1px);background-size:32px 32px}
+
+    .bg-particles{position:absolute;inset:0}
+    .particle{position:absolute;width:3px;height:3px;background:rgba(35,182,157,.5);border-radius:50%;animation:particleRise linear infinite}
+    @keyframes particleRise{0%{transform:translateY(100vh) scale(0);opacity:0}10%{opacity:1}90%{opacity:1}100%{transform:translateY(-10vh) scale(1);opacity:0}}
+    .particle:nth-child(1){left:10%;animation-duration:14s;animation-delay:0s}
+    .particle:nth-child(2){left:25%;animation-duration:18s;animation-delay:2s;width:2px;height:2px}
+    .particle:nth-child(3){left:45%;animation-duration:12s;animation-delay:4s}
+    .particle:nth-child(4){left:65%;animation-duration:16s;animation-delay:1s;width:4px;height:4px}
+    .particle:nth-child(5){left:80%;animation-duration:20s;animation-delay:3s}
+    .particle:nth-child(6){left:92%;animation-duration:15s;animation-delay:5s;width:2px;height:2px}
+    .particle:nth-child(7){left:35%;animation-duration:17s;animation-delay:7s}
+    .particle:nth-child(8){left:55%;animation-duration:13s;animation-delay:6s;width:4px;height:4px}
+
+    /* ══════ Card ══════ */
+    .login-wrapper{position:relative;z-index:10;width:min(460px,calc(100% - 32px))}
+    
+    .login-card{
+      background:rgba(255,255,255,.06);
+      backdrop-filter:blur(24px) saturate(1.4);
+      -webkit-backdrop-filter:blur(24px) saturate(1.4);
+      border:1px solid rgba(255,255,255,.1);
+      border-radius:28px;
+      padding:44px 36px 36px;
+      box-shadow:0 32px 80px rgba(0,0,0,.35), inset 0 1px 0 rgba(255,255,255,.08);
+      animation:cardIn .6s cubic-bezier(.22,1,.36,1) both;
+    }
+    @keyframes cardIn{from{opacity:0;transform:translateY(30px) scale(.97)}to{opacity:1;transform:none}}
+
+    .brand-top{display:flex;align-items:center;gap:14px;margin-bottom:28px}
+    .brand-icon{
+      width:56px;height:56px;border-radius:18px;
+      background:linear-gradient(135deg,#23b69d,#0ea5e9);
+      display:grid;place-items:center;
+      box-shadow:0 12px 32px rgba(35,182,157,.35);
+      animation:iconPulse 3s ease-in-out infinite;
+    }
+    @keyframes iconPulse{0%,100%{box-shadow:0 12px 32px rgba(35,182,157,.35)}50%{box-shadow:0 12px 40px rgba(35,182,157,.55)}}
+    .brand-icon i{font-size:26px;color:#fff}
+    .brand-text strong{display:block;font-size:20px;font-weight:800;color:#fff;letter-spacing:-.02em}
+    .brand-text small{display:block;color:#7dbdb5;font-size:12px;margin-top:3px;letter-spacing:.02em}
+
+    .login-title{font-size:26px;font-weight:900;color:#fff;margin-bottom:6px;line-height:1.4}
+    .login-hint{color:#8ab4ac;font-size:14px;line-height:1.8;margin-bottom:28px}
+
+    /* ══════ Form ══════ */
+    .field-group{margin-bottom:20px;position:relative}
+    .field-group label{
+      display:flex;align-items:center;gap:8px;font-size:13px;font-weight:700;
+      color:#a8d4cc;margin-bottom:8px;
+    }
+    .field-group label i{font-size:14px;opacity:.7}
+
+    .input-wrap{position:relative}
+    .input-wrap i.field-icon{
+      position:absolute;right:14px;top:50%;transform:translateY(-50%);
+      font-size:16px;color:#4a8a7f;transition:color .25s;pointer-events:none;
+    }
+    .input-wrap input{
+      width:100%;height:52px;
+      background:rgba(255,255,255,.06);
+      border:1.5px solid rgba(255,255,255,.1);
+      border-radius:14px;
+      padding:0 46px 0 16px;
+      font:600 15px/1 'Vazirmatn',Tahoma,sans-serif;
+      color:#e0f0eb;outline:none;
+      transition:all .3s cubic-bezier(.22,1,.36,1);
+    }
+    .input-wrap input::placeholder{color:#5a8a7f}
+    .input-wrap input:focus{
+      border-color:#23b69d;
+      background:rgba(255,255,255,.09);
+      box-shadow:0 0 0 4px rgba(35,182,157,.15), 0 8px 24px rgba(0,0,0,.2);
+    }
+    .input-wrap input:focus + i.field-icon,
+    .input-wrap input:focus ~ i.field-icon{color:#23b69d}
+
+    .toggle-pass{
+      position:absolute;left:14px;top:50%;transform:translateY(-50%);
+      background:none;border:none;color:#5a8a7f;cursor:pointer;
+      font-size:16px;padding:4px;transition:color .2s;
+    }
+    .toggle-pass:hover{color:#23b69d}
+
+    .login-btn{
+      width:100%;height:54px;border:0;border-radius:16px;margin-top:8px;
+      background:linear-gradient(135deg,#23b69d 0%,#0ea5e9 100%);
+      color:#fff;font:800 16px/1 'Vazirmatn',Tahoma,sans-serif;
+      cursor:pointer;position:relative;overflow:hidden;
+      transition:all .3s cubic-bezier(.22,1,.36,1);
+      box-shadow:0 8px 32px rgba(35,182,157,.3);
+    }
+    .login-btn:hover{
+      transform:translateY(-2px);
+      box-shadow:0 14px 40px rgba(35,182,157,.45);
+    }
+    .login-btn:active{transform:translateY(0);box-shadow:0 4px 16px rgba(35,182,157,.3)}
+    .login-btn:disabled{opacity:.55;cursor:not-allowed;transform:none}
+    .login-btn .btn-shine{
+      position:absolute;top:0;left:-100%;width:100%;height:100%;
+      background:linear-gradient(90deg,transparent,rgba(255,255,255,.2),transparent);
+      animation:shine 3s ease-in-out infinite;
+    }
+    @keyframes shine{0%{left:-100%}50%,100%{left:100%}}
+    .login-btn .btn-text{position:relative;z-index:1;display:flex;align-items:center;justify-content:center;gap:10px}
+    .login-btn .btn-text i{font-size:18px;transition:transform .3s}
+    .login-btn:hover .btn-text i{transform:translateX(-4px)}
+
+    .error-box{
+      min-height:28px;margin-top:14px;
+      color:#f87171;font-size:13px;font-weight:600;
+      display:flex;align-items:center;gap:8px;
+      transition:all .3s;
+    }
+    .error-box:not(:empty){
+      background:rgba(248,113,113,.08);
+      border:1px solid rgba(248,113,113,.2);
+      border-radius:10px;padding:10px 14px;
+      animation:shake .4s ease;
+    }
+    @keyframes shake{0%,100%{transform:translateX(0)}20%,60%{transform:translateX(-6px)}40%,80%{transform:translateX(6px)}}
+
+    .foot{text-align:center;color:#5a8a7f;font-size:12px;margin-top:20px;padding-top:16px;border-top:1px solid rgba(255,255,255,.06)}
+    .foot i{margin-left:4px}
+
+    /* ══════ Loading spinner ══════ */
+    .spinner{display:none;width:20px;height:20px;border:2.5px solid rgba(255,255,255,.3);border-top-color:#fff;border-radius:50%;animation:spin .7s linear infinite}
+    @keyframes spin{to{transform:rotate(360deg)}}
+    .login-btn.loading .spinner{display:inline-block}
+    .login-btn.loading .btn-text i{display:none}
+
+    /* ══════ Footer ══════ */
+    .login-footer{
+      display:flex;align-items:center;justify-content:center;gap:24px;
+      margin-top:32px;position:relative;z-index:10;
+    }
+    .login-footer .feat{
+      display:flex;align-items:center;gap:8px;
+      background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.06);
+      border-radius:12px;padding:8px 14px;
+      font-size:12px;color:#7dbdb5;
+      animation:cardIn .6s cubic-bezier(.22,1,.36,1) both;
+    }
+    .login-footer .feat:nth-child(1){animation-delay:.2s}
+    .login-footer .feat:nth-child(2){animation-delay:.3s}
+    .login-footer .feat:nth-child(3){animation-delay:.4s}
+    .login-footer .feat i{font-size:16px;color:#23b69d}
+
+    @media(max-width:520px){
+      .login-card{padding:32px 22px 28px;border-radius:22px}
+      .login-title{font-size:22px}
+      .login-footer{flex-direction:column;gap:10px}
+    }
+  </style>
+</head>
+<body>
+  <!-- ══════ Animated Background ══════ -->
+  <div class="bg-layer">
+    <div class="bg-gradient"></div>
+    <div class="bg-orb bg-orb-1"></div>
+    <div class="bg-orb bg-orb-2"></div>
+    <div class="bg-orb bg-orb-3"></div>
+    <div class="bg-grid"></div>
+    <div class="bg-particles">
+      <div class="particle"></div><div class="particle"></div><div class="particle"></div>
+      <div class="particle"></div><div class="particle"></div><div class="particle"></div>
+      <div class="particle"></div><div class="particle"></div>
+    </div>
+  </div>
+
+  <!-- ══════ Login Card ══════ -->
+  <main class="login-wrapper">
+    <div class="login-card">
+      <div class="brand-top">
+        <div class="brand-icon"><i class="fa-solid fa-shield-halved"></i></div>
+        <div class="brand-text"><strong>ماهان‌بات</strong><small>مرکز فرماندهی هوشمند</small></div>
+      </div>
+
+      <h1 class="login-title">ورود به پنل مدیریت</h1>
+      <p class="login-hint">برای ادامه، اطلاعات حساب دارای اشتراک فعال را وارد کنید.</p>
+
+      <form id="loginForm" autocomplete="on">
+        <div class="field-group">
+          <label><i class="fa-solid fa-user"></i> نام کاربری</label>
+          <div class="input-wrap">
+            <input id="username" name="username" autocomplete="username" required autofocus placeholder="نام کاربری خود را وارد کنید">
+            <i class="fa-solid fa-user field-icon"></i>
+          </div>
+        </div>
+
+        <div class="field-group">
+          <label><i class="fa-solid fa-lock"></i> رمز عبور</label>
+          <div class="input-wrap">
+            <input id="password" name="password" type="password" autocomplete="current-password" required placeholder="رمز عبور">
+            <i class="fa-solid fa-key field-icon"></i>
+            <button type="button" class="toggle-pass" onclick="togglePassword()" tabindex="-1">
+              <i id="eyeIcon" class="fa-solid fa-eye"></i>
+            </button>
+          </div>
+        </div>
+
+        <button id="submit" class="login-btn" type="submit">
+          <span class="btn-shine"></span>
+          <span class="btn-text"><i class="fa-solid fa-arrow-left-to-bracket"></i> ورود به داشبورد</span>
+          <span class="spinner"></span>
+        </button>
+
+        <div id="error" class="error-box"></div>
+      </form>
+
+      <div class="foot"><i class="fa-solid fa-circle-info"></i> اعتبار هر حساب بر اساس تعداد روز تعیین‌شده کنترل می‌شود.</div>
+    </div>
+
+    <div class="login-footer">
+      <div class="feat"><i class="fa-solid fa-bolt"></i> عملیات خودکار</div>
+      <div class="feat"><i class="fa-solid fa-shield-halved"></i> امن و مطمئن</div>
+      <div class="feat"><i class="fa-solid fa-headset"></i> پشتیبانی ۲۴ ساعته</div>
+    </div>
+  </main>
+
+<script>
+const form = document.getElementById('loginForm');
+const btn = document.getElementById('submit');
+const errorEl = document.getElementById('error');
+
+function togglePassword() {
+  const input = document.getElementById('password');
+  const icon = document.getElementById('eyeIcon');
+  if (input.type === 'password') {
+    input.type = 'text';
+    icon.className = 'fa-solid fa-eye-slash';
+  } else {
+    input.type = 'password';
+    icon.className = 'fa-solid fa-eye';
+  }
+}
+
+form.addEventListener('submit', async e => {
+  e.preventDefault();
+  errorEl.textContent = '';
+  btn.disabled = true;
+  btn.classList.add('loading');
+  try {
+    const response = await fetch('/login', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({username: username.value.trim(), password: password.value})
+    });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.detail || 'ورود ناموفق بود');
+    // success animation
+    btn.classList.remove('loading');
+    btn.innerHTML = '<span class="btn-text"><i class="fa-solid fa-check"></i> ورود موفق!</span>';
+    btn.style.background = 'linear-gradient(135deg,#22c55e,#16a34a)';
+    setTimeout(() => location.replace('/'), 600);
+  } catch (ex) {
+    errorEl.innerHTML = '<i class="fa-solid fa-circle-exclamation"></i> ' + ex.message;
+    btn.classList.remove('loading');
+  } finally {
+    if (!btn.style.background) {
+      btn.disabled = false;
+    }
+  }
+});
+
+// Enter on password submits
+document.getElementById('password').addEventListener('keypress', e => {
+  if (e.key === 'Enter') form.dispatchEvent(new Event('submit'));
+});
+</script>
+</body>
+</html>

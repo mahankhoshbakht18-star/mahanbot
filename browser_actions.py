@@ -1,0 +1,203 @@
+import random
+import time
+
+
+class BrowserActions:
+    CAPTCHA_INPUT_SELECTORS = (
+        "input[id*='tbCaptcha']",
+        "input[name*='tbCaptcha']",
+        "input[id*='captcha']",
+        "input[name*='captcha']",
+        "input[autocomplete='off'][maxlength='5']",
+        "input[autocomplete='off'][maxlength='6']",
+    )
+
+    @staticmethod
+    def find_captcha_input(page, preferred_selector=None):
+        """پیدا کردن فیلد قابل‌مشاهده کپچا با selector اصلی و fallbackهای امن."""
+        selectors = []
+        if preferred_selector:
+            selectors.append(preferred_selector)
+        selectors.extend(BrowserActions.CAPTCHA_INPUT_SELECTORS)
+        for selector in selectors:
+            try:
+                candidates = page.locator(selector)
+                for index in range(min(candidates.count(), 8)):
+                    candidate = candidates.nth(index)
+                    if candidate.is_visible() and candidate.is_enabled():
+                        return candidate
+            except Exception:
+                continue
+        return None
+
+    @staticmethod
+    def show_log_on_page(page, text, color="blue"):
+        """
+        تزریق یک باکس کوچک گوشه صفحه مرورگر برای دیدن وضعیت ربات توسط کاربر
+        """
+        try:
+            # کد جاوااسکریپت برای ساختن یا آپدیت کردن باکس لاگ
+            js = f"""
+            var b = document.getElementById('bot-log');
+            if(!b){{
+                b = document.createElement('div'); 
+                b.id='bot-log';
+                b.style.cssText = 'position:fixed;top:10px;left:10px;z-index:999999;padding:8px;border-radius:5px;font-family:Tahoma,sans-serif;font-weight:bold;font-size:12px;background:rgba(255,255,255,0.95);border-right:5px solid {color};color:{color};box-shadow:0 2px 10px rgba(0,0,0,0.2);direction:rtl;';
+                document.body.appendChild(b);
+            }}
+            if(b.innerText !== '{text}') b.innerText = '{text}';
+            b.style.borderColor = '{color}'; 
+            b.style.color = '{color}';
+            """
+            page.evaluate(js)
+        except Exception:
+            pass # اگر ارور داد (مثلا صفحه بسته شده بود) مهم نیست
+
+    @staticmethod
+    def human_fill(locator, text, timeout=3000):
+        """پر کردن طبیعی فیلد با مکث کوتاه و تایپ کاراکتر‌به‌کاراکتر."""
+        text = str(text)
+        if not locator.is_visible():
+            return False
+
+        locator.scroll_into_view_if_needed()
+        time.sleep(random.uniform(0.01, 0.035))
+        locator.click(timeout=timeout)
+        time.sleep(random.uniform(0.01, 0.025))
+        locator.press("Control+A", timeout=timeout)
+        time.sleep(random.uniform(0.005, 0.02))
+        locator.press("Backspace", timeout=timeout)
+        time.sleep(random.uniform(0.01, 0.03))
+
+        for index, char in enumerate(text):
+            locator.type(char, delay=random.randint(8, 18), timeout=timeout)
+            if index and index % random.randint(3, 5) == 0:
+                time.sleep(random.uniform(0.01, 0.03))
+
+        time.sleep(random.uniform(0.01, 0.035))
+        return locator.input_value() == text
+
+    @staticmethod
+    def fast_fill(locator, text, timeout=1500):
+        """Fill immediately while still firing the events used by the target forms."""
+        text = str(text)
+        try:
+            locator.wait_for(state="visible", timeout=timeout)
+            if locator.is_enabled():
+                try:
+                    BrowserActions.human_fill(locator, text, timeout=timeout)
+                    if locator.input_value() == text:
+                        return True
+                except Exception:
+                    pass
+            locator.evaluate(
+                """(element, value) => {
+                    const prototype = Object.getPrototypeOf(element);
+                    const descriptor = Object.getOwnPropertyDescriptor(prototype, 'value');
+                    if (descriptor && descriptor.set) descriptor.set.call(element, value);
+                    else element.value = value;
+                    element.dispatchEvent(new Event('input', {bubbles: true}));
+                    element.dispatchEvent(new Event('change', {bubbles: true}));
+                }""",
+                text,
+            )
+            if locator.input_value() == text:
+                return True
+        except Exception:
+            pass
+        try:
+            locator.fill(text, timeout=timeout)
+            locator.dispatch_event("change")
+            return locator.input_value() == text
+        except Exception:
+            try:
+                BrowserActions.force_fill(locator, text)
+                return locator.input_value() == text
+            except Exception:
+                return False
+
+    @staticmethod
+    def force_fill(locator, text):
+        """
+        متد بسیار مهم برای پر کردن فیلدهایی که:
+        1. مخفی هستند
+        2. Read-only هستند
+        3. با تایپ معمولی Playwright پر نمی‌شوند
+        """
+        try:
+            text = str(text)
+            if not locator.is_visible():
+                return
+            
+            # اسکرول کن تا دیده شود
+            locator.scroll_into_view_if_needed()
+            
+            # روش 1: fill مستقیم؛ سریع است و Playwright رویداد input را ارسال می‌کند.
+            try:
+                locator.fill(text, timeout=1500)
+                locator.dispatch_event("change")
+                locator.dispatch_event("blur")
+            except:
+                try:
+                    BrowserActions.human_fill(locator, text)
+                except Exception:
+                    pass
+            
+            # بررسی کن آیا واقعا پر شد؟
+            val = locator.input_value()
+            if val != text:
+                # روش 2: تزریق با جاوااسکریپت (قدرتمندترین روش)
+                locator.evaluate(f"el => el.value = '{text}'")
+                
+                # تریگر کردن ایونت‌ها تا سایت بفهمد فیلد تغییر کرده است
+                # این خیلی مهم است چون سایت‌های بانکی روی onchange حساس هستند
+                locator.evaluate("el => { el.dispatchEvent(new Event('change', {bubbles: true})); el.dispatchEvent(new Event('input', {bubbles: true})); el.dispatchEvent(new Event('blur', {bubbles: true})); }")
+        except Exception as e:
+            print(f"Force Fill Error: {e}")
+
+    @staticmethod
+    def fill_dates(page, data):
+        """
+        پر کردن تاریخ تولد و ازدواج
+        با توجه به اینکه این فیلدها معمولا 3 تکه (سال/ماه/روز) هستند
+        """
+        try:
+            # 1. تاریخ تولد
+            # چک می‌کنیم آیا فیلد سال تولد در صفحه وجود دارد؟
+            if data.get('birth_year') and page.locator("#ctl00_ContentPlaceHolder1_tbBrYear").is_visible():
+                # فقط اگر خالی بود پر کن
+                if not page.locator("#ctl00_ContentPlaceHolder1_tbBrYear").input_value():
+                    # سال
+                    BrowserActions.human_fill(page.locator("#ctl00_ContentPlaceHolder1_tbBrYear"), str(data['birth_year']))
+                    # ماه (باید دو رقمی باشد مثل 01)
+                    page.locator("#ctl00_ContentPlaceHolder1_ddlBrMonth").select_option(value=str(data['birth_month']).zfill(2))
+                    # روز
+                    page.locator("#ctl00_ContentPlaceHolder1_ddlBrDay").select_option(value=str(data['birth_day']).zfill(2))
+
+            # 2. تاریخ ازدواج (اگر وجود داشت)
+            if data.get('marriage_year') and page.locator("#ctl00_ContentPlaceHolder1_tbMarrYear").is_visible():
+                if not page.locator("#ctl00_ContentPlaceHolder1_tbMarrYear").input_value():
+                    BrowserActions.human_fill(page.locator("#ctl00_ContentPlaceHolder1_tbMarrYear"), str(data['marriage_year']))
+                    page.locator("#ctl00_ContentPlaceHolder1_ddlMarryMonth").select_option(value=str(data['marriage_month']).zfill(2))
+                    page.locator("#ctl00_ContentPlaceHolder1_ddlMarryDay").select_option(value=str(data['marriage_day']).zfill(2))
+        except Exception:
+            pass
+
+    @staticmethod
+    def select_state_bank(page, data):
+        """
+        انتخاب استان و شهر (در صورتی که در دیتا موجود باشد)
+        """
+        try:
+             state_name = data.get('state')
+             if state_name:
+                ddl = page.locator("#ctl00_ContentPlaceHolder1_ddlState")
+                # اگر دراپ‌داون هست و هنوز روی پیش‌فرض (0) مانده
+                if ddl.is_visible() and ddl.input_value() == "0":
+                    try: 
+                        # انتخاب بر اساس متن (Label) چون کد استان‌ها را حفظ نیستیم
+                        ddl.select_option(label=state_name)
+                    except: 
+                        pass
+        except Exception:
+            pass

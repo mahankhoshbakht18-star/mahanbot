@@ -1,0 +1,200 @@
+<!doctype html>
+<html lang="fa" dir="rtl">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>فرماندهی ماهان | مدیریت هوشمند ثبت‌نام (نسخه ۱.۸.۰)</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Vazirmatn:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.rtl.min.css" rel="stylesheet">
+  <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css" rel="stylesheet">
+  <link rel="stylesheet" href="/static/style.css?v=20260824-1">
+  <link rel="stylesheet" href="/static/browser-preview.css">
+</head>
+<body>
+  <aside class="sidebar">
+    <div class="brand-block">
+      <div class="brand-mark">م</div>
+      <div><strong>فرماندهی ماهان</strong><small>سامانه یکپارچه عملیات ۱.۸.۰</small></div>
+    </div>
+    <div class="server-status"><span id="connectionStatus" class="badge bg-danger">قطع</span><span>ارتباط زنده سرور</span></div>
+    <nav class="sidebar-nav">
+      <div onclick="switchView('dashboard',this)"><button class="nav-link active"><i class="fa-solid fa-grid-2"></i><span>داشبورد عملیات</span></button></div>
+      <div onclick="switchView('add',this)"><button class="nav-link"><i class="fa-solid fa-user-plus"></i><span>ثبت متقاضی</span></button></div>
+      <div onclick="switchView('list',this)"><button class="nav-link"><i class="fa-solid fa-address-card"></i><span>ثبت‌نام اولیه</span></button></div>
+      <div onclick="switchView('bank-select',this)"><button class="nav-link"><i class="fa-solid fa-building-columns"></i><span>انتخاب بانک</span></button></div>
+      <div onclick="switchView('status',this)"><button class="nav-link"><i class="fa-solid fa-magnifying-glass-chart"></i><span>مشاهده وضعیت</span></button></div>
+      <div onclick="switchView('recover',this)"><button class="nav-link"><i class="fa-solid fa-rotate-left"></i><span>بازیابی درخواست</span></button></div>
+      <div onclick="switchView('delete-req',this)"><button class="fa-trash-nav nav-link"><i class="fa-solid fa-trash-can"></i><span>حذف درخواست</span></button></div>
+      <div onclick="switchView('settings',this)"><button class="nav-link"><i class="fa-solid fa-sliders"></i><span>تنظیمات</span></button></div>
+    </nav>
+    <div class="sidebar-footer"><i class="fa-regular fa-clock"></i><span id="clock">--:--:--</span><small>نسخه ۱.۸.۰ تکمیل‌شده</small></div>
+  </aside>
+
+  <main class="main-content">
+    <header class="topbar">
+      <div><p class="eyebrow">مرکز کنترل عملیات</p><h1>مدیریت ثبت‌نام تسهیلات ازدواج و فرزندآوری</h1></div>
+      <button class="btn btn-primary action-pill" onclick="switchView('add')"><i class="fa-solid fa-plus"></i> متقاضی جدید</button>
+    </header>
+
+    <section id="view-dashboard" class="view-section active-view">
+      <div class="hero-panel">
+        <div><span class="live-kicker"><i></i> پایش زنده فعال</span><h2>همه عملیات، در یک نگاه</h2><p>وضعیت بات‌ها، پیامک‌ها، ظرفیت بانک‌ها و Checkpointها بدون وقفه به‌روزرسانی می‌شود.</p></div>
+        <button class="btn btn-light" onclick="fetchDashboardData()"><i class="fa-solid fa-arrows-rotate"></i> به‌روزرسانی</button>
+      </div>
+      <div class="stats-grid">
+        <article class="stat-card"><span class="stat-icon indigo"><i class="fa-solid fa-users"></i></span><div><small>کل متقاضیان</small><strong id="stat-total">۰</strong></div></article>
+        <article class="stat-card"><span class="stat-icon amber"><i class="fa-solid fa-robot"></i></span><div><small>بات‌های فعال</small><strong id="stat-active">۰</strong></div></article>
+        <article class="stat-card"><span class="stat-icon green"><i class="fa-solid fa-circle-check"></i></span><div><small>ثبت نهایی موفق</small><strong id="stat-success">۰</strong></div></article>
+        <article class="stat-card"><span class="stat-icon cyan"><i class="fa-solid fa-key"></i></span><div><small>کدهای رهگیری</small><strong id="stat-codes">۰</strong></div></article>
+      </div>
+      <div class="quick-actions" style="display:flex;gap:10px;margin:10px 0 18px;flex-wrap:wrap">
+        <button class="btn btn-sm" style="background:linear-gradient(135deg,#eeecff,#ddd6fe);color:#6156d8;border:none;border-radius:12px;padding:8px 16px;font-weight:700;font-size:12px" onclick="switchView('add')"><i class="fa-solid fa-user-plus ms-1"></i> ثبت سریع متقاضی</button>
+        <button class="btn btn-sm" style="background:linear-gradient(135deg,#dcf7eb,#bbf7d0);color:#13865e;border:none;border-radius:12px;padding:8px 16px;font-weight:700;font-size:12px" onclick="switchView('list')"><i class="fa-solid fa-play ms-1"></i> شروع عملیات</button>
+        <button class="btn btn-sm" style="background:linear-gradient(135deg,#fef3c7,#fde68a);color:#92400e;border:none;border-radius:12px;padding:8px 16px;font-weight:700;font-size:12px" onclick="switchView('settings')"><i class="fa-solid fa-gear ms-1"></i> تنظیمات سریع</button>
+      </div>
+      <div class="dashboard-grid">
+        <article class="panel active-app-card" style="border-top:3px solid var(--brand)">
+          <div class="panel-heading"><div><span class="section-kicker">متقاضی فعال</span><h3 id="activeApplicantName">بدون کاربر فعال</h3><p id="activeApplicantMeta">---</p></div><span id="activeApplicantStatus" class="badge bg-secondary">---</span></div>
+          <div class="otp-zone">
+            <div><h4>ارسال دستی کد پیامک</h4><p>در حالت عادی کد از اپ موبایل دریافت می‌شود.</p></div>
+            <div class="otp-row"><input id="manualOtpInput" class="otp-input" inputmode="numeric" maxlength="8" placeholder="••••••"><button onclick="sendManualOtp()" class="btn btn-primary">ارسال کد</button></div>
+            <small id="manualOtpStatus"></small>
+          </div>
+          <div class="bank-control"><h4><i class="fa-solid fa-building-columns" style="color:var(--brand);margin-left:6px"></i> بانک‌های اولویت‌دار</h4><div id="activeBankList" class="active-bank-list"></div></div>
+        </article>
+        <article class="panel">
+          <div class="panel-title"><div><span class="section-kicker">صف اجرا</span><h3>بات‌های در حال فعالیت</h3></div></div>
+          <div class="table-responsive"><table class="table modern-table"><thead><tr><th>متقاضی</th><th>وضعیت</th><th></th></tr></thead><tbody id="activeBotsBody"></tbody></table></div>
+          <div class="quick-otp"><label for="otpInput">ورود سریع OTP</label><div class="input-group"><input id="otpInput" class="form-control" maxlength="8" inputmode="numeric" placeholder="کد پیامک"><button class="btn btn-outline-primary" onclick="sendOtp(document.getElementById('otpInput').value)">تحویل</button></div><small id="otpStatus"></small></div>
+        </article>
+      </div>
+      <article class="panel browser-live-panel">
+        <div class="panel-title"><div><span class="section-kicker">مرورگر داخلی</span><h3>نمایش زنده صفحه بات</h3><p>صفحه مرورگر بدون بازشدن پنجره جداگانه، مستقیماً اینجا نمایش داده می‌شود.</p></div><span class="live-kicker browser-live"><i></i> زنده</span></div>
+        <div class="browser-frame">
+          <div class="browser-chrome"><span></span><span></span><span></span><div id="embeddedBrowserAddress">در انتظار شروع بات…</div></div>
+          <div id="embeddedBrowserEmpty" class="browser-empty"><i class="fa-regular fa-window-maximize"></i><strong>مرورگر آماده است</strong><small>با شروع یکی از بات‌ها، تصویر زنده اینجا ظاهر می‌شود.</small></div>
+          <img id="embeddedBrowserImage" alt="نمایش زنده مرورگر بات">
+        </div>
+      </article>
+      <article class="panel terminal-card" style="border-top:3px solid #10231f">
+        <div class="panel-title terminal-head"><div><span class="section-kicker">رویدادهای سیستم</span><h3><i class="fa-solid fa-terminal" style="color:#10231f;margin-left:8px"></i> گزارش زنده عملیات</h3></div><button id="logClearBtn" class="btn btn-sm btn-outline-secondary"><i class="fa-solid fa-broom ms-1"></i> پاک‌کردن</button></div>
+        <div class="log-filters">
+          <input id="logFilterText" class="form-control" placeholder="جستجو در گزارش‌ها">
+          <input id="logFilterNid" class="form-control" placeholder="کد ملی">
+          <input id="logFilterJob" class="form-control" placeholder="شناسه کار">
+          <select id="logFilterLevel" class="form-select"><option value="">همه سطح‌ها</option><option value="info">اطلاع</option><option value="success">موفق</option><option value="warning">هشدار</option><option value="error">خطا</option></select>
+          <select id="logFilterType" class="form-select"><option value="">همه رویدادها</option><option value="log">گزارش</option><option value="job_status">وضعیت کار</option></select>
+        </div>
+        <div id="terminalBox" class="terminal-box"><div class="terminal-empty">در انتظار اولین رویداد…</div></div>
+      </article>
+    </section>
+
+    <section id="view-add" class="view-section">
+      <div class="page-heading"><div><span class="section-kicker">پرونده متقاضی</span><h2 id="formTitle">ثبت متقاضی جدید</h2><p>اطلاعات مورد نیاز بات (ازدواج یا فرزندآوری) را وارد کنید یا از اکسل بارگذاری نمایید.</p></div><button id="btnResetForm" class="btn btn-outline-danger" style="display:none" onclick="resetAddForm()">لغو ویرایش</button></div>
+
+      <article class="panel mb-3">
+        <div class="d-flex justify-content-between align-items-center flex-wrap gap-2">
+          <div><strong><i class="fa-solid fa-file-excel text-success ms-1"></i> بارگذاری گروهی از فایل Excel (.xlsx)</strong><small class="d-block text-muted">صفرهای ابتدای کد ملی، کد پستی و شماره موبایل حفظ و اعتبارسنجی می‌شوند.</small></div>
+          <div class="d-flex gap-2 align-items-center"><input id="excelUploadInput" type="file" accept=".xlsx,.xls" class="form-control form-control-sm" style="max-width:260px"><button type="button" class="btn btn-sm btn-success" onclick="uploadApplicantsExcel()">بارگذاری Excel</button></div>
+        </div>
+        <div id="excelImportResult" class="small mt-2"></div>
+      </article>
+
+      <form id="addForm" class="panel form-panel" onsubmit="event.preventDefault();submitNewApplicant()">
+        <div class="form-section-title"><span>۱</span><div><h3>اطلاعات هویتی و نوع تسهیلات</h3><p>مشخصات اصلی متقاضی، نوع وام و کد پستی</p></div></div>
+        <div class="form-grid">
+          <label>نوع تسهیلات<select id="inpLoanType" class="form-select" onchange="toggleLoanTypeFields()"><option value="marriage">وام ازدواج</option><option value="childbearing">وام فرزندآوری</option></select></label>
+          <label>نام و نام خانوادگی<input id="inpName" class="form-control" required></label>
+          <label>کد ملی متقاضی<input id="inpNid" class="form-control" inputmode="numeric" maxlength="10" pattern="[0-9]{10}" required></label>
+          <label>شماره موبایل<input id="inpMobile" class="form-control" inputmode="tel" maxlength="11"></label>
+          <label id="lblSpouseNid">کد ملی همسر<input id="inpSpouseNationalId" class="form-control" inputmode="numeric" maxlength="10" pattern="[0-9]{10}"></label>
+          <label id="lblChildNid" style="display:none">کد ملی فرزند<input id="inpChildNationalId" class="form-control" inputmode="numeric" maxlength="10" pattern="[0-9]{10}"></label>
+          <label>تلفن ثابت<input id="inpPhone" class="form-control" inputmode="tel"></label>
+          <label>کد پستی (۱۰ رقمی)<input id="inpZip" class="form-control" inputmode="numeric" maxlength="10" pattern="[0-9]{10}" placeholder="با حفظ صفرهای ابتدا"></label>
+          <label>استان<input id="inpState" class="form-control"></label>
+          <label>شهر<input id="inpCity" class="form-control"></label>
+          <label>وضعیت نظام وظیفه<select id="inpMilitary" class="form-select"><option value="1">مشمول نیست</option><option value="2">پایان خدمت</option><option value="3">معافیت</option></select></label>
+          <label>کد رهگیری فعلی<input id="inpTrackingCode" class="form-control"></label>
+        </div>
+        <div class="form-section-title"><span>۲</span><div><h3>تاریخ‌ها</h3><p>روز، ماه و سال را جدا وارد کنید</p></div></div>
+        <div class="date-grid">
+          <div><label>تاریخ تولد متقاضی</label><div class="date-row"><input id="bd_d" class="form-control" placeholder="روز"><input id="bd_m" class="form-control" placeholder="ماه"><input id="bd_y" class="form-control" placeholder="سال"></div></div>
+          <div id="marriageDateBlock"><label>تاریخ ازدواج</label><div class="date-row"><input id="md_d" class="form-control" placeholder="روز"><input id="md_m" class="form-control" placeholder="ماه"><input id="md_y" class="form-control" placeholder="سال"></div></div>
+          <div id="childBirthDateBlock" style="display:none"><label>تاریخ تولد فرزند</label><div class="date-row"><input id="cd_d" class="form-control" placeholder="روز"><input id="cd_m" class="form-control" placeholder="ماه"><input id="cd_y" class="form-control" placeholder="سال"></div></div>
+        </div>
+        <div class="form-section-title"><span>۳</span><div><h3>بانک‌ها، روش پذیرش و شعب اولویت‌دار</h3><p>انتخاب حضوری یا غیرحضوری (در حالت غیرحضوری انتخاب شعبه غیرفعال می‌شود)</p></div></div>
+        <div class="form-grid mb-3">
+          <label>روش پذیرش بانک<select id="inpBankMode" class="form-select" onchange="toggleBranchFieldByMode()"><option value="">بر اساس قابلیت بانک (پیش‌فرض)</option><option value="online">غیرحضوری (بدون نیاز به شعبه)</option><option value="in_person">حضوری (با انتخاب شعبه)</option></select></label>
+          <label id="lblPriorityBranches">شعب اولویت‌دار (با ویرگول جدا کنید)<input id="inpPriorityBranches" class="form-control" placeholder="مثال: کد شعبه یا نام شعبه ۱، شعبه ۲"></label>
+        </div>
+        <div class="banks-editor"><div><h4>بانک‌های قابل انتخاب</h4><div id="bankOptions" class="bank-options"></div><h4 class="mt-4">بانک‌های مورد علاقه</h4><div id="favoriteBanksList" class="favorite-list"></div></div><div><h4>ترتیب اولویت</h4><p class="text-muted small">برای جابه‌جایی، موارد را بکشید.</p><ul id="priorityBanksList" class="list-group priority-list"></ul></div></div>
+        <div class="form-actions"><button type="button" class="btn btn-light" onclick="resetAddForm()">پاک‌کردن فرم</button><button type="submit" class="btn btn-primary px-5"><i class="fa-solid fa-floppy-disk"></i> ذخیره پرونده</button></div>
+      </form>
+    </section>
+
+    <section id="view-list" class="view-section"><div class="page-heading"><div><span class="section-kicker">ثبت‌نام اولیه</span><h2>متقاضیان ثبت‌نام</h2><p>ویرایش پرونده، شروع یا توقف بات ثبت‌نام.</p></div></div><article class="panel"><div class="table-responsive"><table class="table modern-table"><thead><tr><th>#</th><th>متقاضی</th><th>کد ملی</th><th>کد رهگیری</th><th>وضعیت</th><th>شروع</th><th>توقف</th><th>حذف</th></tr></thead><tbody id="applicantsListBody"></tbody></table></div></article></section>
+    <section id="view-bank-select" class="view-section"><div class="page-heading"><div><span class="section-kicker">انتخاب هوشمند</span><h2>شروع انتخاب بانک</h2><p>پایش هوشمند ظرفیت، مدیریت پیامک و ادامه از آخرین Checkpoint.</p></div></div><article class="panel"><div class="table-responsive"><table class="table modern-table"><thead><tr><th>متقاضی</th><th>وضعیت</th><th>مرحله</th><th>مرورگر</th><th>بانک هدف</th><th>بانک‌های موجود</th><th>آخرین/بعدی</th><th>آخرین فعالیت</th><th>تلاش/خطا</th><th>عملیات</th></tr></thead><tbody id="bankSelectListBody"></tbody></table></div></article></section>
+    <section id="view-status" class="view-section"><div class="page-heading"><div><span class="section-kicker">پیگیری درخواست</span><h2>مشاهده وضعیت</h2><p>استعلام وضعیت درخواست‌های ثبت‌شده.</p></div></div><article class="panel"><div class="table-responsive"><table class="table modern-table"><thead><tr><th>متقاضی</th><th>کد ملی</th><th>کد رهگیری</th><th>وضعیت</th><th>استعلام</th><th>توقف</th></tr></thead><tbody id="statusListBody"></tbody></table></div></article></section>
+    <section id="view-recover" class="view-section"><div class="page-heading"><div><span class="section-kicker">بازیابی</span><h2>بازیابی درخواست</h2><p>ادامه پرونده‌های نیمه‌کاره یا متوقف‌شده.</p></div></div><article class="panel"><div class="table-responsive"><table class="table modern-table"><thead><tr><th>متقاضی</th><th>کد ملی</th><th>عملیات</th></tr></thead><tbody id="recoverListBody"></tbody></table></div></article></section>
+    <section id="view-delete-req" class="view-section"><div class="page-heading"><div><span class="section-kicker danger">عملیات حساس</span><h2>حذف درخواست از سامانه</h2><p>درخواست متقاضی را از سامانه مقصد حذف می‌کند.</p></div></div><article class="panel danger-panel"><div class="table-responsive"><table class="table modern-table"><thead><tr><th>متقاضی</th><th>کد ملی</th><th>حذف درخواست</th></tr></thead><tbody id="deleteReqListBody"></tbody></table></div></article></section>
+
+    <section id="view-settings" class="view-section">
+      <div class="page-heading"><div><span class="section-kicker">پیکربندی نسخه ۱.۸.۰</span><h2>تنظیمات سامانه</h2><p>مدیریت زمان‌بندی بررسی ظرفیت، فهرست بانک‌ها، پیامک، Checkpoint و ثبت نهایی.</p></div></div>
+      <div class="settings-grid">
+        <article class="panel" style="border-top:3px solid var(--brand)">
+          <div class="panel-title"><div><h3><i class="fa-solid fa-gear" style="color:var(--brand);margin-left:8px"></i> رفتار بات و پایش (نسخه ۱.۸.۰)</h3><p>کنترل نرخ بررسی، کپچا، پیامک، بازیابی و ثبت نهایی</p></div></div>
+          <div class="form-grid compact">
+            <label>محل نمایش مرورگر<select id="set_browser_display_mode" class="form-select"><option value="external">پنجره جداگانه (فعلی)</option><option value="embedded">داخل داشبورد</option></select></label>
+            <label>حالت اجرا<select id="set_automation_mode" class="form-select"><option value="safe">Safe</option><option value="normal">Normal</option><option value="fast">Fast</option></select></label>
+            <label>فاصله بررسی ظرفیت (ثانیه)<input id="set_bank_capacity_recheck" type="number" min="5" max="600" value="20" class="form-control"></label>
+            <label>فاصله بررسی فهرست بانک (ثانیه)<input id="set_bank_refresh" type="number" min="1" max="300" value="5" class="form-control"></label>
+            <label>اعتبار تخمینی OTP (ثانیه)<input id="set_otp_validity" type="number" min="30" max="600" value="120" class="form-control"></label>
+            <label>مهلت عملیات (میلی‌ثانیه)<input id="set_default_timeout" type="number" min="250" max="60000" class="form-control"></label>
+            <label>مهلت ناوبری (میلی‌ثانیه)<input id="set_navigation_timeout" type="number" min="1000" max="120000" class="form-control"></label>
+            <label>تعداد تلاش<input id="set_retry" type="number" min="1" max="20" class="form-control"></label>
+            <label>تأخیر تلاش (ثانیه)<input id="set_retry_delay" type="number" step="0.05" min="0" class="form-control"></label>
+            <label>فاصله بررسی کپچا<input id="set_captcha_poll" type="number" step="0.05" min="0.05" class="form-control"></label>
+            <label>تأخیر تلاش کپچا<input id="set_captcha_retry_delay" type="number" step="0.05" min="0" class="form-control"></label>
+            <label>حداکثر تلاش کپچا<input id="set_captcha_max" type="number" min="1" max="10" class="form-control"></label>
+            <label class="check-card"><input id="set_resume_checkpoint" type="checkbox" checked> ادامه از آخرین Checkpoint</label>
+            <label class="check-card"><input id="set_save_page" type="checkbox" checked> Save Page فعال</label>
+            <label class="check-card"><input id="set_repair_page" type="checkbox" checked> Repair Page فعال</label>
+            <label class="check-card"><input id="set_pause_manual_captcha" type="checkbox" checked> توقف برای ورود دستی CAPTCHA</label>
+            <label class="check-card"><input id="set_pause_manual_otp" type="checkbox" checked> توقف برای ورود دستی OTP</label>
+            <label class="check-card"><input id="set_final_submit" type="checkbox"> ثبت نهایی خودکار (پیش‌فرض غیرفعال)</label>
+            <label class="check-card"><input id="set_allow_reserve_bank" type="checkbox"> بانک رزرو (اختیاری)</label>
+            <label class="check-card"><input id="set_diagnostic_logging" type="checkbox" checked> ثبت لاگ تشخیصی</label>
+            <label class="check-card"><input id="set_bank_monitor" type="checkbox" checked> پایش بانک فعال</label>
+            <label class="check-card"><input id="set_save_html" type="checkbox" checked> ذخیره HTML</label>
+            <label class="check-card"><input id="set_save_screenshot" type="checkbox" checked> ذخیره تصویر</label>
+            <label class="check-card"><input id="set_save_change_only" type="checkbox" checked> فقط هنگام تغییر بانک</label>
+            <label class="check-card"><input id="set_auto_repair" type="checkbox"> تعمیر خودکار snapshot هنگام شروع</label>
+            <label class="check-card"><input id="set_headless" type="checkbox"> اجرای مرورگر مخفی</label>
+            <label class="check-card"><input id="set_useproxy" type="checkbox"> استفاده از پروکسی</label>
+          </div>
+          <input id="set_captcha" type="hidden" value="0">
+          <input id="set_captcha_mode" type="hidden" value="model">
+          <label class="mt-3">فهرست پروکسی‌ها<textarea id="set_proxylist" class="form-control" rows="3"></textarea></label>
+          <div class="form-actions"><button class="btn btn-primary" onclick="saveSettings()">ذخیره تنظیمات بات</button><button class="btn btn-light" onclick="repairSavedPages()">تعمیر صفحات ذخیره‌شده</button></div>
+          <div id="savedPagesRepairResult" class="small mt-2"></div>
+        </article>
+        <article class="panel" style="border-top:3px solid var(--accent-blue,#0ea5e9)"><div class="panel-title"><div><h3><i class="fa-solid fa-globe" style="color:#0ea5e9;margin-left:8px"></i> پروفایل مرورگر</h3><p id="browserProfileSummary">در حال بارگذاری…</p></div></div><div class="preset-row"><button class="btn btn-sm btn-light" onclick="applyBrowserPreset('debug')">نمایشی و آرام</button><button class="btn btn-sm btn-light" onclick="applyBrowserPreset('fast')">سریع و مخفی</button></div><div class="form-grid compact"><label>مرورگر<select id="browserSelect" class="form-select"><option value="chromium">Chromium</option><option value="chrome">Chrome</option><option value="edge">Edge</option></select></label><label>کندی حرکت (ms)<input id="browserSlowMo" type="number" class="form-control"></label><label>Timeout<input id="browserTimeout" type="number" class="form-control"></label><label>عرض پنجره (px)<input id="browserViewportWidth" type="number" min="360" max="3840" value="540" class="form-control"></label><label>ارتفاع پنجره (px)<input id="browserViewportHeight" type="number" min="320" max="2160" value="680" class="form-control"></label><label>موقعیت پنجره در دسکتاپ<select id="browserWindowPosition" class="form-select"><option value="top_right">بالا سمت راست (پیش‌فرض)</option><option value="top_left">بالا سمت چپ</option><option value="bottom_right">پایین سمت راست</option><option value="bottom_left">پایین سمت چپ</option><option value="center">وسط صفحه</option></select></label><label>مسیر پروفایل<input id="browserUserDataDir" class="form-control"></label><label>پروکسی مرورگر<input id="browserProxy" class="form-control"></label><label class="check-card"><input id="browserRememberPosition" type="checkbox" checked> حفظ آخرین موقعیت پنجره</label><label class="check-card"><input id="browserHeadless" type="checkbox"> اجرای مخفی</label></div><div class="form-actions"><button class="btn btn-outline-primary" onclick="testBrowserLaunch()">تست اجرا</button><button class="btn btn-primary" onclick="saveBrowserProfile()">ذخیره پروفایل</button></div><small>مرورگر فعلی: <strong id="currentBrowserLabel">-</strong></small></article>
+      </div>
+      <article class="panel mt-4" style="border-top:3px solid #a78bfa"><div class="panel-title"><div><h3><i class="fa-solid fa-shield-halved" style="color:#a78bfa;margin-left:8px"></i> دامنه‌های مجاز</h3><p>کنترل مقصدهایی که بات اجازه بازکردن دارد.</p></div><span id="allowedDomainsStatus" class="small"></span></div><div class="allowlist-grid"><div><label>افزودن دامنه</label><div class="input-group"><input id="allowedDomainInput" class="form-control" placeholder="example.com"><button class="btn btn-primary" onclick="addAllowedDomain()">افزودن</button></div><div id="allowedDomainsDbList" class="domain-list"></div></div><div><h4>مؤثر در اجرا</h4><div id="allowedDomainsEffective" class="domain-list"></div><h4 class="mt-3">تعریف‌شده محیطی</h4><div id="allowedDomainsEnv" class="domain-list"></div></div></div><div class="form-actions"><button class="btn btn-primary" onclick="saveAllowedDomains()">ذخیره دامنه‌ها</button><div class="input-group test-url"><input id="allowlistTestUrl" class="form-control" placeholder="https://example.com"><button class="btn btn-outline-primary" onclick="testAllowlistUrl()">بررسی آدرس</button></div></div><div id="allowlistTestResult" class="small mt-2"></div></article>
+      <article id="subscriptionPanel" class="panel mt-4" hidden>
+        <div class="panel-title"><div><h3><i class="fa-solid fa-users-gear" style="color:var(--brand);margin-left:8px"></i> مدیریت اشتراک کاربران</h3><p>برای هر مشتری نام کاربری، رمز و تعداد روز اعتبار تعریف کنید.</p></div><button class="btn btn-light" onclick="logoutApp()">خروج از حساب</button></div>
+        <div class="form-grid compact"><label>نام کاربری<input id="subUsername" autocomplete="off" class="form-control"></label><label>رمز عبور<input id="subPassword" type="password" autocomplete="new-password" class="form-control"></label><label>اعتبار (روز)<input id="subDays" type="number" min="1" max="3650" value="30" class="form-control"></label><label class="check-card"><input id="subAdmin" type="checkbox"> دسترسی مدیر</label></div>
+        <button class="btn btn-primary mt-3" onclick="saveSubscriptionUser()">ایجاد یا تمدید اشتراک</button>
+        <div class="table-responsive mt-3"><table class="table modern-table"><thead><tr><th>کاربر</th><th>نوع</th><th>اعتبار تا</th><th>وضعیت</th><th>عملیات</th></tr></thead><tbody id="subscriptionUsers"></tbody></table></div>
+      </article>
+      <details class="debug-panel"><summary>اطلاعات فنی اتصال</summary><div><span>WS: <b id="debugWsState">-</b></span><span>آخرین پیام: <b id="debugLastWs">-</b></span><span>HTTP: <b id="debugLastHttp">-</b></span></div></details>
+    </section>
+  </main>
+  <div id="toastContainer" class="toast-container position-fixed bottom-0 start-0 p-3"></div>
+  <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+  <script src="/static/messages_fa.js?v=20260808-2"></script>
+  <script src="/static/script.js?v=20261015-1"></script>
+</body>
+</html>

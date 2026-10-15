@@ -1,0 +1,743 @@
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd"><html xmlns="http://www.w3.org/1999/xhtml"><head><script type="text/javascript" language="javascript">
+    javascript: window.history.forward(1);
+</script>
+
+
+<!--- loading part01 --->
+
+<script type="text/javascript">
+    var DHTML = (document.getElementById || document.all || document.layers);
+    function ap_getObj(name) {
+        if (document.getElementById) {
+            return document.getElementById(name).style;
+        }
+        else if (document.all) {
+            return document.all[name].style;
+        }
+        else if (document.layers) {
+            return document.layers[name];
+        }
+    }
+    function ap_showWaitMessage(div, flag) {
+        if (!DHTML) return;
+        var x = ap_getObj(div);
+        x.visibility = (flag) ? 'visible' : 'hidden'
+        if (!document.getElementById)
+            if (document.layers)
+                x.left = 280 / 2;
+        return true;
+    }
+</script>
+
+<!--- loading part01 --->
+<title>
+	فرم انتخاب بانک و شعبه پیشنهادی جهت دریافت تسهیلات قرض الحسنه ازدواج
+</title><link href="BotDetectCaptcha.ashx?get=layout-stylesheet&amp;amp;t=1788703200" rel="stylesheet" type="text/css"><link href="SSTashilat.css" rel="stylesheet" type="text/css">
+
+    <script type="text/javascript" src="farsix.js"></script>
+
+    <script src="Print.js" type="text/javascript"></script>
+
+    <script type="text/javascript">
+        function CloseSession() {
+            location.href = 'LogOut.aspx';
+        }
+        window.onbeforeunload = CloseSession;
+    </script>
+
+    <style type="text/css">
+        .style1 {
+            width: 10px;
+            height: 14px;
+        }
+
+        .style2 {
+            height: 14px;
+        }
+    </style>    
+</head>
+<body class="Body">
+    <!--- loading part02 --->
+    <div id="waitDiv" style="border: 1px dotted silver; position: absolute; top: 0px; width: 100%; height: 100%; text-align: center; visibility: hidden; padding: 1px 4px;">
+        <table cellpadding="6" border="0" style="width: 100%; height: 100%; font-family: Tahoma; font-size: 11px; color: #CC3300;">
+            <tbody><tr>
+                <td style="width: 100%; height: 100%; text-align: center; vertical-align: middle; direction: rtl;">در حال بارگذاري ...
+                    <br>
+                    <img alt="Please wait ..." src="Images/progressbar.gif" width="100" height="9" border="0">
+                </td>
+            </tr>
+        </tbody></table>
+    </div>
+
+    <script type="text/javascript">
+        ap_showWaitMessage('waitDiv', 1);
+    </script>
+
+    <!--- loading part02 --->
+    <form name="aspnetForm" method="post" action="./SelectBnkShb.aspx" id="aspnetForm">
+<div>
+<input type="hidden" name="__EVENTTARGET" id="__EVENTTARGET" value="" style="">
+<input type="hidden" name="__EVENTARGUMENT" id="__EVENTARGUMENT" value="" style="">
+<input type="hidden" name="__LASTFOCUS" id="__LASTFOCUS" value="" style="">
+<input type="hidden" name="__VIEWSTATE" id="__VIEWSTATE" value="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" style="">
+</div>
+
+<script type="text/javascript">
+//<![CDATA[
+var theForm = document.forms['aspnetForm'];
+if (!theForm) {
+    theForm = document.aspnetForm;
+}
+function __doPostBack(eventTarget, eventArgument) {
+    if (!theForm.onsubmit || (theForm.onsubmit() != false)) {
+        theForm.__EVENTTARGET.value = eventTarget;
+        theForm.__EVENTARGUMENT.value = eventArgument;
+        theForm.submit();
+    }
+}
+//]]>
+</script>
+
+
+<script src="/WebResource.axd?d=qzjetG-Ywsw152MmovGsTMxaKkfWrpwe1EQ7F-z3JaQMctTHW1fsdGJ6N_CGFL1dDUyoab_N7woS_GyAFiJRfNFQ-8U1&amp;t=639190869605538696" type="text/javascript"></script>
+
+
+<script src="/ScriptResource.axd?d=8R5eqqIpbFfAt8MPkxj_vse-G4IJZUydibCiw1UZ5vS8G3nWMkxONeoyQqZd2bihNBQCp_EuPgV6JrwCAAYAgoBQMx4NAZyrMrPLV5umh8agk4nXhvYf3grD6kfP54IoLAxUekEPK3GAMOZV_Co9fpxIm-M1&amp;t=3e3fe94" type="text/javascript"></script>
+<script src="/ScriptResource.axd?d=vqOr4oTOpabfsai2zOHgYkIyk_6J6oSsI9IROTekGRJux4Xu9_1TBa9x6w5qXNZLuzaaXNDmkkG87WEv2mjcZHeBpK7F1ifYVJpdlt9Uiu6XF5RiUCM9Yp7dqxRP0cOXF1BbcRhH8KiaIBFbwzg-mooEbUiYpJnSy_KNvQxARFBOCJzg0&amp;t=3e3fe94" type="text/javascript"></script>
+<div>
+
+	<input type="hidden" name="__VIEWSTATEGENERATOR" id="__VIEWSTATEGENERATOR" value="E059ADDB" style="">
+	<input type="hidden" name="__VIEWSTATEENCRYPTED" id="__VIEWSTATEENCRYPTED" value="" style="">
+	<input type="hidden" name="__EVENTVALIDATION" id="__EVENTVALIDATION" value="B55AjKVpezD75+3ls1NW9ZkOSK5ZoTAbayAauvRCVzyv1lsBDEB0HnBgAU54M00qUW+CkRkYZMPFZ/+iDxQtD6y/gfWtkg4h0wpJKhTDMl8GYhPUYpzPw5HFoiXXWRGeg2sgvFZiZoAwRHezNT4Pll5aOtA2YptbQ7hPU35ncmCh6WitL0tEGq7FvaK6r5137II7XcDIh26zYSZbXy/WrR4GzUZ2d96BehGlZYgPtn3DqwR37FHHkPah22J8it7cZzpGPXrx5TIqJlTcuF5Czpzd2wJCRaEoU6d7fRwsCY9NEdL8uv0XdyA7hUAX604t3EZ5Z3wV67cpK1LDT3UiS2+GfV8uMdzstCvyUCK/iPyeYLq47KrDbuCTq8qEItvmYtZ2JJYFq2IYQ+53VPOP0yJ/63uAkSsq8b/J9uxI3i9SR9PCpLamCHUudVcrbeRXhoi44Bx3G8JPhtO/m0n57XgMYA7uoNmaVIwSx19CYdrUCsDk/1ovC6otvlrXWc6Q2POr+Q2wMpzJHL0VKY9VkepWLsaxZIjQo0MaijVQJnhyg0iiu+uxaQd9kZQO0LOh/3E5tk+at5OM/9I5nMak1lJOkH1/VRD+gyu0tDesEud3XGuA/CF5k5eIxjYZmwn64u+TI1fgbof2y05LvHICS24nvyqwzeY/WvMijV67gQnYVfh7//nm/MlfF+Kd5gOw79oVSOuoKsnENSe0K58l2uGhaQTdOvfZY3KOdACzmIyQxJ2teIVMTRz2b/ysxIvmZyY26VXMezQQUlMGzKP47FGc1qRAFKJSFdSfy0xTqkSoPttmjzJEMM7tnEUbAel0HbQFX+EJA2ov6PMbzE72ZFHjugx/LF3It0/wot5Cw/8Wz1nlnUvPzW4ehqrGNCsTHnnYpRHXGqF+j2qPgK/C/6GN9oFWQY1EVUFecdt87H/CUp/l4Y3c4DEBlmfxZD+OTGhVEr+QT8rNSM1TPHIGVxEktAdr5m5Bp9YPzkt9pbNL4SVq1BjZytviNlw1A/9db0zGddthYwC6p0oxkOP0ypocz8ZkKwLW+i6pOifziDzJjdy5Ik6LUEJEOHYcSVQd9aEIA9rPdj1l0DAO9qQMxxM7fRNNgRPqJAg69vevqUUza1Lq+besf/sR70gC6B/TPL3hMuzgXybWp8zeTcjTTsbKpkxrh44pTa0nzb2xB5GIzGXxuLSDSczLheXZzwiqasAwyD36C9QLYVIyCSbf9riVCehscJ0RKIHMAizQwyaRQDBBAMJRVubDuHO98k39IU0l0attrDhybjxtGbn+ljVizsvQUUMeWHjsd24AOsnD4eKMSdAPnSFWCFi5du++CuLtVg==" style="">
+</div>
+        <center>
+            <div class="MasterHD">
+                <table class="MasterHDTab" cellpadding="0px" cellspacing="0px" border="0px">
+                    <tbody><tr>
+                        <td class="MasterHDTabTD4">&nbsp;
+                        </td>
+                        <td class="MasterHDTabTD3">&nbsp;
+                        </td>
+                        <td class="MasterHDTabTD2">
+                            <table cellpadding="0" cellspacing="0" style="width: 100%">
+                                <tbody><tr>
+                                    <td style="height: 30px; vertical-align: top;">
+                                        <marquee behavior="scroll" dir="ltr" scrolldelay="70" scrollamount="2" direction="right">
+                                        <span id="ctl00_labCalanderDsc" style="color:#003366;font-family:Tahoma;font-size:8pt;font-weight:normal;"></span></marquee>
+                                    </td>
+                                </tr>
+                                <tr>
+                                    <td style="height: 34px" valign="top" align="left">
+                                        <span id="ctl00_Label7" style="color:#666666;font-family:Tahoma;font-size:8pt;font-weight:normal;">امروز:</span>
+                                        <span id="ctl00_labToday" style="color:#3366CC;font-family:Tahoma;font-size:8pt;font-weight:normal;"> پانزدهم  شهریور ماه سال 1405 هجری شمسی</span>
+                                        &nbsp;
+                                    </td>
+                                </tr>
+                            </tbody></table>
+                        </td>
+                        <td class="MasterHDTabTD1">&nbsp;
+                        </td>
+                    </tr>
+                </tbody></table>
+            </div>
+            <table class="MasterBody" cellpadding="0" cellspacing="0" border="0">
+                <tbody><tr>
+                    <td style="width: 17px">&nbsp;
+                    </td>
+                    <td class="MasterBodyR">
+                        <table style="width: 100%" cellpadding="0" cellspacing="0" border="0">
+                            <tbody><tr>
+                                <td style="background-image: url('Images/VE_08.gif'); width: 100%; height: 11px;"></td>
+                            </tr>
+                            <tr>
+                                <td style="width: 100%">
+                                    <table style="width: 100%" cellpadding="0" cellspacing="0">
+                                        <tbody><tr>
+                                            <td align="left" style="width: 23px; height: 25px;" valign="bottom">
+                                                <img id="ctl00_Image7" src="Images/L6.png" style="border-width:0px;">
+                                            </td>
+                                            <td align="right" style="width: 175px" valign="bottom">&nbsp;&nbsp;<a id="ctl00_lnk5" class="MenuItems" onmouseover="this.className='MenuItemsOver'" onmouseout="this.className='MenuItems'" href="DefaultVE.aspx">صفحه اصلی</a>
+                                            </td>
+                                        </tr>
+                                        <tr>
+                                            <td align="left" style="width: 23px; height: 22px;" valign="bottom">
+                                                <img id="ctl00_Image1" src="Images/L1.png" style="border-width:0px;">
+                                            </td>
+                                            <td align="right" style="width: 175px" valign="bottom">&nbsp;
+                                            <a id="ctl00_lnk0" class="MenuItems" onmouseover="this.className='MenuItemsOver'" onmouseout="this.className='MenuItems'" href="Conditions.aspx">شرایط و 
+                                                        دستورالعمل</a>
+                                            </td>
+                                        </tr>
+                                        <tr>
+                                            <td align="left" style="width: 22px; height: 22px;" valign="bottom">
+                                                <img id="ctl00_Image17" src="Images/Manual.gif" style="border-width:0px;">
+                                            </td>
+                                            <td align="right" style="width: 175px" valign="bottom">&nbsp;
+                                            <a id="ctl00_HyperLink19" class="MenuItems" onmouseover="this.className='MenuItemsOver'" onmouseout="this.className='MenuItems'" href="Forms/VE-Reg%20Manual.pdf" target="_blank">راهنمای ثبت نام</a>
+                                            </td>
+                                        </tr>
+                                        <tr>
+                                            <td align="left" style="width: 22px; height: 22px;" valign="bottom">
+                                                <img id="ctl00_Image14" src="Images/L22.png" style="border-width:0px;">
+                                            </td>
+                                            <td align="right" style="width: 175px" valign="bottom">&nbsp;
+                                            <a id="ctl00_lnk01" class="MenuItems" onmouseover="this.className='MenuItemsOver'" onmouseout="this.className='MenuItems'" href="Register.aspx">ثبت نام اولیه</a>
+                                            </td>
+                                        </tr>
+                                        <tr>
+                                            <td align="left" style="width: 22px; height: 22px;" valign="bottom">
+                                                <img id="ctl00_Image16" src="Images/SelBnkShb.gif" style="border-width:0px;">
+                                            </td>
+                                            <td align="right" style="width: 175px" valign="bottom">&nbsp;
+                                            <a id="ctl00_lnk02" class="MenuItems" onmouseover="this.className='MenuItemsOver'" onmouseout="this.className='MenuItems'" href="SelTasCase.aspx">انتخاب بانک و شعبه پیشنهادی</a>
+                                            </td>
+                                        </tr>                                        
+                                        <tr>
+                                            <td align="left" style="width: 22px; height: 22px;" valign="bottom">
+                                                <img id="ctl00_Image35" src="Images/L2.png" style="border-width:0px;">
+                                            </td>
+                                            <td align="right" style="width: 175px" valign="bottom">&nbsp;
+                                            <a id="ctl00_lnk17" class="MenuItems" onmouseover="this.className='MenuItemsOver'" onmouseout="this.className='MenuItems'" href="SelEditCase.aspx">ویرایش اطلاعات متقاضی</a>
+                                            </td>
+                                        </tr>
+                                        <tr>
+                                            <td align="left" style="width: 22px; height: 22px;" valign="bottom">
+                                                <img id="ctl00_Image2" src="Images/L44.png" style="border-width:0px;">
+                                            </td>
+                                            <td align="right" style="width: 175px" valign="bottom">&nbsp;
+                                            <a id="ctl00_HyperLink6" class="MenuItems" onmouseover="this.className='MenuItemsOver'" onmouseout="this.className='MenuItems'" href="EditShb.aspx">ویرایش شعبه پیشنهادی</a>
+                                            </td>
+                                        </tr>
+                                        <tr>
+                                            <td align="left" style="width: 22px; height: 22px;" valign="bottom">
+                                                <img id="ctl00_Image41" src="Images/L3.gif" style="border-width:0px;">
+                                            </td>
+                                            <td align="right" style="width: 175px" valign="bottom">&nbsp;
+                                            <a id="ctl00_lnkDelReq" class="MenuItems" onmouseover="this.className='MenuItemsOver'" onmouseout="this.className='MenuItems'" href="TasReqDelete.aspx">حذف 
+                                            درخواست</a>
+                                            </td>
+                                        </tr>
+                                        <tr>
+                                            <td align="left" style="width: 22px; height: 22px;" valign="bottom">
+                                                <img id="ctl00_Image4" src="Images/L4.png" style="border-width:0px;">
+                                            </td>
+                                            <td align="right" style="width: 175px" valign="bottom">&nbsp;
+                                            <a id="ctl00_lnk3" class="MenuItems" onmouseover="this.className='MenuItemsOver'" onmouseout="this.className='MenuItems'" href="TasTrace.aspx">مشاهده وضعیت</a>
+                                            </td>
+                                        </tr>
+                                        <tr>
+                                            <td align="left" style="width: 22px; height: 22px;" valign="bottom">
+                                                <img id="ctl00_Image22" src="Images/L8.png" style="border-width:0px;">
+                                            </td>
+                                            <td align="right" style="width: 175px" valign="bottom">&nbsp;
+                                            <a id="ctl00_lnk16" class="MenuItems" onmouseover="this.className='MenuItemsOver'" onmouseout="this.className='MenuItems'" href="GetTraceCD.aspx">بازيابي 
+                                            و چاپ کد رهگيري</a>
+                                            </td>
+                                        </tr>
+                                        <tr>
+                                            <td align="left" style="width: 22px; height: 22px;" valign="bottom">
+                                                <img id="ctl00_Image8" src="Images/L7.png" style="border-width:0px;">
+                                            </td>
+                                            <td align="right" style="width: 175px" valign="bottom">&nbsp;
+                                            <a id="ctl00_lnk6" class="MenuItems" onmouseover="this.className='MenuItemsOver'" onmouseout="this.className='MenuItems'" href="FAQ.aspx">پرسش های متداول</a>
+                                            </td>
+                                        </tr>
+                                        <tr>
+                                            <td align="left" style="width: 22px; height: 22px;" valign="bottom">
+                                                <img id="ctl00_Image6" src="Images/L5.png" style="border-width:0px;">
+                                            </td>
+                                            <td align="right" style="width: 175px" valign="bottom">&nbsp;
+                                            <a id="ctl00_lnk4" class="MenuItems" onmouseover="this.className='MenuItemsOver'" onmouseout="this.className='MenuItems'" href="TasContact.aspx">تماس با ما</a>
+                                            </td>
+                                        </tr>
+                                    </tbody></table>
+                                </td>
+                            </tr>
+                        </tbody></table>
+                    </td>
+                    <td valign="top" style="text-align: center;">
+                        <center>
+                            <div style="width: 95%; text-align: center;">
+                                
+    <script type="text/javascript" language="javascript">
+
+        function HintMouseOver(objName) {
+            document.getElementById(objName).style.display = 'block';
+        }
+
+        function HintMouseOut(objName) {
+            document.getElementById(objName).style.display = 'none';
+        }
+
+        function ShowKalaSupInst(obj) {
+            if (obj.checked == true)
+                document.getElementById('ctl00_ContentPlaceHolder1_divKalaSupInsts').style.display = 'block';
+            else
+                document.getElementById('ctl00_ContentPlaceHolder1_divKalaSupInsts').style.display = 'none';
+        }
+    </script>
+    <script type="text/javascript">
+//<![CDATA[
+Sys.WebForms.PageRequestManager._initialize('ctl00$ContentPlaceHolder1$ScriptManager1', 'aspnetForm', ['tctl00$ContentPlaceHolder1$UpdatePanel2',''], [], [], 90, 'ctl00');
+//]]>
+</script>
+
+    <div id="ctl00_ContentPlaceHolder1_updateProgress" style="display:none;" role="status" aria-hidden="true">
+	
+            <span style="border: 1px solid #FF9900; position: fixed; padding: 14px; background-color: #EEEEEE; font-size: 14px; left: 42%; top: 60%; font-family: tahoma; width: 170px; font-weight: bold; color: #0066CC;">لطفا کمی صبر کنید ...</span>
+        
+</div>
+    <div id="ctl00_ContentPlaceHolder1_div1" align="center">
+        <div style="border: 5px solid #CCFF99; font-family: Tahoma; font-size: 8pt; color: #003399; background-color: #FFFFFF; margin-bottom: 14px; text-align: right;">
+            <div dir="rtl" style="margin: 2px 2px 10px 2px; background-color: #E7E7E7; text-align: center; padding-top: 2px; padding-bottom: 3px; font-weight: bold;">
+                فرم انتخاب بانک و شعبه پیشنهادی جهت دریافت تسهیلات قرض الحسنه ازدواج
+                (نقدی)
+            </div>
+            <div style="text-align: left; padding-left: 14px; padding-top: 5px; padding-bottom: 14px;">
+                
+                
+            </div>
+            <div id="ctl00_ContentPlaceHolder1_div2" style="text-align: center;">
+                <div id="ctl00_ContentPlaceHolder1_UpdatePanel2">
+	
+                        <table style="width: 100%; background-color: #FFFFEE; color: #808080;">
+                            <tbody><tr>
+                                <td align="left" valign="bottom" style="width: 155px">شماره ملی :
+                                </td>
+                                <td align="right" valign="bottom">
+                                    <span id="ctl00_ContentPlaceHolder1_labIDNo" style="color:#003399;font-weight:bold;">6450708573</span>
+                                </td>
+                            </tr>
+                            <tr>
+                                <td align="left" valign="bottom" style="width: 155px">نام و نام خانوادگی :
+                                </td>
+                                <td align="right" valign="bottom">
+                                    <span id="ctl00_ContentPlaceHolder1_labFLName" style="color:#003399;font-weight:bold;">ثناءالله دليري مقدم</span>
+                                </td>
+                            </tr>
+                            <tr>
+                                <td align="left" valign="top">استان محل سکونت :
+                                </td>
+                                <td align="right" valign="bottom" style="padding-top: 2px">
+                                    <span id="ctl00_ContentPlaceHolder1_labStateName" style="color:#003399;font-weight:bold;">سيستان و بلوچستان</span>
+                                </td>
+                            </tr>
+                            <tr>
+                                <td align="left" valign="top" style="padding-top: 8px;">شهر محل سکونت :
+                                </td>
+                                <td align="right" valign="bottom" style="padding-top: 5px">
+                                    <select name="ctl00$ContentPlaceHolder1$ddlCity" onchange="javascript:setTimeout('__doPostBack(\'ctl00$ContentPlaceHolder1$ddlCity\',\'\')', 0)" id="ctl00_ContentPlaceHolder1_ddlCity" style="color:#003366;font-family:Tahoma;font-size:9pt;width:500px;">
+		<option value="0">-- انتخاب کنيد --</option>
+		<option value="606">اسپکه</option>
+		<option value="831">ایرانشهر</option>
+		<option value="618">بزمان</option>
+		<option value="155">بمپور</option>
+		<option value="156">تفتان</option>
+		<option value="833">چابهار / سیستان و بلوجستان</option>
+		<option value="829">چابهار / مناطق آزاد</option>
+		<option value="630">چانف</option>
+		<option value="835">خاش </option>
+		<option value="157">دشتیاری</option>
+		<option value="912">دلگان</option>
+		<option value="839">دوست محمد</option>
+		<option value="180">راسک</option>
+		<option value="832">زابل</option>
+		<option value="842">زابلی</option>
+		<option value="830">زاهدان</option>
+		<option value="159">زرآباد</option>
+		<option value="840">زهک</option>
+		<option value="834">سراوان</option>
+		<option value="843">سرباز</option>
+		<option value="841">سوران</option>
+		<option value="782">سیب و سوران</option>
+		<option value="844">فنوج</option>
+		<option value="845">قصرقند</option>
+		<option value="134">گلشن</option>
+		<option value="837">گلمورتی</option>
+		<option value="158">لاشار</option>
+		<option selected="selected" value="793">مهرستان</option>
+		<option value="847">میرجاوه</option>
+		<option value="559">نصرت آباد</option>
+		<option value="437">نگور</option>
+		<option value="848">نیمروز</option>
+		<option value="836">نیک شهر</option>
+		<option value="849">هامون - محمدآباد</option>
+		<option value="496">هیرمند</option>
+		<option value="838">کنارک</option>
+
+	</select>
+                                    &nbsp;<span id="ctl00_ContentPlaceHolder1_l17" style="color:#CC3300;font-family:Tahoma;font-size:8pt;font-weight:bold;">*</span>
+                                    <br>
+                                    <span id="ctl00_ContentPlaceHolder1_Label60" style="display:inline-block;color:#009900;font-family:Tahoma;font-size:8pt;width:540px;">توجه : در صورت عدم وجود نام شهر محل سکونت متقاضي در فهرست بالا، نزديکترين شهر به محل سکونت انتخاب شود</span>
+                                </td>
+                            </tr>
+                            <tr>
+                                <td style="vertical-align: top; text-align: left; padding-bottom: 12px; padding-top: 30px;">
+                                    <img id="ctl00_ContentPlaceHolder1_Image46" onmouseout="return HintMouseOut('divHintBank');" onmouseover="return HintMouseOver('divHintBank');" src="Images/Help.png" align="absbottom" style="height:19px;width:19px;border-width:0px;">
+                                    &nbsp;انتخاب بانک جهت اخذ وام :
+                                    <div id="divHintBank" style="border: 1px solid #00CC99; position: absolute; padding: 7px; margin-right: 16px; background-color: #FFFFEA; font-size: 11px; font-family: tahoma; width: 555px; color: #0066D5; text-align: justify; display: none;" onmouseout="return HintMouseOut('divHintBank');" onmouseover="return HintMouseOver('divHintBank');">
+                                        1- در صورت اتمام اعتبار بانک های یک استان و یا افزایش بیش از حد مراجعین به بانک مذکور در استان مورد نظر، امکان ثبت نام برای متقاضی جدید میسر نمی باشد. لذا متقاضی می بایست در فرصت های بعدی برای ثبت نام در بانک مورد نظر به سامانه مراجعه نماید و یا بانک های دیگر را در سامانه ازدواج انتخاب نماید.<br>
+                                        &nbsp;<br>
+                                        2- در خصوص اخذ ضامن جهت بهره مندي از تسهيلات مذکور، حسب مصوبه شوراي پول و اعتبار براي تسهيلات کمتر از مبلغ 100 ميليون ريال يک ضامن معتبر و براي تسهيلات 200 ميليون ريال دو ضامن معتبر کافيست که تشخيص ضامن معتبر بر عهده بانک عامل مي باشد لذا در زمان انتخاب بانک جهت اخذ وام ، بانکي را انتخاب نماييد که در آن ضامن معتبر داشته باشيد.<br>
+                                        &nbsp;<br>
+                                        3- تعيين شعبه از طريق ادارات سرپرستي بانکها انجام مي پذيرد. لذا متقاضيان مي توانند با مراجعه به اين مراکز از روند تعيين شعبه خود مطلع گردند همچنين با مراجعه به قسمت <a style="color: #CC0099" href="ContactsInfo.aspx">تماس با پشتيباني بانکها</a> نيز مي توانيد به صورت تلفني مراحل مربوطه را پيگيري نمائيد.<br>
+                                        &nbsp;<br>
+                                        4- زمانيکه تعداد زيادي از متقاضيان ازدواج به سايت ازدواج مراجعه و ثبت نام مي نمايند و 
+                                        باعث افزايش تعداد متقاضيان در صف مي شود که با توجه به کثرت متقاضيان در مقاطع مختلف و محدوديت منابع قرض الحسنه بانکي، تعيين شعبه از سوي بانک عامل براي متقاضيان با تاخير صورت خواهد پذيرفت.<br>
+                                        &nbsp;<br>
+                                        5- به علت کثرت متقاضيان در سامانه قرض الحسنه ازدواج و همچنين محدوديت منابع بانکي، تعيين شعبه و پرداخت تسهيلات با کندي صورت خواهد پذيرفت و متقاضي مي بايد صرفا با مراجعه به قسمت مشاهده وضعيت سامانه ازدواج از وضعيت خود مطلع شده و در صورت تعيين شعبه با مراجعه به بانک مذکور جهت تشکيل پرونده و طي مراحل مربوطه نسبت به اخذ تسهيلات قرض الحسنه ازدواج اقدام نمايد. لذا اگر متقاضي ظرف مدت 3 ماه پس از ثبت نام تعيين شعبه نگرديد از قسمت <a style="color: #CC0099" href="ContactsInfo.aspx">تماس با پشتيباني بانکها</a> تماس گرفته و پيگيرهاي لازم درخصوص مراحل تعيين شعبه خود در بانک باشند.
+                                    </div>
+                                </td>
+                                <td style="vertical-align: top; text-align: right;">
+                                    <span id="ctl00_ContentPlaceHolder1_L2" style="display:inline-block;color:White;background-color:#6666FF;font-family:Tahoma;font-size:8pt;font-weight:bold;height:28px;width:420px;">توجه : انتخاب بانک را حتما 
+                        با توجه به شرايط ضامنين خود انجام دهيد يعني بانکي را انتخاب نماييد که ترجیحا در آن 
+                        بانک داراي ضامن باشيد.</span>
+                                    <div style="height: 5px;">
+                                    </div>
+                                    <span id="ctl00_ContentPlaceHolder1_labWarning" style="color:#CC0066;font-family:Tahoma;font-size:9pt;font-weight:bold;"> توجه : شما می توانید در بانک هایی که ظرفیت ثبت نام آن تکمیل شده، به صورت رزرو درخواست خود را ثبت نمایید اما تا زمان تخصیص اعتبار از طرف بانک مرکزی ثبت درخواست شما قطعی نخواهد شد و در صورت تخصیص اعتبار با توجه به نوبت رزرو شما در بانک انتخابی، ثبت درخواست شما قطعی شده و کد رهگیری برای شما ارسال خواهد شد و شما در صف منتظرین تعیین شعبه از طرف بانک انتخابی خود قرار خواهید گرفت</span>
+                                    <br>
+                                    <select name="ctl00$ContentPlaceHolder1$ddlBankName" onchange="javascript:setTimeout('__doPostBack(\'ctl00$ContentPlaceHolder1$ddlBankName\',\'\')', 0)" id="ctl00_ContentPlaceHolder1_ddlBankName" style="color:#003366;font-family:Tahoma;font-size:9pt;width:500px;">
+		<option selected="selected" value="0">-- انتخاب کنيد --</option>
+		<option value="13">بانک رفاه کارگران [دارای ظرفیت ثبت نام] - متقاضی در صف : 2696 نفر</option>
+		<option value="19">بانک صادرات [دارای ظرفیت ثبت نام] - متقاضی در صف : 4259 نفر</option>
+		<option value="21">پست بانک ایران [دارای ظرفیت ثبت نام] - متقاضی در صف : 984 نفر</option>
+		<option value="55">بانک اقتصادنوين  [دارای ظرفیت ثبت نام] - متقاضی در صف : 71 نفر</option>
+		<option value="56">بانک سامان [دارای ظرفیت ثبت نام] - متقاضی در صف : 233 نفر</option>
+		<option value="61">بانک شهر [دارای ظرفیت ثبت نام] - متقاضی در صف : 116 نفر</option>
+		<option value="11">بانک صنعت و معدن  [در انتظار تخصیص ظرفیت جدید (ذخیره)] - متقاضی در صف : 113 نفر</option>
+		<option value="12">بانک ملت [در انتظار تخصیص ظرفیت جدید (ذخیره)] - متقاضی در صف : 2165 نفر</option>
+		<option value="14">بانک مسکن [در انتظار تخصیص ظرفیت جدید (ذخیره)] - متقاضی در صف : 453 نفر</option>
+		<option value="20">توسعه صادرات  [در انتظار تخصیص ظرفیت جدید (ذخیره)] - متقاضی در صف : 18 نفر</option>
+		<option value="22">بانک توسعه تعاون [در انتظار تخصیص ظرفیت جدید (ذخیره)] - متقاضی در صف : 521 نفر</option>
+		<option value="54">بانک پارسیان [در انتظار تخصیص ظرفیت جدید (ذخیره)] - متقاضی در صف : 272 نفر</option>
+		<option value="57">بانک پاسارگاد [در انتظار تخصیص ظرفیت جدید (ذخیره)] - متقاضی در صف : 203 نفر</option>
+		<option value="59">بانک سينا [در انتظار تخصیص ظرفیت جدید (ذخیره)] - متقاضی در صف : 144 نفر</option>
+		<option value="64">بانک گردشگری [در انتظار تخصیص ظرفیت جدید (ذخیره)] - متقاضی در صف : 140 نفر</option>
+		<option value="66">بانک دی [در انتظار تخصیص ظرفیت جدید (ذخیره)] - متقاضی در صف : 76 نفر</option>
+		<option value="75">موسسه اعتباري ملل [در انتظار تخصیص ظرفیت جدید (ذخیره)] - متقاضی در صف : 318 نفر</option>
+
+	</select>
+                                    &nbsp;<span id="ctl00_ContentPlaceHolder1_l24" style="color:#CC3300;font-family:Tahoma;font-size:8pt;font-weight:bold;">*</span>
+                                    
+                                    
+                                    <div style="color: #009900;">
+                                        توجه : فقط فهرست بانک‌هايي که ظرفیت آنها در استان محل سکونت شما تکمیل نشده است در ليست بالا دیده مي‌شود
+                                    </div>
+                                    
+                                </td>
+                            </tr>
+                            <tr>
+                                <td align="left" valign="top" style="padding-top: 20px">
+                                    
+                                </td>
+                                <td align="right" valign="top">
+                                    
+                                    
+                                </td>
+                            </tr>
+                        </tbody></table>
+                    
+</div>
+                <div style="text-align: left; padding-top: 10px; padding-left: 1px; padding-bottom: 7px;">
+                    &nbsp;<span id="ctl00_ContentPlaceHolder1_labErrMsg" style="color:#CC3300;font-family:Tahoma;font-size:8pt;font-weight:bold;"></span>
+                    &nbsp;
+                    
+                    &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
+                    <input type="submit" name="ctl00$ContentPlaceHolder1$btnSave" value="ثبت درخواست" onclick="javascript:WebForm_DoPostBackWithOptions(new WebForm_PostBackOptions(&quot;ctl00$ContentPlaceHolder1$btnSave&quot;, &quot;&quot;, true, &quot;&quot;, &quot;&quot;, false, false))" id="ctl00_ContentPlaceHolder1_btnSave" style="color: rgb(0, 0, 102); background-color: rgb(0, 204, 153); font-family: Tahoma; font-size: 8pt; font-weight: bold; width: 125px; height: 22px;">
+                    &nbsp;
+                </div>
+            </div>
+        </div>
+    </div>
+    
+
+                            </div>
+                        </center>
+                    </td>
+                    <td class="MasterBodyL">
+                        <table cellpadding="0" cellspacing="0" style="width: 100%">
+                            <tbody><tr>
+                                <td style="background-color: #FFD200; border-bottom-style: solid; border-bottom-width: 1px; border-bottom-color: #FFD200" valign="middle" dir="rtl" align="right">&nbsp;<img id="ctl00_Image25" src="Images/L35.ico" align="middle" style="border-width:0px;">
+                                    &nbsp;<span id="ctl00_Label2" style="color:#003399;font-family:Tahoma;font-size:8pt;font-weight:bold;">ساير پیوندها</span>
+                                </td>
+                            </tr>
+                            <tr>
+                                <td style="vertical-align: top; direction: rtl; padding-right: 3px;">
+                                    <table cellpadding="0" cellspacing="0" style="width: 100%; margin-top: 5px; margin-bottom: 5px;">
+                                        <tbody><tr>
+                                            <td align="right" style="padding-bottom: 2px;">
+                                                <img id="ctl00_Image26" src="Images/12.png" style="width:28px;border-width:0px;">
+                                            </td>
+                                            <td align="right">&nbsp;<a id="ctl00_HyperLink8" class="MenuItems" onmouseover="this.className='MenuItemsOver'" onmouseout="this.className='MenuItems'" rel="noopener" href="http://www.bankmellat.ir" target="_blank">بانک ملت</a>
+                                            </td>
+                                        </tr>
+                                        <tr>
+                                            <td align="right" style="padding-bottom: 2px;">
+                                                <img id="ctl00_Image27" src="Images/13.png" style="height:27px;width:28px;border-width:0px;">
+                                            </td>
+                                            <td align="right">&nbsp;<a id="ctl00_HyperLink9" class="MenuItems" onmouseover="this.className='MenuItemsOver'" onmouseout="this.className='MenuItems'" rel="noopener" href="http://www.bankrefah.ir" target="_blank">بانک رفاه 
+                                                        کارگران</a>
+                                            </td>
+                                        </tr>
+                                        <tr>
+                                            <td align="right" style="padding-bottom: 2px;">
+                                                <img id="ctl00_Image28" src="Images/14.png" style="height:25px;width:28px;border-width:0px;">
+                                            </td>
+                                            <td align="right">&nbsp;
+                                            <a id="ctl00_HyperLink10" class="MenuItems" onmouseover="this.className='MenuItemsOver'" onmouseout="this.className='MenuItems'" rel="noopener" href="http://www.bank-maskan.org" target="_blank">بانک مسکن</a>
+                                            </td>
+                                        </tr>
+                                        <tr>
+                                            <td align="right" style="padding-bottom: 3px;">
+                                                <img id="ctl00_Image29" src="Images/15.png" style="height:27px;width:28px;border-width:0px;">
+                                            </td>
+                                            <td align="right">&nbsp;<a id="ctl00_HyperLink11" class="MenuItems" onmouseover="this.className='MenuItemsOver'" onmouseout="this.className='MenuItems'" rel="noopener" href="http://www.banksepah.ir" target="_blank">بانک سپه</a>
+                                            </td>
+                                        </tr>
+                                        <tr>
+                                            <td align="right" style="padding-bottom: 2px;">
+                                                <img id="ctl00_Image30" src="Images/16.png" style="width:28px;border-width:0px;">
+                                            </td>
+                                            <td align="right">&nbsp;
+                                            <a id="ctl00_HyperLink12" class="MenuItems" onmouseover="this.className='MenuItemsOver'" onmouseout="this.className='MenuItems'" rel="noopener" href="http://www.agri-bank.com" target="_blank">بانک کشاورزي</a>
+                                            </td>
+                                        </tr>
+                                        <tr>
+                                            <td align="right" style="padding-bottom: 2px;">
+                                                <img id="ctl00_Image31" src="Images/17.png" style="width:28px;border-width:0px;">
+                                            </td>
+                                            <td align="right">&nbsp;
+                                            <a id="ctl00_HyperLink13" class="MenuItems" onmouseover="this.className='MenuItemsOver'" onmouseout="this.className='MenuItems'" rel="noopener" href="http://www.bmi.ir" target="_blank">بانک 
+                                            ملي ايران</a>
+                                            </td>
+                                        </tr>
+                                        <tr>
+                                            <td align="right" style="padding-bottom: 2px;">
+                                                <img id="ctl00_Image32" src="Images/18.png" style="width:28px;border-width:0px;">
+                                            </td>
+                                            <td align="right">&nbsp;
+                                            <a id="ctl00_HyperLink14" class="MenuItems" onmouseover="this.className='MenuItemsOver'" onmouseout="this.className='MenuItems'" rel="noopener" href="http://www.tejaratbank.ir" target="_blank">بانک تجارت</a>
+                                            </td>
+                                        </tr>
+                                        <tr>
+                                            <td align="right" style="padding-bottom: 2px;">
+                                                <img id="ctl00_Image33" src="Images/19.png" style="width:28px;border-width:0px;">
+                                            </td>
+                                            <td align="right">&nbsp;
+                                            <a id="ctl00_HyperLink15" class="MenuItems" onmouseover="this.className='MenuItemsOver'" onmouseout="this.className='MenuItems'" rel="noopener" href="http://www.bsi.ir" target="_blank">بانک 
+                                            صادرات ايران</a>
+                                            </td>
+                                        </tr>
+                                        <tr>
+                                            <td align="right" style="padding-bottom: 2px;">
+                                                <img id="ctl00_Image34" src="Images/21.png" style="width:29px;border-width:0px;">
+                                            </td>
+                                            <td align="right">&nbsp;
+                                            <a id="ctl00_HyperLink16" class="MenuItems" onmouseover="this.className='MenuItemsOver'" onmouseout="this.className='MenuItems'" rel="noopener" href="http://www.postbank.ir" target="_blank">پست بانک ايران</a>
+                                            </td>
+                                        </tr>
+                                        
+                                        <tr>
+                                            <td align="right" style="padding-bottom: 2px;">
+                                                <img id="ctl00_Image10" src="Images/54.png" style="width:29px;border-width:0px;">
+                                            </td>
+                                            <td align="right">&nbsp;
+                                            <a id="ctl00_HyperLink2" class="MenuItems" onmouseover="this.className='MenuItemsOver'" onmouseout="this.className='MenuItems'" rel="noopener" href="http://www.parsian-bank.ir" target="_blank">بانک پارسیان</a>
+                                            </td>
+                                        </tr>
+                                        <tr>
+                                            <td align="right" style="padding-bottom: 2px;">
+                                                <img id="ctl00_Image13" src="Images/56.png" style="width:29px;border-width:0px;">
+                                            </td>
+                                            <td align="right">&nbsp;
+                                            <a id="ctl00_HyperLink5" class="MenuItems" onmouseover="this.className='MenuItemsOver'" onmouseout="this.className='MenuItems'" rel="noopener" href="http://www.sb24.ir" target="_blank">بانک سامان</a>
+                                            </td>
+                                        </tr>
+                                        <tr>
+                                            <td align="right" style="padding-bottom: 2px;">
+                                                <img id="ctl00_Image3" src="Images/60.png" style="width:29px;border-width:0px;">
+                                            </td>
+                                            <td align="right">&nbsp;
+                                            <a id="ctl00_HyperLink17" class="MenuItems" onmouseover="this.className='MenuItemsOver'" onmouseout="this.className='MenuItems'" rel="noopener" href="http://www.qmb.ir" target="_blank">بانک قرض الحسنه مهر ایران</a>
+                                            </td>
+                                        </tr>
+                                        <tr>
+                                            <td align="right" style="padding-bottom: 2px;">
+                                                <img id="ctl00_Image38" src="Images/64.png" style="width:29px;border-width:0px;">
+                                            </td>
+                                            <td align="right">&nbsp;
+                                            <a id="ctl00_HyperLink29" class="MenuItems" onmouseover="this.className='MenuItemsOver'" onmouseout="this.className='MenuItems'" rel="noopener" href="http://www.tourismbank.ir/" target="_blank">بانک گردشگری</a>
+                                            </td>
+                                        </tr>
+                                        <tr>
+                                            <td align="right" style="padding-bottom: 2px;">
+                                                <img id="ctl00_Image9" src="Images/66.png" style="width:29px;border-width:0px;">
+                                            </td>
+                                            <td align="right">&nbsp;
+                                            <a id="ctl00_HyperLink1" class="MenuItems" onmouseover="this.className='MenuItemsOver'" onmouseout="this.className='MenuItems'" rel="noopener" href="http://www.bank-day.ir" target="_blank">بانک دی</a>
+                                            </td>
+                                        </tr>
+                                        <tr>
+                                            <td align="right" style="padding-bottom: 2px;">
+                                                <img id="ctl00_Image5" src="Images/70.png" style="width:29px;border-width:0px;">
+                                            </td>
+                                            <td align="right">&nbsp;
+                                            <a id="ctl00_HyperLink4" class="MenuItems" onmouseover="this.className='MenuItemsOver'" onmouseout="this.className='MenuItems'" rel="noopener" href="http://www.rqbank.ir" target="_blank">بانک قرض الحسنه رسالت</a>
+                                            </td>
+                                        </tr>
+                                        <tr>
+                                            <td align="right" style="padding-bottom: 2px;">
+                                                <img id="ctl00_Image11" src="Images/53.png" style="width:29px;border-width:0px;">
+                                            </td>
+                                            <td align="right">&nbsp;
+                                            <a id="ctl00_HyperLink3" class="MenuItems" onmouseover="this.className='MenuItemsOver'" onmouseout="this.className='MenuItems'" rel="noopener" href="https://www.karafarinbank.ir/" target="_blank">بانک کارآفرین</a>
+                                            </td>
+                                        </tr>
+                                        <tr>
+                                            <td align="right" style="padding-bottom: 2px;">
+                                                <img id="ctl00_Image12" src="Images/22.png" style="width:29px;border-width:0px;">
+                                            </td>
+                                            <td align="right">&nbsp;
+                                            <a id="ctl00_HyperLink7" class="MenuItems" onmouseover="this.className='MenuItemsOver'" onmouseout="this.className='MenuItems'" rel="noopener" href="http://www.ttbank.ir/" target="_blank">بانک توسعه تعاون</a>
+                                            </td>
+                                        </tr>
+                                        <tr>
+                                            <td align="right" style="padding-bottom: 2px;">
+                                                <img id="ctl00_Image15" src="Images/69.png" style="width:29px;border-width:0px;">
+                                            </td>
+                                            <td align="right">&nbsp;
+                                            <a id="ctl00_HyperLink18" class="MenuItems" onmouseover="this.className='MenuItemsOver'" onmouseout="this.className='MenuItems'" rel="noopener" href="http://www.izbank.ir/" target="_blank">بانک ایران زمین</a>
+                                            </td>
+                                        </tr>
+                                        <tr>
+                                            <td align="right" style="padding-bottom: 2px;">
+                                                <img id="ctl00_Image18" src="Images/57.png" style="width:29px;border-width:0px;">
+                                            </td>
+                                            <td align="right">&nbsp;
+                                            <a id="ctl00_HyperLink21" class="MenuItems" onmouseover="this.className='MenuItemsOver'" onmouseout="this.className='MenuItems'" rel="noopener" href="http://www.bpi.ir/" target="_blank">بانک پاسارگاد</a>
+                                            </td>
+                                        </tr>
+                                        <tr>
+                                            <td align="right" style="padding-bottom: 2px;">
+                                                <img id="ctl00_Image19" src="Images/62.png" style="width:29px;border-width:0px;">
+                                            </td>
+                                            <td align="right">&nbsp;
+                                            <a id="ctl00_HyperLink22" class="MenuItems" onmouseover="this.className='MenuItemsOver'" onmouseout="this.className='MenuItems'" rel="noopener" href="http://www.ba24.ir/" target="_blank">بانک آینده</a>
+                                            </td>
+                                        </tr>
+                                        <tr>
+                                            <td align="right" style="padding-bottom: 2px;">
+                                                <img id="ctl00_Image20" src="Images/55.png" style="width:29px;border-width:0px;">
+                                            </td>
+                                            <td align="right">&nbsp;
+                                            <a id="ctl00_HyperLink23" class="MenuItems" onmouseover="this.className='MenuItemsOver'" onmouseout="this.className='MenuItems'" rel="noopener" href="http://www.enbank.ir/" target="_blank">بانک اقتصاد نوین</a>
+                                            </td>
+                                        </tr>
+                                        <tr>
+                                            <td align="right" style="padding-bottom: 2px;">
+                                                <img id="ctl00_Image23" src="Images/75.png" style="width:29px;border-width:0px;">
+                                            </td>
+                                            <td align="right">&nbsp;
+                                            <a id="ctl00_HyperLink25" class="MenuItems" onmouseover="this.className='MenuItemsOver'" onmouseout="this.className='MenuItems'" rel="noopener" href="http://askariye.ir/" target="_blank">موسسه اعتباری ملل</a>
+                                            </td>
+                                        </tr>
+                                        <tr>
+                                            <td align="right" style="padding-bottom: 2px;">
+                                                <img id="ctl00_Image24" src="Images/61.png" style="width:29px;border-width:0px;">
+                                            </td>
+                                            <td align="right">&nbsp;
+                                            <a id="ctl00_HyperLink26" class="MenuItems" onmouseover="this.className='MenuItemsOver'" onmouseout="this.className='MenuItems'" rel="noopener" href="http://shahr-bank.ir/" target="_blank">بانک شهر</a>
+                                            </td>
+                                        </tr>
+                                        <tr>
+                                            <td align="right" style="padding-bottom: 2px;">
+                                                <img id="ctl00_Image36" src="Images/59.png" style="width:29px;border-width:0px;">
+                                            </td>
+                                            <td align="right">&nbsp;
+                                            <a id="ctl00_HyperLink27" class="MenuItems" onmouseover="this.className='MenuItemsOver'" onmouseout="this.className='MenuItems'" rel="noopener" href="http://www.sinabank.ir/" target="_blank">بانک سینا</a>
+                                            </td>
+                                        </tr>
+                                        <tr>
+                                            <td align="right" style="padding-bottom: 2px;">
+                                                <img id="ctl00_Image37" src="Images/80.png" style="width:29px;border-width:0px;">
+                                            </td>
+                                            <td align="right">&nbsp;
+                                            <a id="ctl00_HyperLink28" class="MenuItems" onmouseover="this.className='MenuItemsOver'" onmouseout="this.className='MenuItems'" rel="noopener" href="http://www.cinoor.ir/" target="_blank">موسسه اعتباری نور</a>
+                                            </td>
+                                        </tr>
+                                        <tr>
+                                            <td align="right" style="padding-bottom: 2px;">
+                                                <img id="ctl00_Image39" src="Images/20.png" style="width:29px;border-width:0px;">
+                                            </td>
+                                            <td align="right">&nbsp;
+                                            <a id="ctl00_HyperLink30" class="MenuItems" onmouseover="this.className='MenuItemsOver'" onmouseout="this.className='MenuItems'" rel="noopener" href="http://www.edbi.ir/" target="_blank">بانک توسعه صادرات</a>
+                                            </td>
+                                        </tr>
+                                        <tr>
+                                            <td align="right" style="padding-bottom: 2px;">
+                                                <img id="ctl00_Image40" src="Images/95.png" style="width:29px;border-width:0px;">
+                                            </td>
+                                            <td align="right">&nbsp;
+                                            <a id="ctl00_HyperLink31" class="MenuItems" onmouseover="this.className='MenuItemsOver'" onmouseout="this.className='MenuItems'" rel="noopener" href="http://www.ivbb.ir" target="_blank">بانک مشترک ایران و ونزوئلا</a>
+                                            </td>
+                                        </tr>
+                                        <tr>
+                                            <td align="right" style="padding-bottom: 2px;">
+                                                <img id="ctl00_Image42" src="Images/78.png" style="width:29px;border-width:0px;">
+                                            </td>
+                                            <td align="right">&nbsp;
+                                            <a id="ctl00_HyperLink32" class="MenuItems" onmouseover="this.className='MenuItemsOver'" onmouseout="this.className='MenuItems'" rel="noopener" href="http://www.middleeastbank.ir/" target="_blank">بانک خاورمیانه</a>
+                                            </td>
+                                        </tr>
+                                        <tr>
+                                            <td align="right" style="padding-bottom: 2px;">
+                                                <img id="ctl00_Image43" src="Images/58.png" style="width:29px;border-width:0px;">
+                                            </td>
+                                            <td align="right">&nbsp;
+                                            <a id="ctl00_HyperLink33" class="MenuItems" onmouseover="this.className='MenuItemsOver'" onmouseout="this.className='MenuItems'" rel="noopener" href="http://www.sbank.ir/" target="_blank">بانک سرمایه</a>
+                                            </td>
+                                        </tr>
+                                    </tbody></table>
+                                </td>
+                            </tr>
+                        </tbody></table>
+                    </td>
+                    <td style="width: 7px">&nbsp;
+                    </td>
+                </tr>
+            </tbody></table>
+            <div class="MasterFT" dir="rtl">
+                <table cellpadding="0" cellspacing="0" style="width: 100%; height: 54px;">
+                    <tbody><tr>
+                        <td align="center" style="background-image: url('Images/VE_12.gif')">
+                            <br>
+                            <span id="ctl00_Label1" style="color:#333333;font-family:Tahoma;font-size:9pt;">©کلیه حقوق مادي و معنوي این سایت متعلق به بانک مرکزی جمهوری اسلامی ایران میباشد - 1387</span>
+                        </td>
+                        <td style="background-image: url('Images/VE_13.gif'); width: 201px; height: 54px;">&nbsp;
+                        </td>
+                        <td style="background-image: url('Images/VE_14.jpg'); width: 17px; height: 54px;">&nbsp;
+                        </td>
+                    </tr>
+                </tbody></table>
+            </div>
+        </center>
+    
+
+<script type="text/javascript">
+//<![CDATA[
+Sys.Application.add_init(function() {
+    $create(Sys.UI._UpdateProgress, {"associatedUpdatePanelId":null,"displayAfter":500,"dynamicLayout":true}, null, null, $get("ctl00_ContentPlaceHolder1_updateProgress"));
+});
+//]]>
+</script>
+</form>
+
+
+
+<script type="text/javascript">
+        ap_showWaitMessage('waitDiv', 0);
+</script>
+
+<!--- loading part03 --->
+
+</body><!--- loading part03 ---></html>

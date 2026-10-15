@@ -1,0 +1,55 @@
+/* ══════ Browser Preview Panel ══════ */
+.browser-live-panel { display: none; margin-top: 16px; }
+.browser-live { background: var(--brand-soft); color: var(--brand-dark); }
+
+.browser-frame {
+  margin-top: 14px; border-radius: 16px; overflow: hidden;
+  border: 1px solid #c5dcd7; background: #e9efed; position: relative;
+  min-height: 440px;
+  box-shadow: 0 12px 36px rgba(21,56,49,.1);
+  transition: box-shadow .3s;
+}
+.browser-frame:hover { box-shadow: 0 16px 48px rgba(21,56,49,.14); }
+
+.browser-chrome {
+  height: 42px; background: linear-gradient(180deg, #fff, #f8faf9);
+  border-bottom: 1px solid #d7e1df;
+  display: flex; align-items: center; gap: 6px; padding: 0 13px; direction: ltr;
+}
+.browser-chrome > span {
+  width: 10px; height: 10px; border-radius: 50%;
+  transition: transform .2s, filter .2s;
+}
+.browser-chrome > span:nth-child(1) { background: #f06b62; }
+.browser-chrome > span:nth-child(2) { background: #f3bd4b; }
+.browser-chrome > span:nth-child(3) { background: #61c454; }
+.browser-chrome > span:hover { transform: scale(1.2); filter: brightness(1.1); }
+
+.browser-chrome > div {
+  margin-left: 10px; flex: 1; background: #f1f5f4; border-radius: 8px;
+  padding: 5px 12px; color: #6c7d79; font-size: 11px; direction: rtl;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+
+.browser-frame img {
+  display: none; width: 100%; height: auto; min-height: 398px;
+  object-fit: contain; background: #fff;
+  animation: fadeIn .4s ease;
+}
+@keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+
+.browser-empty {
+  position: absolute; inset: 42px 0 0;
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  color: #758985; gap: 10px;
+}
+.browser-empty i {
+  font-size: 42px; color: #9eb0ac;
+  animation: emptyPulse 3s ease-in-out infinite;
+}
+@keyframes emptyPulse {
+  0%, 100% { transform: scale(1); opacity: .6; }
+  50% { transform: scale(1.08); opacity: .85; }
+}
+.browser-empty strong { color: #445b56; font-size: 15px; }
+.browser-empty small { font-size: 11px; max-width: 250px; text-align: center; line-height: 1.5; }

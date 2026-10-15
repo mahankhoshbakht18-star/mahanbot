@@ -1,0 +1,141 @@
+"""
+routes/settings.py — Settings, browser profile, allowed domains, saved pages.
+"""
+import os
+from typing import Any, Dict
+
+from fastapi import APIRouter, Depends, HTTPException, status
+
+from database import DBHandler
+from core.deps import require_api_key
+from core.helpers import load_browser_profile_settings, save_browser_profile_settings
+from core.models import (
+    BrowserProfileRequest,
+    SettingsRequest,
+    AllowedDomainsRequest,
+    AllowlistCheckRequest,
+)
+from browser_launcher import (
+    BrowserLaunchError,
+    close_browser,
+    launch_browser,
+    merge_browser_profiles,
+)
+from allowlist import get_allowlist_snapshot, is_url_allowed, normalize_domain_list
+from bot_select_bank import repair_saved_pages
+
+router = APIRouter()
+
+
+# ── Browser profile ───────────────────────────────────────────────────
+@router.get("/settings/browser-profile")
+def get_browser_profile():
+    return load_browser_profile_settings()
+
+
+@router.put("/settings/browser-profile")
+def update_browser_profile(req: BrowserProfileRequest):
+    data = req.dict(exclude_unset=True) if hasattr(req, "dict") else req.model_dump(exclude_unset=True)
+    try:
+        merged = merge_browser_profiles(load_browser_profile_settings(), data)
+    except BrowserLaunchError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=exc.to_dict())
+    return save_browser_profile_settings(merged)
+
+
+# ── App settings ──────────────────────────────────────────────────────
+@router.get("/settings")
+def get_settings():
+    return DBHandler.get_config()
+
+
+@router.post("/settings")
+def update_settings(req: SettingsRequest, _: bool = Depends(require_api_key)):
+    payload = req.dict(exclude_unset=True) if hasattr(req, "dict") else req.model_dump(exclude_unset=True)
+    payload["captcha_mode"] = "model"
+    if "automation_mode" in payload and payload["automation_mode"] not in {"safe", "normal", "fast"}:
+        raise HTTPException(status_code=422, detail="Invalid automation mode")
+    for key, low, high in (
+        ("captcha_poll_interval", 0.05, 2.0),
+        ("captcha_retry_delay", 0.0, 10.0),
+        ("bank_refresh_interval", 1.0, 300.0),
+        ("bank_list_refresh_seconds", 1.0, 300.0),
+        ("bank_capacity_recheck_seconds", 5.0, 600.0),
+        ("retry_delay", 0.0, 30.0),
+    ):
+        if key in payload and payload[key] is not None and not low <= float(payload[key]) <= high:
+            raise HTTPException(status_code=422, detail=f"{key} out of range")
+    for key, low, high in (
+        ("retry_count", 1, 20),
+        ("captcha_max_retries", 1, 10),
+        ("captcha_manual_timeout", 10, 3600),
+        ("otp_validity_seconds", 30, 600),
+        ("otp_retry_limit", 1, 20),
+        ("default_timeout_ms", 250, 60000),
+        ("navigation_timeout_ms", 1000, 120000),
+        ("browser_window_width", 360, 3840),
+        ("browser_window_height", 320, 2160),
+    ):
+        if key in payload and payload[key] is not None and not low <= int(payload[key]) <= high:
+            raise HTTPException(status_code=422, detail=f"{key} out of range")
+
+    if "bank_list_refresh_seconds" in payload and payload["bank_list_refresh_seconds"] is not None:
+        payload["bank_refresh_interval"] = float(payload["bank_list_refresh_seconds"])
+    elif "bank_refresh_interval" in payload and payload["bank_refresh_interval"] is not None:
+        payload["bank_list_refresh_seconds"] = float(payload["bank_refresh_interval"])
+
+    if "auto_final_submit" in payload and payload["auto_final_submit"] is not None:
+        payload["final_submit"] = bool(payload["auto_final_submit"])
+    elif "final_submit" in payload and payload["final_submit"] is not None:
+        payload["auto_final_submit"] = bool(payload["final_submit"])
+
+    current = DBHandler.get_config()
+    current.update(payload)
+    updated = DBHandler.update_config(current)
+    return {"status": "ok", "config": updated}
+
+
+# ── Saved pages ───────────────────────────────────────────────────────
+@router.post("/saved-pages/repair")
+def repair_saved_pages_endpoint(_: bool = Depends(require_api_key)):
+    from core.state import BASE_DIR
+    base_dir = os.path.join(BASE_DIR, "saved_pages")
+    return {"status": "ok", **repair_saved_pages(base_dir)}
+
+
+# ── Allowed domains ───────────────────────────────────────────────────
+@router.get("/settings/allowed-domains")
+def get_allowed_domains_settings():
+    return get_allowlist_snapshot()
+
+
+@router.put("/settings/allowed-domains")
+def update_allowed_domains(req: AllowedDomainsRequest, _: bool = Depends(require_api_key)):
+    normalized, invalid = normalize_domain_list(req.domains)
+    if invalid:
+        raise HTTPException(
+            status_code=400,
+            detail={"error": "invalid_domains", "details": {"invalid_domains": invalid}},
+        )
+    DBHandler.update_setting("allowed_domains", normalized)
+    return get_allowlist_snapshot()
+
+
+@router.post("/settings/allowed-domains/check")
+def check_allowed_domain(req: AllowlistCheckRequest):
+    allowed, host, effective = is_url_allowed(req.url)
+    return {"allowed": allowed, "host": host, "effective": effective}
+
+
+# ── Browser test launch ──────────────────────────────────────────────
+@router.post("/browser/test-launch")
+def test_browser_launch(_: bool = Depends(require_api_key)):
+    profile = load_browser_profile_settings()
+    playwright = browser = context = page = None
+    try:
+        playwright, browser, context, page = launch_browser(profile)
+        return {"status": "ok"}
+    except BrowserLaunchError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=exc.to_dict())
+    finally:
+        close_browser(playwright, browser, context, page)
