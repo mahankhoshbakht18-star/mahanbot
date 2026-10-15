@@ -43,6 +43,7 @@ DEFAULT_CONFIG = {
     "bank_list_refresh_seconds": 5.0,
     "bank_capacity_recheck_seconds": 20.0,
     "allow_reserve_bank": False,
+    "default_bank_mode": "online",
     "resume_from_checkpoint": True,
     "save_page_enabled": True,
     "repair_page_enabled": True,
@@ -132,6 +133,9 @@ def normalize_config(stored: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     merged["pause_for_manual_captcha"] = bool(merged.get("pause_for_manual_captcha", True))
     merged["pause_for_manual_otp"] = bool(merged.get("pause_for_manual_otp", True))
     merged["allow_reserve_bank"] = bool(merged.get("allow_reserve_bank", False))
+    merged["default_bank_mode"] = str(merged.get("default_bank_mode", "online") or "online").strip().lower()
+    if merged["default_bank_mode"] not in {"online", "in_person"}:
+        merged["default_bank_mode"] = "online"
     merged["resume_from_checkpoint"] = bool(merged.get("resume_from_checkpoint", True))
     merged["save_page_enabled"] = bool(merged.get("save_page_enabled", True))
     merged["repair_page_enabled"] = bool(merged.get("repair_page_enabled", True))

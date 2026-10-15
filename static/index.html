@@ -128,6 +128,7 @@
         <div class="form-grid mb-3">
           <label>روش پذیرش بانک<select id="inpBankMode" class="form-select" onchange="toggleBranchFieldByMode()"><option value="">بر اساس قابلیت بانک (پیش‌فرض)</option><option value="online">غیرحضوری (بدون نیاز به شعبه)</option><option value="in_person">حضوری (با انتخاب شعبه)</option></select></label>
           <label id="lblPriorityBranches">شعب اولویت‌دار (با ویرگول جدا کنید)<input id="inpPriorityBranches" class="form-control" placeholder="مثال: کد شعبه یا نام شعبه ۱، شعبه ۲"></label>
+          <label class="check-card mt-2"><input id="inpAllowReserve" type="checkbox"> پذیرش بانک در وضعیت رزرو / ذخیره (در انتظار تخصیص ظرفیت جدید)</label>
         </div>
         <div class="banks-editor"><div><h4>بانک‌های قابل انتخاب</h4><div id="bankOptions" class="bank-options"></div><h4 class="mt-4">بانک‌های مورد علاقه</h4><div id="favoriteBanksList" class="favorite-list"></div></div><div><h4>ترتیب اولویت</h4><p class="text-muted small">برای جابه‌جایی، موارد را بکشید.</p><ul id="priorityBanksList" class="list-group priority-list"></ul></div></div>
         <div class="form-actions"><button type="button" class="btn btn-light" onclick="resetAddForm()">پاک‌کردن فرم</button><button type="submit" class="btn btn-primary px-5"><i class="fa-solid fa-floppy-disk"></i> ذخیره پرونده</button></div>
@@ -147,6 +148,7 @@
           <div class="panel-title"><div><h3><i class="fa-solid fa-gear" style="color:var(--brand);margin-left:8px"></i> رفتار بات و پایش (نسخه ۱.۸.۰)</h3><p>کنترل نرخ بررسی، کپچا، پیامک، بازیابی و ثبت نهایی</p></div></div>
           <div class="form-grid compact">
             <label>محل نمایش مرورگر<select id="set_browser_display_mode" class="form-select"><option value="external">پنجره جداگانه (فعلی)</option><option value="embedded">داخل داشبورد</option></select></label>
+            <label>روش پیش‌فرض پذیرش بانک<select id="set_default_bank_mode" class="form-select"><option value="online">غیرحضوری (پیش‌فرض)</option><option value="in_person">حضوری</option></select></label>
             <label>حالت اجرا<select id="set_automation_mode" class="form-select"><option value="safe">Safe</option><option value="normal">Normal</option><option value="fast">Fast</option></select></label>
             <label>فاصله بررسی ظرفیت (ثانیه)<input id="set_bank_capacity_recheck" type="number" min="5" max="600" value="20" class="form-control"></label>
             <label>فاصله بررسی فهرست بانک (ثانیه)<input id="set_bank_refresh" type="number" min="1" max="300" value="5" class="form-control"></label>

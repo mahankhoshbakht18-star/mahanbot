@@ -2,6 +2,7 @@
 import ctypes
 import json
 import os
+import sys
 from pathlib import Path
 from typing import Any, Dict, Iterable, Optional, Tuple
 from urllib.parse import urlsplit, urlunsplit
@@ -393,6 +394,52 @@ def _apply_compact_window_bounds(page, context, geom: Dict[str, int], profile: D
         pass
 
 
+def _apply_win32_window_bounds(geom: Dict[str, int], profile: Dict[str, Any]) -> None:
+    """
+    On Windows, locate browser window and ensure it is restored (SW_RESTORE) from maximized state
+    and positioned accurately at geom['x'], geom['y'], geom['width'], geom['height']
+    without stealing input focus (SWP_NOACTIVATE).
+    """
+    if profile.get("headless") or profile.get("start_maximized") or sys.platform != "win32":
+        return
+    try:
+        import ctypes
+        from ctypes import wintypes
+        user32 = ctypes.windll.user32
+
+        SW_RESTORE = 9
+        SWP_NOACTIVATE = 0x0010
+        SWP_SHOWWINDOW = 0x0040
+        SWP_NOZORDER = 0x0004
+
+        def enum_windows_proc(hwnd, lParam):
+            if not user32.IsWindowVisible(hwnd):
+                return True
+            length = user32.GetWindowTextLengthW(hwnd)
+            if length > 0:
+                buff = ctypes.create_unicode_buffer(length + 1)
+                user32.GetWindowTextW(hwnd, buff, length + 1)
+                title = buff.value
+                if any(k in title for k in ("سامانه", "تسهیلات", "cbi.ir", "Chrome", "Edge", "SelectBnkShb", "Register")):
+                    user32.ShowWindow(hwnd, SW_RESTORE)
+                    user32.SetWindowPos(
+                        hwnd,
+                        0,
+                        int(geom["x"]),
+                        int(geom["y"]),
+                        int(geom["width"]),
+                        int(geom["height"]),
+                        SWP_NOACTIVATE | SWP_SHOWWINDOW | SWP_NOZORDER,
+                    )
+            return True
+
+        WNDENUMPROC = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
+        cb = WNDENUMPROC(enum_windows_proc)
+        user32.EnumWindows(cb, 0)
+    except Exception:
+        pass
+
+
 def _remember_window_bounds_before_close(page, context) -> None:
     """If the user dragged the window during the session, remember its x/y for subsequent launches."""
     if page is None or context is None or not hasattr(context, "new_cdp_session"):
@@ -526,6 +573,10 @@ def launch_browser(profile: Dict[str, Any]) -> Tuple[Any, Any, Any, Any]:
                 "--disable-backgrounding-occluded-windows",
                 "--disable-renderer-backgrounding",
                 "--disable-dev-shm-usage",
+                "--no-first-run",
+                "--no-default-browser-check",
+                "--disable-search-engine-choice-screen",
+                "--disable-infobars",
             ]
             for flag in stability_flags:
                 if flag not in args:
@@ -562,6 +613,7 @@ def launch_browser(profile: Dict[str, Any]) -> Tuple[Any, Any, Any, Any]:
         page.set_default_timeout(normalized["timeout_ms"])
         page.set_default_navigation_timeout(normalized["timeout_ms"])
         _apply_compact_window_bounds(page, context, geom, normalized)
+        _apply_win32_window_bounds(geom, normalized)
         return playwright, browser, context, page
     except BrowserLaunchError:
         raise

@@ -54,6 +54,7 @@ def parse_and_validate_excel_rows(rows: List[Dict[str, Any]]) -> Tuple[List[Dict
         "loan_type": ("loan_type", "نوع وام", "وام"),
         "priority_banks": ("priority_banks", "banks", "بانک", "بانک اولویت"),
         "bank_mode": ("bank_mode", "mode", "روش", "حضوری/غیرحضوری"),
+        "allow_reserve": ("allow_reserve", "reserve", "بانک رزرو", "رزرو", "ذخیره"),
         "branch_code": ("branch_code", "branch", "شعبه", "کد شعبه"),
     }
 
@@ -108,6 +109,15 @@ def parse_and_validate_excel_rows(rows: List[Dict[str, Any]]) -> Tuple[List[Dict
         bank_mode = str(_get_field(raw_row, "bank_mode") or "").strip()
         branch_code = str(_get_field(raw_row, "branch_code") or "").strip()
 
+        raw_allow_reserve = _get_field(raw_row, "allow_reserve")
+        allow_reserve = None
+        if raw_allow_reserve is not None and str(raw_allow_reserve).strip() != "":
+            val_str = str(raw_allow_reserve).strip().lower()
+            if val_str in ("true", "1", "بله", "دارد", "فعال"):
+                allow_reserve = True
+            elif val_str in ("false", "0", "خیر", "ندارد", "غیرفعال"):
+                allow_reserve = False
+
         data_payload = {
             "mobile": mobile,
             "phone": phone,
@@ -122,6 +132,7 @@ def parse_and_validate_excel_rows(rows: List[Dict[str, Any]]) -> Tuple[List[Dict
             "banks": banks_list,
             "bank_mode": bank_mode,
             "branch_code": branch_code,
+            "allow_reserve": allow_reserve,
         }
         valid_records.append({
             "full_name": full_name,

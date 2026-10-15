@@ -1242,6 +1242,9 @@ function editUser(idx) {
         const br = d.priority_branches || (d.branch_code ? [d.branch_code] : []);
         document.getElementById('inpPriorityBranches').value = Array.isArray(br) ? br.join('، ') : String(br || '');
     }
+    if (document.getElementById('inpAllowReserve')) {
+        document.getElementById('inpAllowReserve').checked = Boolean(d.allow_reserve);
+    }
 
     document.getElementById('inpState').value = d.state || '';
 
@@ -1294,6 +1297,7 @@ function resetAddForm() {
     editingUserId = null;
 
     document.getElementById('addForm').reset();
+    if (document.getElementById('inpAllowReserve')) document.getElementById('inpAllowReserve').checked = false;
 
     document.getElementById('formTitle').innerText = "  ";
 
@@ -1343,6 +1347,7 @@ async function submitNewApplicant() {
         child_birth_m: document.getElementById('cd_m') ? document.getElementById('cd_m').value : '',
         child_birth_y: document.getElementById('cd_y') ? document.getElementById('cd_y').value : '',
         bank_mode: document.getElementById('inpBankMode') ? document.getElementById('inpBankMode').value : '',
+        allow_reserve: document.getElementById('inpAllowReserve') ? document.getElementById('inpAllowReserve').checked : false,
         priority_branches: document.getElementById('inpPriorityBranches') && document.getElementById('inpBankMode')?.value !== 'online'
             ? document.getElementById('inpPriorityBranches').value.split(/[،,\n]+/).map(s => s.trim()).filter(Boolean)
             : [],
@@ -1449,6 +1454,7 @@ async function loadSettings() {
 
         document.getElementById('set_headless').checked = s.headless || false;
         document.getElementById('set_browser_display_mode').value = s.browser_display_mode || 'external';
+        if (document.getElementById('set_default_bank_mode')) document.getElementById('set_default_bank_mode').value = s.default_bank_mode || 'online';
         applyBrowserDisplayMode(s.browser_display_mode || 'external');
 
         
@@ -1663,6 +1669,7 @@ async function saveSettings() {
         pause_for_manual_captcha: document.getElementById('set_pause_manual_captcha') ? document.getElementById('set_pause_manual_captcha').checked : true,
         pause_for_manual_otp: document.getElementById('set_pause_manual_otp') ? document.getElementById('set_pause_manual_otp').checked : true,
         allow_reserve_bank: document.getElementById('set_allow_reserve_bank') ? document.getElementById('set_allow_reserve_bank').checked : false,
+        default_bank_mode: document.getElementById('set_default_bank_mode') ? document.getElementById('set_default_bank_mode').value : 'online',
         diagnostic_logging_enabled: document.getElementById('set_diagnostic_logging') ? document.getElementById('set_diagnostic_logging').checked : true,
         auto_final_submit: document.getElementById('set_final_submit').checked,
         bank_monitor_enabled: document.getElementById('set_bank_monitor').checked,

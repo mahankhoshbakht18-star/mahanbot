@@ -2,6 +2,7 @@ from typing import Optional
 import time
 import random
 import os
+import sys
 import json
 import re
 import threading
@@ -28,8 +29,8 @@ class BotCore:
         self.captcha_service = captcha_service or CaptchaService()
         self.user_data = self._load_user_data()
         self.retry_limit = max(1, min(20, int(self.settings.get('retry_count', 5))))
-        self.api_base_url = os.getenv("MAHANBOT_OTP_API", "https://otp.mahanvip.ir").rstrip("/")
-        self.local_api_base = os.getenv("MAHANBOT_LOCAL_API", f"http://127.0.0.1:{os.getenv('MAHANBOT_PORT', '8001')}")
+        self.local_api_base = os.getenv("MAHANBOT_LOCAL_API", f"http://127.0.0.1:{os.getenv('MAHANBOT_PORT', '8001')}").rstrip("/")
+        self.api_base_url = (os.getenv("MAHANBOT_OTP_API") or self.local_api_base).rstrip("/")
         self.user_dir = str(PROFILE_ROOT / str(nid))
         if not os.path.exists(self.user_dir):
             os.makedirs(self.user_dir, exist_ok=True)
@@ -159,7 +160,16 @@ class BotCore:
             except TypeError:
                 getattr(self, "log_callback", None)(self.nid, safe_message, level)
         else:
-            print(f"[{time.strftime('%H:%M:%S')}][{level.upper()}] {self._mask(self.nid)}: {safe_message}")
+            log_line = f"[{time.strftime('%H:%M:%S')}][{level.upper()}] {self._mask(self.nid)}: {safe_message}\n"
+            try:
+                sys.stdout.write(log_line)
+                sys.stdout.flush()
+            except (UnicodeEncodeError, UnicodeError):
+                try:
+                    sys.stdout.buffer.write(log_line.encode("utf-8", errors="replace"))
+                    sys.stdout.buffer.flush()
+                except Exception:
+                    pass
         if page:
             self._update_browser_preview(page)
         show_on_page = os.getenv("MAHANBOT_SHOW_LOG_ON_PAGE", "false").lower() in {"1", "true", "yes"}
@@ -307,14 +317,14 @@ class BotCore:
             return None
         timeout = max(1, int(timeout))
         min_ts_value = self._otp_entry_time if min_ts is None else float(min_ts)
+        # 1) Try local FastAPI server first (0 network latency)
         try:
+            local_timeout = min(timeout, 2) if self.api_base_url != self.local_api_base else timeout
             response = requests.get(
-                f"{self.api_base_url}/wait_otp/{self.nid}",
-                params={"timeout": timeout, "min_ts": min_ts_value},
-                timeout=timeout + 5,
+                f"{self.local_api_base}/wait_otp/{self.nid}",
+                params={"timeout": local_timeout, "min_ts": min_ts_value},
+                timeout=local_timeout + 2,
             )
-            if response.status_code == 204:
-                return None
             if response.status_code == 200:
                 data = response.json()
                 code = data.get("otp")
@@ -323,19 +333,21 @@ class BotCore:
         except Exception:
             pass
 
-        try:
-            response = requests.get(
-                f"{self.local_api_base}/wait_otp/{self.nid}",
-                params={"timeout": 1, "min_ts": min_ts_value},
-                timeout=3,
-            )
-            if response.status_code == 200:
-                data = response.json()
-                code = data.get("otp")
-                if code and str(code).strip():
-                    return str(code).strip()
-        except Exception:
-            pass
+        # 2) If external OTP API is configured and distinct from local API, query it
+        if self.api_base_url and self.api_base_url != self.local_api_base:
+            try:
+                response = requests.get(
+                    f"{self.api_base_url}/wait_otp/{self.nid}",
+                    params={"timeout": timeout, "min_ts": min_ts_value},
+                    timeout=min(timeout + 2, 10),
+                )
+                if response.status_code == 200:
+                    data = response.json()
+                    code = data.get("otp")
+                    if code and str(code).strip():
+                        return str(code).strip()
+            except Exception:
+                pass
         return None
 
     def clear_otp_backend(self):
@@ -645,14 +657,35 @@ class BotCore:
             "ظرفیت ثبت نام",
             "ظرفیت ثبت‌نام",
             "ظرفیت غیرحضوری",
+            "ظرفیت غیر حضوری",
+            "ظرفیت پذیرش",
             "ظرفیت تکمیل",
             "تکمیل شده است",
             "تکمیل گردیده",
+            "تکمیل می باشد",
+            "تکمیل می‌باشد",
+            "تکمیل است",
             "فاقد ظرفیت",
             "امکان انتخاب روش غیرحضوری",
+            "امکان انتخاب روش غیر حضوری",
+            "امکان ثبت نام غیرحضوری",
+            "امکان ثبت نام غیر حضوری",
+            "امکان ثبت نام به صورت غیرحضوری",
+            "امکان ثبت نام به صورت غیر حضوری",
+            "امکان ثبت نام در این بانک وجود ندارد",
+            "امکان انتخاب این بانک وجود ندارد",
+            "تکمیل ظرفیت",
+            "عدم وجود ظرفیت",
             "سقف مجاز",
+            "اتمام رسیده",
+            "فاقد سهمیه",
+            "سهمیه تکمیل",
         )
-        if any(m in msg_norm for m in capacity_markers):
+        if any(m in msg_norm for m in capacity_markers) or (
+            ("غیرحضوری" in msg_norm or "غیر حضوری" in msg_norm) and ("تکمیل" in msg_norm or "اتمام" in msg_norm or "عدم" in msg_norm or "وجود ندارد" in msg_norm)
+        ) or (
+            "ظرفیت" in msg_norm and ("تکمیل" in msg_norm or "اتمام" in msg_norm or "فاقد" in msg_norm or "پایان" in msg_norm or "وجود ندارد" in msg_norm)
+        ):
             return "bank_capacity_full"
 
         # 2) OTP expired / invalid

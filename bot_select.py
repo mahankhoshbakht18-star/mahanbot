@@ -604,6 +604,10 @@ class BankSelectionBot(BotCore):
                         self.clear_otp_locks()
                         if state != "BANK_CAPACITY_FULL":
                             set_state("BANK_SELECT")
+                        cur_status = DBHandler.get_status(self.nid)
+                        if cur_status == "منتظر پیامک" or not cur_status:
+                            DBHandler.update_status(self.nid, "انتخاب بانک", "Stage: BANK_SELECT")
+                            self.set_runtime_state("MONITORING", "BANK_SELECTION", browser_status="OPEN")
                         if stop_event.is_set():
                             break
                         if self._firewall_gate(page, stop_event):
@@ -719,8 +723,24 @@ class BankSelectionBot(BotCore):
 
                             if not refreshed_via_postback:
                                 try:
-                                    page.reload(wait_until="domcontentloaded", timeout=int(self.settings.get("navigation_timeout_ms", 15000)))
-                                    self.mark_progress("bank_page_refresh")
+                                    # Fallback: re-trigger city or province postback; DO NOT reload the full page as it destroys ASP.NET wizard session
+                                    page.evaluate(
+                                        """() => {
+                                            if (typeof __doPostBack === 'function') {
+                                                const city = document.querySelector("#ctl00_ContentPlaceHolder1_ddlCity");
+                                                if (city && city.name) {
+                                                    __doPostBack(city.name, '');
+                                                    return;
+                                                }
+                                                const state = document.querySelector("#ctl00_ContentPlaceHolder1_ddlState");
+                                                if (state && state.name) {
+                                                    __doPostBack(state.name, '');
+                                                }
+                                            }
+                                        }"""
+                                    )
+                                    self.wait_for_aspnet_postback(page, timeout_ms=5000)
+                                    self.mark_progress("bank_postback_refresh_fallback")
                                 except Exception:
                                     pass
                             continue
@@ -749,6 +769,8 @@ class BankSelectionBot(BotCore):
                             otp_attempted = True
                             self.clear_otp_locks()
                             set_state("BANK_SELECT")
+                            DBHandler.update_status(self.nid, "انتخاب بانک", "ورود به مرحله انتخاب بانک")
+                            self.set_runtime_state("MONITORING", "BANK_SELECTION", browser_status="OPEN")
                         elif result == "otp_expired":
                             otp_attempted = False
                             self.clear_otp_locks()

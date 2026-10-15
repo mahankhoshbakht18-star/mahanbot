@@ -83,6 +83,7 @@ class SettingsRequest(BaseModel):
     bank_capacity_recheck_seconds: Optional[float] = None
     bank_monitor_enabled: Optional[bool] = None
     allow_reserve_bank: Optional[bool] = None
+    default_bank_mode: Optional[str] = None
     resume_from_checkpoint: Optional[bool] = None
     save_page_enabled: Optional[bool] = None
     repair_page_enabled: Optional[bool] = None

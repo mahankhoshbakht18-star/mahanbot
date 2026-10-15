@@ -365,7 +365,7 @@ def _extract_raw_priorities(runtime_data: Dict[str, Any], user_data: Dict[str, A
     return []
 
 
-def _normalize_priority_entries(raw_priorities: Any, default_mode: str = "", default_branches: Optional[List[str]] = None) -> List[Dict[str, Any]]:
+def _normalize_priority_entries(raw_priorities: Any, default_mode: str = "", default_branches: Optional[List[str]] = None, default_allow_reserve: Optional[bool] = None) -> List[Dict[str, Any]]:
     """Normalize priority_banks list (strings or dicts) into structured bank preferences."""
     normalized: List[Dict[str, Any]] = []
     if not raw_priorities:
@@ -384,7 +384,7 @@ def _normalize_priority_entries(raw_priorities: Any, default_mode: str = "", def
             branches = item.get("branches") or item.get("priority_branches") or item.get("branch") or default_branches or []
             if isinstance(branches, str):
                 branches = [b.strip() for b in re.split(r"[\n,،]+", branches) if b.strip()]
-            allow_reserve = item.get("allow_reserve")
+            allow_reserve = item.get("allow_reserve") if item.get("allow_reserve") is not None else default_allow_reserve
             normalized.append({
                 "name": name,
                 "canonical": canonicalize_bank_name(name),
@@ -400,7 +400,7 @@ def _normalize_priority_entries(raw_priorities: Any, default_mode: str = "", def
                     "canonical": canonicalize_bank_name(name),
                     "mode": norm_default_mode,
                     "branches": list(default_branches or []),
-                    "allow_reserve": None,
+                    "allow_reserve": default_allow_reserve,
                 })
     return normalized
 
@@ -464,7 +464,7 @@ def _select_dropdown_with_postback(bot, page, selector: str, target_value: str) 
 
     # Wait briefly for setTimeout('__doPostBack(...)', 0) to initiate async/sync postback
     try:
-        page.wait_for_timeout(120)
+        page.wait_for_timeout(250)
     except Exception:
         pass
 
@@ -626,6 +626,9 @@ def _inspect_mode_controls(page) -> List[Dict[str, Any]]:
                         if (!labelText && el.parentElement) {
                             labelText = (el.parentElement.textContent || '').trim();
                         }
+                        if (!labelText && el.parentElement && el.parentElement.nextElementSibling) {
+                            labelText = (el.parentElement.nextElementSibling.textContent || '').trim();
+                        }
                         if (!labelText && el.parentElement && el.parentElement.parentElement) {
                             labelText = (el.parentElement.parentElement.textContent || '').trim();
                         }
@@ -694,12 +697,23 @@ def _select_bank_mode(bot, page, desired_mode: str, bank_name: str) -> Tuple[str
     """
     mode_norm = _normalize_mode_value(desired_mode)
     if not mode_norm:
-        # Check if global settings specify a default bank mode
-        mode_norm = _normalize_mode_value(bot.settings.get("default_bank_mode", ""))
+        # Check if global settings specify a default bank mode (defaults to online)
+        mode_norm = _normalize_mode_value(bot.settings.get("default_bank_mode", "online"))
     wants_online = mode_norm == "online"
     wants_in_person = mode_norm == "in_person"
 
     mode_controls = _inspect_mode_controls(page)
+    if not mode_controls:
+        # Give dynamic UpdatePanel up to 1.5s to render mode radio buttons/select
+        start_t = time.time()
+        while time.time() - start_t < 1.5:
+            try:
+                page.wait_for_timeout(200)
+            except Exception:
+                time.sleep(0.2)
+            mode_controls = _inspect_mode_controls(page)
+            if mode_controls:
+                break
 
     if not mode_controls:
         # On ve.cbi.ir/SelectBnkShb.aspx, when a bank does not render a separate mode radio/select
@@ -970,11 +984,23 @@ def process_bank_selection_v2(bot, page, stop_event):
         if not default_branches and (runtime_data.get("branch_code") or bot.user_data.get("branch_code")):
             default_branches = [str(runtime_data.get("branch_code") or bot.user_data.get("branch_code"))]
 
-        priorities = _normalize_priority_entries(raw_priorities, default_mode=default_mode, default_branches=default_branches)
+        applicant_allow_reserve = (
+            runtime_data.get("allow_reserve")
+            if runtime_data.get("allow_reserve") is not None
+            else getattr(bot, "user_data", {}).get("allow_reserve")
+        )
+        allow_reserve_global = bool(bot.settings.get("allow_reserve_bank", False))
+        allow_reserve_effective = bool(applicant_allow_reserve) if applicant_allow_reserve is not None else allow_reserve_global
+
+        priorities = _normalize_priority_entries(
+            raw_priorities,
+            default_mode=default_mode,
+            default_branches=default_branches,
+            default_allow_reserve=allow_reserve_effective,
+        )
         raw_stopped = runtime_data.get("stopped_banks") or bot.user_data.get("stopped_banks") or []
         stopped_banks_norm = {_normalize_persian(b) for b in raw_stopped if b}
         stopped_banks_canon = {canonicalize_bank_name(b) for b in raw_stopped if b}
-        allow_reserve_global = bool(bot.settings.get("allow_reserve_bank", False))
 
         if not priorities:
             bot.emit_event(
@@ -992,7 +1018,7 @@ def process_bank_selection_v2(bot, page, stop_event):
             {
                 "banks": [p["name"] for p in priorities],
                 "mode": default_mode,
-                "reserve": allow_reserve_global,
+                "reserve": allow_reserve_effective,
                 "city": runtime_data.get("city") or bot.user_data.get("city") or "",
             },
             ensure_ascii=False,
@@ -1003,7 +1029,7 @@ def process_bank_selection_v2(bot, page, stop_event):
             bot.emit_event(
                 "BANK_PREFERENCES_LOADED",
                 step="STEP_3_BANK_SELECT",
-                reason=f"priorities={[p['name'] for p in priorities]} mode={default_mode or 'default'} reserve={allow_reserve_global}",
+                reason=f"priorities={[p['name'] for p in priorities]} mode={default_mode or 'default'} reserve={allow_reserve_effective}",
                 result="loaded",
                 message=f"تنظیمات اولویت بانک متقاضی بارگذاری شد: {', '.join(p['name'] for p in priorities)}",
                 level="info",
@@ -1054,7 +1080,7 @@ def process_bank_selection_v2(bot, page, stop_event):
             p_canon = entry.get("canonical") or canonicalize_bank_name(p_name)
             if not p_name or p_name in stopped_banks_norm or (p_canon and p_canon in stopped_banks_canon):
                 continue
-            entry_allow_reserve = entry["allow_reserve"] if entry["allow_reserve"] is not None else allow_reserve_global
+            entry_allow_reserve = entry["allow_reserve"] if entry.get("allow_reserve") is not None else allow_reserve_effective
 
             # First pass for this priority bank: look for active (non-reserve) option
             for text_item, value_item, is_sel in available:
@@ -1128,15 +1154,18 @@ def process_bank_selection_v2(bot, page, stop_event):
         if not already_selected:
             _select_dropdown_with_postback(bot, page, dropdown_id, target_value)
 
-        bot.emit_event(
-            "BANK_OPTION_SELECTED",
-            step="STEP_3_BANK_SELECT",
-            reason=f"bank={bank_name} value={target_value}",
-            result="dropdown_option_selected",
-            message=f"گزینه بانک «{bank_name}» از فهرست انتخاب شد (هنوز ثبت نهایی نشده است).",
-            level="info",
-            page=page,
-        )
+        current_bank_sig = f"{bank_name}:{target_value}"
+        if getattr(bot, "_last_selected_bank_sig", None) != current_bank_sig:
+            bot._last_selected_bank_sig = current_bank_sig
+            bot.emit_event(
+                "BANK_OPTION_SELECTED",
+                step="STEP_3_BANK_SELECT",
+                reason=f"bank={bank_name} value={target_value}",
+                result="dropdown_option_selected",
+                message=f"گزینه بانک «{bank_name}» از فهرست انتخاب شد (هنوز ثبت نهایی نشده است).",
+                level="info",
+                page=page,
+            )
 
         # Check immediately if selecting the bank triggered a capacity full dialog or error message
         if bot.consume_recovery_flag("bank_capacity_full"):

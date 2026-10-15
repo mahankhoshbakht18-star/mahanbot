@@ -323,6 +323,9 @@ def _post_submit_watch(bot, page, stop_event, sleep_with_stop_fn, last_code: str
         if _bank_select_visible_now(page):
             if hasattr(bot, "clear_otp_locks"):
                 bot.clear_otp_locks()
+            DBHandler.update_status(bot.nid, "انتخاب بانک", "ورود به مرحله انتخاب بانک")
+            if hasattr(bot, "set_runtime_state"):
+                bot.set_runtime_state("MONITORING", "BANK_SELECTION", browser_status="OPEN")
             bot.save_checkpoint(
                 "STEP_3_BANK_SELECT",
                 page=page,
@@ -414,6 +417,15 @@ def fast_otp_sync_and_inject(bot, page, stop_event, sleep_with_stop_fn):
         if _bank_select_visible_now(page):
             if hasattr(bot, "clear_otp_locks"):
                 bot.clear_otp_locks()
+            DBHandler.update_status(bot.nid, "انتخاب بانک", "ورود به مرحله انتخاب بانک")
+            if hasattr(bot, "set_runtime_state"):
+                bot.set_runtime_state("MONITORING", "BANK_SELECTION", browser_status="OPEN")
+            bot.save_checkpoint(
+                "STEP_3_BANK_SELECT",
+                page=page,
+                expected_next_step="SELECT_BANK",
+                last_operation_result="OTP_ACCEPTED",
+            )
             _log_fa(bot, "✅ مرحله انتخاب بانک فعال شد؛ خروج از سیکل OTP.", "success", page)
             return "bank_ready"
 
