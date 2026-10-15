@@ -389,6 +389,8 @@ function switchView(viewId, navEl) {
 
         loadAllowedDomains();
 
+        initSmsGsmSettings();
+
     }
 
     
@@ -1451,7 +1453,12 @@ async function loadSettings() {
 
         document.getElementById('set_proxylist').value = s.proxy_list || '';
 
-
+        if (document.getElementById('set_gsm_modem')) {
+            document.getElementById('set_gsm_modem').checked = s.gsm_modem_enabled === true;
+        }
+        if (document.getElementById('gsmBaudSelect')) {
+            document.getElementById('gsmBaudSelect').value = String(s.gsm_modem_baudrate || '115200');
+        }
 
     } catch(e) {}
 
@@ -1679,7 +1686,11 @@ async function saveSettings() {
 
         use_proxy: document.getElementById('set_useproxy').checked,
 
-        proxy_list: document.getElementById('set_proxylist').value
+        proxy_list: document.getElementById('set_proxylist').value,
+
+        gsm_modem_enabled: document.getElementById('set_gsm_modem') ? document.getElementById('set_gsm_modem').checked : false,
+        gsm_modem_port: document.getElementById('gsmPortSelect') ? document.getElementById('gsmPortSelect').value : 'COM3',
+        gsm_modem_baudrate: document.getElementById('gsmBaudSelect') ? parseInt(document.getElementById('gsmBaudSelect').value, 10) : 115200
 
     };
 
@@ -3284,4 +3295,170 @@ function updateCapacityCountdownDisplay() {
     const el = document.getElementById('capacityCountdownVal');
     if (el) el.textContent = capacitySecondsLeft;
 }
+
+/* ══════════════════════════════════════════════════════════════════════════
+   AUTOMATED SMS & GSM DONGLE CONTROLLER (Phase 1)
+   ══════════════════════════════════════════════════════════════════════════ */
+
+function initSmsGsmSettings() {
+    const webhookInput = document.getElementById('smsWebhookUrlInput');
+    if (webhookInput) {
+        webhookInput.value = `${window.location.origin}/api/sms/webhook`;
+    }
+    scanGsmPorts();
+    checkGsmStatus();
+}
+
+function copyWebhookUrl() {
+    const input = document.getElementById('smsWebhookUrlInput');
+    if (!input) return;
+    const url = input.value || `${window.location.origin}/api/sms/webhook`;
+    navigator.clipboard.writeText(url).then(() => {
+        showToast('آدرس وب‌هوک در کلیپ‌بورد کپی شد.', 'success');
+    }).catch(() => {
+        input.select();
+        document.execCommand('copy');
+        showToast('آدرس وب‌هوک کپی شد.', 'success');
+    });
+}
+
+async function scanGsmPorts() {
+    const select = document.getElementById('gsmPortSelect');
+    if (!select) return;
+    try {
+        const res = await apiCall('/api/gsm/ports');
+        const currentVal = select.value;
+        select.innerHTML = '';
+        if (res.ports && res.ports.length > 0) {
+            res.ports.forEach(p => {
+                const opt = document.createElement('option');
+                opt.value = p.device;
+                opt.textContent = `${p.device} (${p.description || 'پورت سریال'})`;
+                if (p.device === currentVal || p.device === 'COM3') {
+                    opt.selected = true;
+                }
+                select.appendChild(opt);
+            });
+        } else {
+            const opt = document.createElement('option');
+            opt.value = 'COM3';
+            opt.textContent = 'COM3 (پیش‌فرض - هیچ پورتی یافت نشد)';
+            select.appendChild(opt);
+        }
+    } catch (e) {
+        console.warn('Failed to scan GSM ports:', e);
+    }
+}
+
+async function checkGsmStatus() {
+    const textEl = document.getElementById('gsmStatusText');
+    const toggleEl = document.getElementById('set_gsm_modem');
+    if (!textEl) return;
+    try {
+        const res = await apiCall('/api/gsm/status');
+        if (res.running) {
+            textEl.innerHTML = `<span class="text-success"><i class="fa-solid fa-circle-check ms-1"></i> فعال روی پورت ${res.port || ''} (SMS دریافتی: ${res.messages_received || 0})</span>`;
+            if (toggleEl) toggleEl.checked = true;
+        } else {
+            textEl.innerHTML = `<span class="text-muted"><i class="fa-solid fa-circle-xmark ms-1"></i> غیرفعال${res.last_error ? ` (${res.last_error})` : ''}</span>`;
+            if (toggleEl) toggleEl.checked = false;
+        }
+    } catch (e) {
+        textEl.textContent = 'وضعیت: در دسترس نیست';
+    }
+}
+
+async function toggleGsmService() {
+    const toggleEl = document.getElementById('set_gsm_modem');
+    const portEl = document.getElementById('gsmPortSelect');
+    const baudEl = document.getElementById('gsmBaudSelect');
+    const enabled = toggleEl ? toggleEl.checked : false;
+    const port = portEl ? portEl.value : 'COM3';
+    const baudrate = baudEl ? parseInt(baudEl.value, 10) : 115200;
+
+    try {
+        const res = await apiCall('/api/gsm/toggle', 'POST', {
+            enabled: enabled,
+            port: port,
+            baudrate: baudrate
+        });
+        showToast(res.message || (enabled ? 'سرویس دانگل فعال شد' : 'سرویس دانگل متوقف شد'), 'info');
+        checkGsmStatus();
+    } catch (e) {
+        showToast(e.message || 'خطا در تغییر وضعیت دانگل', 'error');
+        if (toggleEl) toggleEl.checked = !enabled;
+    }
+}
+
+async function testParseSmsText() {
+    const textInput = document.getElementById('testSmsInput');
+    const resultBox = document.getElementById('smsTestResult');
+    if (!textInput || !resultBox) return;
+
+    const rawText = textInput.value.trim();
+    if (!rawText) {
+        showToast('لطفاً متن پیامک را وارد کنید.', 'warning');
+        return;
+    }
+
+    try {
+        const res = await apiCall('/api/sms/test-parse', 'POST', { text: rawText });
+        resultBox.style.display = 'block';
+        if (res.status === 'success') {
+            const parsed = res.parsed || {};
+            resultBox.innerHTML = `
+                <div class="text-success fw-bold mb-1"><i class="fa-solid fa-check-circle ms-1"></i> استخراج موفقیت‌آمیز:</div>
+                <div class="d-flex flex-wrap gap-3">
+                    <span><strong>کد OTP:</strong> <code class="fs-6">${parsed.otp_code || '---'}</code></span>
+                    <span><strong>کد ملی:</strong> <code>${parsed.national_id || '---'}</code></span>
+                    <span><strong>موبایل:</strong> <code>${parsed.mobile || '---'}</code></span>
+                    <span><strong>تطبیق با متقاضی فعال:</strong> <span class="badge ${res.matched_waiter ? 'bg-success' : 'bg-secondary'}">${res.matched_waiter ? 'بله (' + res.matched_waiter + ')' : 'خیر'}</span></span>
+                </div>
+            `;
+        } else {
+            resultBox.innerHTML = `<div class="text-danger"><i class="fa-solid fa-triangle-exclamation ms-1"></i> ${res.message || 'خطا در تجزیه'}</div>`;
+        }
+    } catch (e) {
+        resultBox.style.display = 'block';
+        resultBox.innerHTML = `<div class="text-danger"><i class="fa-solid fa-circle-exmark ms-1"></i> ${e.message || 'خطا در ارتباط با سرور'}</div>`;
+    }
+}
+
+async function sendSimulatedSms() {
+    const textInput = document.getElementById('testSmsInput');
+    const resultBox = document.getElementById('smsTestResult');
+    if (!textInput || !resultBox) return;
+
+    const rawText = textInput.value.trim();
+    if (!rawText) {
+        showToast('لطفاً متن پیامک را وارد کنید.', 'warning');
+        return;
+    }
+
+    try {
+        const res = await fetch(`${httpBase}/api/sms/webhook`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ text: rawText })
+        });
+        const data = await res.json();
+        resultBox.style.display = 'block';
+        if (data.status === 'success' || data.success) {
+            showToast('پیامک به وب‌هوک تزریق شد و کد اعمال گردید!', 'success');
+            resultBox.innerHTML = `
+                <div class="text-success fw-bold"><i class="fa-solid fa-circle-check ms-1"></i> ارسال واقعی موفق:</div>
+                <div class="text-muted mt-1">${data.message || 'کد با موفقیت ثبت شد'} (کد ملی: ${data.national_id || '---'}, کد: ${data.code || '---'})</div>
+            `;
+        } else {
+            showToast(data.message || 'عدم تطبیق با متقاضی منتظر پیامک', 'warning');
+            resultBox.innerHTML = `
+                <div class="text-warning fw-bold"><i class="fa-solid fa-triangle-exclamation ms-1"></i> نتیجه دریافت وب‌هوک:</div>
+                <div class="text-muted mt-1">${data.message || 'هیچ متقاضی در انتظار این پیامک نبود'}</div>
+            `;
+        }
+    } catch (e) {
+        showToast(e.message || 'خطا در ارتباط با سرور', 'error');
+    }
+}
+
 

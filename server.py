@@ -30,6 +30,11 @@ async def _startup():
     _state.MAIN_LOOP = asyncio.get_running_loop()
     set_main_loop(_state.MAIN_LOOP)
     _state.CAPTCHA_SERVICE = CaptchaService()
+    try:
+        _state.CAPTCHA_SERVICE.prewarm()
+        logger.info("Local CAPTCHA solver pre-warmed into RAM.")
+    except Exception as e:
+        logger.warning("CAPTCHA pre-warm skipped: %s", e)
     if _state.JOB_QUEUE is None:
         _state.JOB_QUEUE = JobQueue(max_concurrency=get_max_concurrency())
         _state.JOB_QUEUE.start()
@@ -85,6 +90,8 @@ async def require_subscription_login(request: Request, call_next):
         path == "/login" or 
         path.startswith("/static/") or 
         path == "/receive_sms" or 
+        path == "/sms/webhook" or 
+        path == "/api/sms/webhook" or 
         path.startswith("/wait_otp/") or 
         path == "/health"
     )

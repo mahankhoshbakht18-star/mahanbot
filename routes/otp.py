@@ -3,9 +3,9 @@ routes/otp.py — OTP receive, wait, manual entry, clear.
 """
 import asyncio
 import time
-from typing import Optional
+from typing import Optional, Dict, Any
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import Response
 
 from database import DBHandler
@@ -16,6 +16,7 @@ from core.deps import require_otp_secret
 from event_logger import EVENT_BROADCASTER, build_event
 from core.helpers import _normalize_nid, _mask_identifier, _serialize_applicants
 from core.models import SMSRequest
+from sms_service import route_incoming_sms, parse_sms_text
 
 import logging
 
@@ -59,9 +60,29 @@ def _handle_receive_sms(nid: str, code: str, status_label: str = "received", ts:
 # ── OTP endpoints ─────────────────────────────────────────────────────
 @router.post("/receive_sms")
 def receive_sms(req: SMSRequest, _: bool = Depends(require_otp_secret)):
+    # 1. If text/message/body is provided, route via smart parser
+    sms_text = req.text or req.message or req.body
+    if sms_text:
+        ok, res = route_incoming_sms(
+            text=sms_text,
+            from_number=req.from_number or req.phone,
+            explicit_nid=req.nid,
+            explicit_code=req.code,
+        )
+        if ok:
+            return {"status": "ok", "ts": time.time(), **res}
+        raise HTTPException(status_code=400, detail=res)
+
     raw_nid = str(req.nid or "").strip()
     nid = _normalize_nid(raw_nid)
     code = str(req.code or "").strip()
+
+    # If code is present but nid is omitted, attempt auto-routing to active waiter
+    if code and not nid:
+        ok, res = route_incoming_sms(text="", explicit_code=code)
+        if ok:
+            return {"status": "ok", "ts": time.time(), **res}
+
     if not (nid or raw_nid) or not code:
         raise HTTPException(status_code=400, detail="Invalid payload")
 
@@ -77,6 +98,93 @@ def receive_sms(req: SMSRequest, _: bool = Depends(require_otp_secret)):
         raise HTTPException(status_code=404, detail="Applicant not found")
     _emit_applicants_snapshot()
     return {"status": "ok", "ts": request_ts}
+
+
+@router.post("/sms/webhook")
+@router.post("/api/sms/webhook")
+async def universal_sms_webhook(request: Request):
+    """
+    Universal SMS Webhook compatible with Android SMS Forwarder apps, Tasker,
+    MacroDroid, GSM dongles, and custom webhook forwarders.
+    Accepts JSON, Form-data, or raw text body.
+    """
+    body_text = ""
+    from_number = None
+    explicit_nid = None
+    explicit_code = None
+
+    content_type = request.headers.get("content-type", "").lower()
+    if "application/json" in content_type:
+        try:
+            data = await request.json()
+            if isinstance(data, dict):
+                body_text = str(data.get("text") or data.get("message") or data.get("body") or data.get("msg") or data.get("content") or "").strip()
+                from_number = str(data.get("from") or data.get("sender") or data.get("phone") or data.get("from_number") or "").strip()
+                explicit_nid = data.get("nid")
+                explicit_code = data.get("code") or data.get("otp")
+        except Exception:
+            pass
+    elif "application/x-www-form-urlencoded" in content_type or "multipart/form-data" in content_type:
+        try:
+            form = await request.form()
+            body_text = str(form.get("text") or form.get("message") or form.get("body") or form.get("msg") or form.get("content") or "").strip()
+            from_number = str(form.get("from") or form.get("sender") or form.get("phone") or "").strip()
+            explicit_nid = form.get("nid")
+            explicit_code = form.get("code") or form.get("otp")
+        except Exception:
+            pass
+    
+    if not body_text:
+        # Fallback to raw body text
+        raw_bytes = await request.body()
+        body_text = raw_bytes.decode("utf-8", errors="replace").strip()
+
+    # Query params fallback
+    if not body_text and request.query_params:
+        body_text = request.query_params.get("text") or request.query_params.get("message") or ""
+        from_number = from_number or request.query_params.get("from")
+
+    if not body_text and not explicit_code:
+        raise HTTPException(status_code=400, detail="Empty SMS body")
+
+    ok, res = route_incoming_sms(
+        text=body_text,
+        from_number=from_number,
+        explicit_nid=explicit_nid,
+        explicit_code=explicit_code,
+    )
+
+    if ok:
+        return {"status": "ok", "ts": time.time(), **res}
+    raise HTTPException(status_code=422, detail=res)
+
+
+@router.post("/api/sms/test-parse")
+def test_parse_sms(payload: Dict[str, Any]):
+    """Test utility to preview SMS parsing and routing without persisting."""
+    text = payload.get("text") or payload.get("message") or ""
+    parsed = parse_sms_text(text)
+    from sms_service import find_active_otp_waiter
+    active = find_active_otp_waiter()
+    return {
+        "status": "success",
+        "success": True,
+        "parsed": {
+            "code": parsed.get("code"),
+            "otp_code": parsed.get("code"),
+            "nid": parsed.get("nid"),
+            "national_id": parsed.get("nid"),
+            "phone": parsed.get("phone"),
+            "mobile": parsed.get("phone"),
+            "raw": parsed.get("raw"),
+        },
+        "matched_waiter": active.get("national_id") if active else None,
+        "active_waiter": {
+            "nid": active.get("national_id"),
+            "full_name": active.get("full_name"),
+            "status": active.get("status"),
+        } if active else None,
+    }
 
 
 @router.post("/manual_otp")
@@ -174,3 +282,39 @@ def clear_otp(nid: str):
     DBHandler.clear_otp(nid)
     _emit_applicants_snapshot()
     return {"status": "cleared", "nid": nid}
+
+
+# ── GSM Modem endpoints ───────────────────────────────────────────────
+@router.get("/api/gsm/ports")
+def get_gsm_ports():
+    """List available serial COM ports for GSM Dongle."""
+    from gsm_modem_service import GSMModemService
+    return {"status": "ok", "ports": GSMModemService.list_available_ports()}
+
+
+@router.get("/api/gsm/status")
+def get_gsm_status():
+    """Get active connection status of the GSM Modem service."""
+    from gsm_modem_service import get_gsm_service
+    return {"status": "ok", **get_gsm_service().get_status()}
+
+
+@router.post("/api/gsm/toggle")
+def toggle_gsm_modem(payload: Dict[str, Any]):
+    """Start or stop GSM Modem listening on a specific COM port."""
+    from gsm_modem_service import get_gsm_service
+    enabled = bool(payload.get("enabled", False))
+    port = payload.get("port")
+    baud = int(payload.get("baudrate", 115200))
+    gsm = get_gsm_service()
+
+    if enabled:
+        gsm.start(port=port, baudrate=baud)
+        DBHandler.set_config_value("gsm_modem_enabled", True)
+        if port:
+            DBHandler.set_config_value("gsm_modem_port", port)
+        return {"status": "ok", "message": f"GSM Modem listening started on {gsm.port}", **gsm.get_status()}
+    else:
+        gsm.stop()
+        DBHandler.set_config_value("gsm_modem_enabled", False)
+        return {"status": "ok", "message": "GSM Modem service stopped", **gsm.get_status()}

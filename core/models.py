@@ -13,8 +13,13 @@ class ApplicantModel(BaseModel):
 
 
 class SMSRequest(BaseModel):
-    nid: str
-    code: str
+    nid: Optional[str] = None
+    code: Optional[str] = None
+    text: Optional[str] = None
+    message: Optional[str] = None
+    body: Optional[str] = None
+    phone: Optional[str] = None
+    from_number: Optional[str] = None
 
 
 class FavoriteBanksRequest(BaseModel):
@@ -85,6 +90,9 @@ class SettingsRequest(BaseModel):
     bank_monitor_enabled: Optional[bool] = None
     capacity_check_enabled: Optional[bool] = None
     allow_reserve_bank: Optional[bool] = None
+    gsm_modem_enabled: Optional[bool] = None
+    gsm_modem_port: Optional[str] = None
+    gsm_modem_baudrate: Optional[int] = None
     default_bank_mode: Optional[str] = None
     resume_from_checkpoint: Optional[bool] = None
     save_page_enabled: Optional[bool] = None

@@ -1065,6 +1065,94 @@
         <div id="allowlistTestResult" class="small mt-2"></div>
       </article>
 
+      <!-- ════════════════ PANEL: AUTOMATED SMS & GSM DONGLE ════════════════ -->
+      <article class="panel mt-4" style="border-top:4px solid var(--violet, #8B5CF6)">
+        <div class="panel-title">
+          <div>
+            <h3><i class="fa-solid fa-tower-broadcast ms-2 text-primary"></i> دریافت خودکار پیامک و وب‌هوک (SMS & GSM)</h3>
+            <p>اتصال بدون واسطه به اپلیکیشن‌های فورواردر پیامک اندروید، مودم‌های دانگل سیم‌کارتی و ارسال لحظه‌ای OTP</p>
+          </div>
+          <span class="badge bg-success-subtle text-success border border-success-subtle px-3 py-2">
+            <i class="fa-solid fa-circle-nodes ms-1"></i> وب‌هوک هوشمند
+          </span>
+        </div>
+
+        <div class="row g-4 mt-1">
+          <!-- Webhook URL Box -->
+          <div class="col-lg-6">
+            <div class="p-3 bg-light rounded-3 border">
+              <label class="fw-bold mb-1"><i class="fa-solid fa-link ms-1 text-primary"></i> آدرس وب‌هوک فوروارد پیامک (Webhook URL)</label>
+              <p class="small text-muted mb-2">این آدرس را در اپلیکیشن‌های فورواردر پیامک اندروید (مانند SMS Forwarder یا Tasker) وارد کنید تا کدها خودکار ثبت شوند:</p>
+              <div class="input-group">
+                <input id="smsWebhookUrlInput" class="form-control font-monospace" readonly value="http://127.0.0.1:8001/api/sms/webhook">
+                <button class="btn btn-outline-primary" type="button" onclick="copyWebhookUrl()">
+                  <i class="fa-regular fa-copy ms-1"></i> کپی آدرس
+                </button>
+              </div>
+              <small class="text-secondary d-block mt-2">
+                <i class="fa-solid fa-shield-halved ms-1 text-success"></i> پشتیبانی از متن کامل پیامک بانک مرکزی، استخراج کد ۶ رقمی و تخصیص هوشمند به متقاضی فعال.
+              </small>
+            </div>
+
+            <!-- GSM Dongle Box -->
+            <div class="p-3 bg-light rounded-3 border mt-3">
+              <div class="d-flex justify-content-between align-items-center mb-2">
+                <label class="fw-bold mb-0"><i class="fa-solid fa-sim-card ms-1 text-violet"></i> مودم دانگل USB سیم‌کارتی (GSM Dongle)</label>
+                <div class="form-check form-switch mb-0">
+                  <input class="form-check-input" type="checkbox" id="set_gsm_modem" onchange="toggleGsmService()">
+                </div>
+              </div>
+              <p class="small text-muted mb-3">خواندن مستقیم پیامک از سیم‌کارت متصل به پورت USB سیستم (Huawei, SIM800, etc)</p>
+
+              <div class="row g-2">
+                <div class="col-8">
+                  <div class="input-group">
+                    <select id="gsmPortSelect" class="form-select">
+                      <option value="COM3">COM3 (پیش‌فرض)</option>
+                    </select>
+                    <button class="btn btn-outline-secondary" type="button" onclick="scanGsmPorts()" title="جستجوی پورت‌های متصل">
+                      <i class="fa-solid fa-arrows-rotate"></i>
+                    </button>
+                  </div>
+                </div>
+                <div class="col-4">
+                  <select id="gsmBaudSelect" class="form-select">
+                    <option value="115200">115200</option>
+                    <option value="9600">9600</option>
+                    <option value="19200">19200</option>
+                    <option value="57600">57600</option>
+                  </select>
+                </div>
+              </div>
+              <div id="gsmStatusBadge" class="small mt-2 text-muted">
+                <i class="fa-solid fa-circle-notch fa-spin me-1" style="display:none"></i>
+                <span id="gsmStatusText">وضعیت: غیرفعال</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- SMS Simulator & Test Tool -->
+          <div class="col-lg-6">
+            <div class="p-3 bg-light rounded-3 border h-100 d-flex flex-column justify-content-between">
+              <div>
+                <label class="fw-bold mb-1"><i class="fa-solid fa-flask-vial ms-1 text-warning"></i> شبیه‌ساز و آزمایشگر پیامک سامانه (SMS Tester)</label>
+                <p class="small text-muted mb-2">متن نمونه پیامک را وارد کنید تا استخراج کد تایید و انتساب به متقاضی را بیازمایید:</p>
+                <textarea id="testSmsInput" class="form-control" rows="3" placeholder="کد تایید شما در سامانه تسهیلات قرض الحسنه ازدواج: 582419 - کدملی: 0012345678"></textarea>
+                <div class="d-flex gap-2 mt-2">
+                  <button class="btn btn-primary btn-sm action-pill" type="button" onclick="testParseSmsText()">
+                    <i class="fa-solid fa-bolt ms-1"></i> آزمایش استخراج
+                  </button>
+                  <button class="btn btn-success btn-sm action-pill" type="button" onclick="sendSimulatedSms()">
+                    <i class="fa-solid fa-paper-plane ms-1"></i> ارسال واقعی به وب‌هوک
+                  </button>
+                </div>
+              </div>
+              <div id="smsTestResult" class="mt-3 p-2 bg-white rounded border small" style="display:none"></div>
+            </div>
+          </div>
+        </div>
+      </article>
+
       <!-- Subscription Manager Panel -->
       <article id="subscriptionPanel" class="panel mt-4" hidden>
         <div class="panel-title">
