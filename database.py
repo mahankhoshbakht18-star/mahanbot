@@ -45,6 +45,11 @@ DEFAULT_CONFIG = {
     "bank_capacity_recheck_seconds": 20.0,
     "capacity_check_interval_seconds": 20.0,
     "allow_reserve_bank": False,
+    "sniper_mode_enabled": False,
+    "sniper_interval_ms": 800,
+    "auto_switch_alternative_bank": True,
+    "fallback_to_in_person": False,
+    "bank_cooldown_seconds": 30,
     "gsm_modem_enabled": False,
     "gsm_modem_port": "COM3",
     "gsm_modem_baudrate": 115200,
@@ -138,6 +143,11 @@ def normalize_config(stored: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     merged["pause_for_manual_captcha"] = bool(merged.get("pause_for_manual_captcha", True))
     merged["pause_for_manual_otp"] = bool(merged.get("pause_for_manual_otp", True))
     merged["allow_reserve_bank"] = bool(merged.get("allow_reserve_bank", False))
+    merged["sniper_mode_enabled"] = bool(merged.get("sniper_mode_enabled", False))
+    merged["sniper_interval_ms"] = _bounded(merged.get("sniper_interval_ms"), 800, 200, 10000, int)
+    merged["auto_switch_alternative_bank"] = bool(merged.get("auto_switch_alternative_bank", True))
+    merged["fallback_to_in_person"] = bool(merged.get("fallback_to_in_person", False))
+    merged["bank_cooldown_seconds"] = _bounded(merged.get("bank_cooldown_seconds"), 30, 5, 600, int)
     merged["default_bank_mode"] = str(merged.get("default_bank_mode", "online") or "online").strip().lower()
     if merged["default_bank_mode"] not in {"online", "in_person"}:
         merged["default_bank_mode"] = "online"

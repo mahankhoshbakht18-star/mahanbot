@@ -1077,11 +1077,21 @@ def process_bank_selection_v2(bot, page, stop_event):
         bot.mark_progress("banks_read")
         _save_bank_page_if_changed(bot, page, bank_names)
 
-        # 4. Match priority banks strictly in applicant's saved priority order
-        matched_entry = None
-        target_value = None
-        target_text = None
-        already_selected = False
+        # 4. Clean expired bank cooldowns and build candidate queue in applicant's priority order
+        now = time.time()
+        if not hasattr(bot, "_bank_cooldowns"):
+            bot._bank_cooldowns = {}
+        else:
+            bot._bank_cooldowns = {k: v for k, v in bot._bank_cooldowns.items() if v > now}
+
+        active_cooldowns = getattr(bot, "_bank_cooldowns", {})
+        priorities_canons = [entry.get("canonical") or canonicalize_bank_name(entry["name"]) for entry in priorities if entry.get("name")]
+        if priorities_canons and all(c in active_cooldowns for c in priorities_canons):
+            bot._bank_cooldowns.clear()
+            active_cooldowns = {}
+
+        active_candidates: List[Tuple[Dict[str, Any], str, str, bool, bool]] = []
+        reserve_candidates: List[Tuple[Dict[str, Any], str, str, bool, bool]] = []
         skipped_reserve_options: List[str] = []
 
         for entry in priorities:
@@ -1089,36 +1099,25 @@ def process_bank_selection_v2(bot, page, stop_event):
             p_canon = entry.get("canonical") or canonicalize_bank_name(p_name)
             if not p_name or p_name in stopped_banks_norm or (p_canon and p_canon in stopped_banks_canon):
                 continue
+            if p_canon in active_cooldowns:
+                continue
+
             entry_allow_reserve = entry["allow_reserve"] if entry.get("allow_reserve") is not None else allow_reserve_effective
 
-            # First pass for this priority bank: look for active (non-reserve) option
             for text_item, value_item, is_sel in available:
                 if match_bank_option(p_name, text_item):
                     if _is_reserve_option(text_item):
                         if not entry_allow_reserve:
                             skipped_reserve_options.append(text_item)
-                            continue
+                        else:
+                            reserve_candidates.append((entry, text_item, value_item, is_sel, True))
                     else:
-                        matched_entry = entry
-                        target_value = value_item
-                        target_text = text_item
-                        already_selected = is_sel
-                        break
+                        active_candidates.append((entry, text_item, value_item, is_sel, False))
 
-            # Second pass for this priority bank: if no active option found and reserve is allowed, accept reserve option
-            if not target_value and entry_allow_reserve:
-                for text_item, value_item, is_sel in available:
-                    if match_bank_option(p_name, text_item) and _is_reserve_option(text_item):
-                        matched_entry = entry
-                        target_value = value_item
-                        target_text = text_item
-                        already_selected = is_sel
-                        break
+        # Non-reserve active options are prioritized before reserve options
+        candidate_queue = active_candidates + reserve_candidates
 
-            if target_value:
-                break
-
-        if not target_value or not matched_entry:
+        if not candidate_queue:
             target_names = "، ".join(e["name"] for e in priorities)
             if skipped_reserve_options:
                 bot.emit_event(
@@ -1141,168 +1140,184 @@ def process_bank_selection_v2(bot, page, stop_event):
             )
             return "no_match"
 
-        bank_name = matched_entry["name"]
-        desired_mode = matched_entry["mode"]
-        is_reserve_choice = _is_reserve_option(target_text or "")
-        current_bank_sig = f"{bank_name}:{target_value}"
+        auto_switch = bool(bot.settings.get("auto_switch_alternative_bank", True))
+        fallback_in_person = bool(bot.settings.get("fallback_to_in_person", False))
+        cooldown_sec = max(5, int(bot.settings.get("bank_cooldown_seconds", 30)))
 
-        if getattr(bot, "_last_found_bank_sig", None) != current_bank_sig:
-            bot._last_found_bank_sig = current_bank_sig
-            bot.emit_event(
-                "BANK_OPTION_FOUND",
-                step="STEP_3_BANK_SELECT",
-                reason=f"bank={bank_name} value={target_value}",
-                result=target_text or bank_name,
-                message=f"بانک اولویت‌دار «{bank_name}» در فهرست پیدا شد: {target_text}",
-                level="info",
-                page=page,
-            )
+        matched_entry = None
+        target_value = None
+        target_text = None
+        bank_name = ""
+        desired_mode = ""
+        effective_mode = ""
+        is_reserve_choice = False
 
-        # Clear any stale capacity full flag before selecting/testing
-        bot.consume_recovery_flag("bank_capacity_full")
-        bot.consume_recovery_flag("generic_error")
+        for idx, (cand_entry, cand_text, cand_val, cand_already_sel, cand_is_reserve) in enumerate(candidate_queue):
+            matched_entry = cand_entry
+            target_text = cand_text
+            target_value = cand_val
+            bank_name = cand_entry["name"]
+            desired_mode = cand_entry["mode"]
+            is_reserve_choice = cand_is_reserve
+            p_canon = cand_entry.get("canonical") or canonicalize_bank_name(bank_name)
+            has_next = auto_switch and (idx + 1 < len(candidate_queue))
 
-        # 5. Select the bank option in dropdown (and wait for ASP.NET postback)
-        DBHandler.update_runtime(bot.nid, status="SELECTING_BANK", current_step="SELECT_BANK", target_bank=bank_name)
-        if not already_selected:
-            _select_dropdown_with_postback(bot, page, dropdown_id, target_value)
+            current_bank_sig = f"{bank_name}:{target_value}"
+            if getattr(bot, "_last_found_bank_sig", None) != current_bank_sig:
+                bot._last_found_bank_sig = current_bank_sig
+                bot.emit_event(
+                    "BANK_OPTION_FOUND",
+                    step="STEP_3_BANK_SELECT",
+                    reason=f"bank={bank_name} value={target_value}",
+                    result=target_text or bank_name,
+                    message=f"بانک اولویت‌دار «{bank_name}» در فهرست پیدا شد: {target_text}",
+                    level="info",
+                    page=page,
+                )
 
-        current_bank_sig = f"{bank_name}:{target_value}"
-        if getattr(bot, "_last_selected_bank_sig", None) != current_bank_sig:
-            bot._last_selected_bank_sig = current_bank_sig
-            bot.emit_event(
-                "BANK_OPTION_SELECTED",
-                step="STEP_3_BANK_SELECT",
-                reason=f"bank={bank_name} value={target_value}",
-                result="dropdown_option_selected",
-                message=f"گزینه بانک «{bank_name}» از فهرست انتخاب شد (هنوز ثبت نهایی نشده است).",
-                level="info",
-                page=page,
-            )
+            # Clear any stale capacity full flag before selecting/testing
+            bot.consume_recovery_flag("bank_capacity_full")
+            bot.consume_recovery_flag("generic_error")
 
-        # Check immediately if selecting the bank triggered a capacity full dialog or error message
-        if bot.consume_recovery_flag("bank_capacity_full"):
-            bot.save_checkpoint(
-                "STEP_3_BANK_SELECT",
-                page=page,
-                selected_bank=bank_name,
-                bank_mode=desired_mode or "online",
-                expected_next_step="RECHECK_BANK_CAPACITY",
-                last_error_reason=getattr(bot, "_last_dialog_message", "bank_capacity_full"),
-                last_operation_result="BANK_CAPACITY_FULL",
-            )
-            return "capacity_full"
+            # 5. Select the bank option in dropdown (and wait for ASP.NET postback)
+            DBHandler.update_runtime(bot.nid, status="SELECTING_BANK", current_step="SELECT_BANK", target_bank=bank_name)
+            if not cand_already_sel:
+                _select_dropdown_with_postback(bot, page, dropdown_id, target_value)
 
-        err_kind, err_text = _detect_page_error_or_capacity_message(bot, page)
-        if err_kind == "bank_capacity_full":
-            bot.emit_event(
-                "BANK_CAPACITY_FULL",
-                step="STEP_3_BANK_SELECT",
-                reason=err_text,
-                result="capacity_full_dom",
-                message=f"ظرفیت بانک تکمیل است: {err_text}",
-                level="warning",
-                page=page,
-            )
-            bot.save_checkpoint(
-                "STEP_3_BANK_SELECT",
-                page=page,
-                selected_bank=bank_name,
-                bank_mode=desired_mode or "online",
-                expected_next_step="RECHECK_BANK_CAPACITY",
-                last_error_reason=err_text,
-                last_operation_result="BANK_CAPACITY_FULL",
-            )
-            return "capacity_full"
+            if getattr(bot, "_last_selected_bank_sig", None) != current_bank_sig:
+                bot._last_selected_bank_sig = current_bank_sig
+                bot.emit_event(
+                    "BANK_OPTION_SELECTED",
+                    step="STEP_3_BANK_SELECT",
+                    reason=f"bank={bank_name} value={target_value}",
+                    result="dropdown_option_selected",
+                    message=f"گزینه بانک «{bank_name}» از فهرست انتخاب شد (هنوز ثبت نهایی نشده است).",
+                    level="info",
+                    page=page,
+                )
 
-        # Verify that the bank selection actually persisted in the live DOM after postback
-        verified_bank, actual_val, actual_txt = _verify_dropdown_selection(page, dropdown_id, target_value, bank_name)
-        if not verified_bank:
-            # Retry selection once in case UpdatePanel postback was still settling
-            _select_dropdown_with_postback(bot, page, dropdown_id, target_value)
+            # Check immediately if selecting the bank triggered capacity full dialog or DOM message
+            is_full = False
+            full_msg = ""
             if bot.consume_recovery_flag("bank_capacity_full"):
+                is_full = True
+                full_msg = getattr(bot, "_last_dialog_message", "bank_capacity_full")
+
+            if not is_full:
+                err_kind, err_text = _detect_page_error_or_capacity_message(bot, page)
+                if err_kind == "bank_capacity_full":
+                    is_full = True
+                    full_msg = err_text
+
+            if is_full:
+                bot.emit_event(
+                    "BANK_CAPACITY_FULL",
+                    step="STEP_3_BANK_SELECT",
+                    reason=full_msg,
+                    result="capacity_full_dom",
+                    message=f"ظرفیت بانک «{bank_name}» تکمیل است: {full_msg}",
+                    level="warning",
+                    page=page,
+                )
+                bot._bank_cooldowns[p_canon] = time.time() + cooldown_sec
+                if has_next:
+                    bot.log(f"🔄 ظرفیت بانک «{bank_name}» تکمیل است؛ انتقال خودکار به اولویت بعدی طبق استراتژی آبشاری (Waterfall)...", "info", page)
+                    return_to_bank_field(page, dropdown_id)
+                    continue
+                bot.save_checkpoint(
+                    "STEP_3_BANK_SELECT",
+                    page=page,
+                    selected_bank=bank_name,
+                    bank_mode=desired_mode or "online",
+                    expected_next_step="RECHECK_BANK_CAPACITY",
+                    last_error_reason=full_msg,
+                    last_operation_result="BANK_CAPACITY_FULL",
+                )
                 return "capacity_full"
+
+            # Verify that the bank selection actually persisted in live DOM after postback
             verified_bank, actual_val, actual_txt = _verify_dropdown_selection(page, dropdown_id, target_value, bank_name)
+            if not verified_bank:
+                _select_dropdown_with_postback(bot, page, dropdown_id, target_value)
+                if bot.consume_recovery_flag("bank_capacity_full"):
+                    bot._bank_cooldowns[p_canon] = time.time() + cooldown_sec
+                    if has_next:
+                        return_to_bank_field(page, dropdown_id)
+                        continue
+                    return "capacity_full"
+                verified_bank, actual_val, actual_txt = _verify_dropdown_selection(page, dropdown_id, target_value, bank_name)
 
-        if not verified_bank:
+            if not verified_bank:
+                bot.emit_event(
+                    "BANK_SELECTION_FAILED",
+                    step="STEP_3_BANK_SELECT",
+                    reason=f"selection_not_persisted:expected={target_value},actual={actual_val}",
+                    result="postback_reset",
+                    message=f"انتخاب بانک «{bank_name}» پس از Postback در کنترل صفحه باقی نماند.",
+                    level="warning",
+                    page=page,
+                )
+                if has_next:
+                    return_to_bank_field(page, dropdown_id)
+                    continue
+                return "waiting"
+
             bot.emit_event(
-                "BANK_SELECTION_FAILED",
+                "BANK_SELECTION_VERIFIED",
                 step="STEP_3_BANK_SELECT",
-                reason=f"selection_not_persisted:expected={target_value},actual={actual_val}",
-                result="postback_reset",
-                message=f"انتخاب بانک «{bank_name}» پس از Postback در کنترل صفحه باقی نماند (مقدار فعلی: {actual_txt or actual_val or 'خالی'}).",
-                level="warning",
+                reason=f"bank={bank_name} value={actual_val or target_value}",
+                result="verified",
+                message=f"انتخاب بانک «{bank_name}» در کنترل صفحه تایید شد.",
+                level="success",
                 page=page,
             )
-            return "waiting"
 
-        bot.emit_event(
-            "BANK_SELECTION_VERIFIED",
-            step="STEP_3_BANK_SELECT",
-            reason=f"bank={bank_name} value={actual_val or target_value}",
-            result="verified",
-            message=f"انتخاب بانک «{bank_name}» در کنترل صفحه تایید شد.",
-            level="success",
-            page=page,
-        )
+            # 6. Mode selection (حضوری vs غیرحضوری) with optional fallback to in-person
+            effective_mode, mode_ok = _select_bank_mode(bot, page, desired_mode, bank_name)
+            if not mode_ok and desired_mode == "online" and fallback_in_person:
+                bot.log(f"🔄 روش غیرحضوری برای بانک {bank_name} در دسترس نیست؛ بر اساس تنظیمات روش حضوری بررسی می‌شود...", "info", page)
+                effective_mode, mode_ok = _select_bank_mode(bot, page, "in_person", bank_name)
 
-        # 6. Select & verify reception mode (حضوری vs غیرحضوری) without ever switching online -> in_person automatically
-        effective_mode, mode_ok = _select_bank_mode(bot, page, desired_mode, bank_name)
-        if not mode_ok:
-            bot.emit_event(
-                "BANK_CAPACITY_FULL",
-                step="STEP_3_BANK_SELECT",
-                reason=f"mode_unavailable:{desired_mode}",
-                result="mode_not_selectable",
-                message=f"روش درخواستی ({desired_mode}) برای بانک {bank_name} فعال نیست؛ تغییر خودکار به حضوری مجاز نیست.",
-                level="warning",
-                page=page,
-            )
-            bot.save_checkpoint(
-                "STEP_3_BANK_SELECT",
-                page=page,
-                selected_bank=bank_name,
-                bank_mode=desired_mode,
-                expected_next_step="RECHECK_BANK_CAPACITY",
-                last_error_reason="requested_mode_unavailable",
-                last_operation_result="BANK_CAPACITY_FULL",
-            )
-            return "capacity_full"
+            mode_full = False
+            mode_err_msg = ""
+            if bot.consume_recovery_flag("bank_capacity_full"):
+                mode_full = True
+                mode_err_msg = getattr(bot, "_last_dialog_message", "bank_capacity_full")
+            else:
+                err_kind, err_text = _detect_page_error_or_capacity_message(bot, page)
+                if err_kind == "bank_capacity_full":
+                    mode_full = True
+                    mode_err_msg = err_text
 
-        # Check again if selecting online mode triggered JavaScript Alert (e.g. Bank Saderat Lorestan non-in-person full)
-        if bot.consume_recovery_flag("bank_capacity_full"):
-            bot.save_checkpoint(
-                "STEP_3_BANK_SELECT",
-                page=page,
-                selected_bank=bank_name,
-                bank_mode=effective_mode,
-                expected_next_step="RECHECK_BANK_CAPACITY",
-                last_error_reason=getattr(bot, "_last_dialog_message", "bank_capacity_full"),
-                last_operation_result="BANK_CAPACITY_FULL",
-            )
-            return "capacity_full"
+            if not mode_ok or mode_full:
+                reason_msg = mode_err_msg or f"روش درخواستی ({desired_mode}) برای بانک {bank_name} فعال نیست"
+                bot.emit_event(
+                    "BANK_CAPACITY_FULL",
+                    step="STEP_3_BANK_SELECT",
+                    reason=reason_msg,
+                    result="capacity_full_after_mode",
+                    message=f"ظرفیت یا روش بانک «{bank_name}» در دسترس نیست: {reason_msg}",
+                    level="warning",
+                    page=page,
+                )
+                bot._bank_cooldowns[p_canon] = time.time() + cooldown_sec
+                if has_next:
+                    bot.log(f"🔄 سهمیه بانک «{bank_name}» تکمیل است؛ انتقال خودکار به اولویت بعدی (Waterfall)...", "info", page)
+                    return_to_bank_field(page, dropdown_id)
+                    continue
+                bot.save_checkpoint(
+                    "STEP_3_BANK_SELECT",
+                    page=page,
+                    selected_bank=bank_name,
+                    bank_mode=effective_mode or desired_mode,
+                    expected_next_step="RECHECK_BANK_CAPACITY",
+                    last_error_reason=reason_msg,
+                    last_operation_result="BANK_CAPACITY_FULL",
+                )
+                return "capacity_full"
 
-        err_kind, err_text = _detect_page_error_or_capacity_message(bot, page)
-        if err_kind == "bank_capacity_full":
-            bot.emit_event(
-                "BANK_CAPACITY_FULL",
-                step="STEP_3_BANK_SELECT",
-                reason=err_text,
-                result="capacity_full_after_mode",
-                message=f"ظرفیت ثبت‌نام تکمیل است: {err_text}",
-                level="warning",
-                page=page,
-            )
-            bot.save_checkpoint(
-                "STEP_3_BANK_SELECT",
-                page=page,
-                selected_bank=bank_name,
-                bank_mode=effective_mode,
-                expected_next_step="RECHECK_BANK_CAPACITY",
-                last_error_reason=err_text,
-                last_operation_result="BANK_CAPACITY_FULL",
-            )
-            return "capacity_full"
+            # Selection & mode verified successfully for this priority bank! Break out to Step 7
+            break
 
         # 7. Branch selection: ONLY required when mode is NOT online (non-in-person)
         selected_branch = ""

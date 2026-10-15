@@ -953,6 +953,24 @@
             <label class="check-card"><input id="set_save_screenshot" type="checkbox" checked> ذخیره تصویر صفحه</label>
             <label class="check-card"><input id="set_save_change_only" type="checkbox" checked> فقط هنگام تغییر وضعیت</label>
             <label class="check-card"><input id="set_auto_repair" type="checkbox"> تعمیر خودکار snapshot</label>
+            <label class="check-card text-danger fw-bold" style="background:#FFF1F2; border-color:#FECDD3;">
+              <input id="set_sniper_mode" type="checkbox">
+              <i class="fa-solid fa-crosshairs ms-1 text-danger"></i> حالت شکار لحظه‌ای سهمیه (Quota Sniper)
+            </label>
+            <label>سرعت شکار سهمیه (میلی‌ثانیه)
+              <input id="set_sniper_interval" type="number" min="200" max="5000" step="100" value="800" class="form-control">
+            </label>
+            <label class="check-card text-primary fw-bold" style="background:#EEF2FF; border-color:#C7D2FE;">
+              <input id="set_auto_switch_bank" type="checkbox" checked>
+              <i class="fa-solid fa-water ms-1 text-primary"></i> سوییچ خودکار آبشاری به اولویت بعدی (Waterfall)
+            </label>
+            <label class="check-card text-warning-emphasis" style="background:#FFFBEB; border-color:#FDE68A;">
+              <input id="set_fallback_in_person" type="checkbox">
+              <i class="fa-solid fa-building-columns ms-1 text-warning"></i> تغییر به حضوری در صورت اتمام سهمیه غیرحضوری
+            </label>
+            <label>مدت زمان کول‌داون بانک پرشده (ثانیه)
+              <input id="set_bank_cooldown" type="number" min="5" max="300" value="30" class="form-control">
+            </label>
             <label class="check-card"><input id="set_headless" type="checkbox"> اجرای مرورگر مخفی</label>
             <label class="check-card"><input id="set_useproxy" type="checkbox"> استفاده از پروکسی</label>
           </div>

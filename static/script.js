@@ -1460,6 +1460,22 @@ async function loadSettings() {
             document.getElementById('gsmBaudSelect').value = String(s.gsm_modem_baudrate || '115200');
         }
 
+        if (document.getElementById('set_sniper_mode')) {
+            document.getElementById('set_sniper_mode').checked = s.sniper_mode_enabled === true;
+        }
+        if (document.getElementById('set_sniper_interval')) {
+            document.getElementById('set_sniper_interval').value = s.sniper_interval_ms ?? 800;
+        }
+        if (document.getElementById('set_auto_switch_bank')) {
+            document.getElementById('set_auto_switch_bank').checked = s.auto_switch_alternative_bank !== false;
+        }
+        if (document.getElementById('set_fallback_in_person')) {
+            document.getElementById('set_fallback_in_person').checked = s.fallback_to_in_person === true;
+        }
+        if (document.getElementById('set_bank_cooldown')) {
+            document.getElementById('set_bank_cooldown').value = s.bank_cooldown_seconds ?? 30;
+        }
+
     } catch(e) {}
 
 }
@@ -1690,7 +1706,13 @@ async function saveSettings() {
 
         gsm_modem_enabled: document.getElementById('set_gsm_modem') ? document.getElementById('set_gsm_modem').checked : false,
         gsm_modem_port: document.getElementById('gsmPortSelect') ? document.getElementById('gsmPortSelect').value : 'COM3',
-        gsm_modem_baudrate: document.getElementById('gsmBaudSelect') ? parseInt(document.getElementById('gsmBaudSelect').value, 10) : 115200
+        gsm_modem_baudrate: document.getElementById('gsmBaudSelect') ? parseInt(document.getElementById('gsmBaudSelect').value, 10) : 115200,
+
+        sniper_mode_enabled: document.getElementById('set_sniper_mode') ? document.getElementById('set_sniper_mode').checked : false,
+        sniper_interval_ms: document.getElementById('set_sniper_interval') ? parseInt(document.getElementById('set_sniper_interval').value, 10) : 800,
+        auto_switch_alternative_bank: document.getElementById('set_auto_switch_bank') ? document.getElementById('set_auto_switch_bank').checked : true,
+        fallback_to_in_person: document.getElementById('set_fallback_in_person') ? document.getElementById('set_fallback_in_person').checked : false,
+        bank_cooldown_seconds: document.getElementById('set_bank_cooldown') ? parseInt(document.getElementById('set_bank_cooldown').value, 10) : 30
 
     };
 

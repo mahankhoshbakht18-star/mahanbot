@@ -648,10 +648,21 @@ class BankSelectionBot(BotCore):
                         elif result == "capacity_full":
                             set_state("BANK_CAPACITY_FULL")
                             capacity_recheck_count += 1
-                            base_recheck = max(5.0, float(self.settings.get("capacity_check_interval_seconds", self.settings.get("bank_capacity_recheck_seconds", 20.0))))
-                            # Apply gentle backoff if repeated capacity full (capped at 120s)
-                            backoff_factor = min(3.0, 1.0 + (capacity_recheck_count - 1) * 0.25)
-                            wait_sec = min(120.0, round(base_recheck * backoff_factor, 1))
+
+                            sniper_on = bool(self.settings.get("sniper_mode_enabled", False))
+                            if sniper_on:
+                                sniper_ms = max(200, int(self.settings.get("sniper_interval_ms", 800)))
+                                wait_sec = round(sniper_ms / 1000.0, 2)
+                                self.log(
+                                    f"🎯 [شکار سهمیه Sniper] بررسی فوق‌سریع ظرفیت‌ها ({sniper_ms}ms)...",
+                                    "info",
+                                    page,
+                                )
+                            else:
+                                base_recheck = max(5.0, float(self.settings.get("capacity_check_interval_seconds", self.settings.get("bank_capacity_recheck_seconds", 20.0))))
+                                # Apply gentle backoff if repeated capacity full (capped at 120s)
+                                backoff_factor = min(3.0, 1.0 + (capacity_recheck_count - 1) * 0.25)
+                                wait_sec = min(120.0, round(base_recheck * backoff_factor, 1))
 
                             is_monitor_on = bool(self.settings.get("capacity_check_enabled", self.settings.get("bank_monitor_enabled", True)))
                             if not is_monitor_on:
@@ -669,16 +680,30 @@ class BankSelectionBot(BotCore):
                                 retry_count=capacity_recheck_count,
                             )
                             self.suspend_watchdog(wait_sec + 15.0)
-                            self.log(
-                                f"⏳ ظرفیت ثبت‌نام بانک تکمیل است؛ حفظ صفحه فعلی و بررسی مجدد تا {wait_sec} ثانیه دیگر (بدون تغییر روش غیرحضوری)...",
-                                "warning",
-                                page,
-                            )
-                            if sleep_with_stop(stop_event, wait_sec, step=0.2):
+                            if not sniper_on:
+                                self.log(
+                                    f"⏳ ظرفیت ثبت‌نام بانک تکمیل است؛ حفظ صفحه فعلی و بررسی مجدد تا {wait_sec} ثانیه دیگر (بدون تغییر روش غیرحضوری)...",
+                                    "warning",
+                                    page,
+                                )
+                            if sleep_with_stop(stop_event, wait_sec, step=0.05 if sniper_on else 0.2):
                                 break
-                            # Re-trigger official dropdown check without returning to Step 1
+
+                            # Clean expired bank cooldowns
+                            now_t = time.time()
+                            if hasattr(self, "_bank_cooldowns"):
+                                self._bank_cooldowns = {k: v for k, v in self._bank_cooldowns.items() if v > now_t}
+
+                            # Re-trigger dropdown check via city postback without returning to Step 1
                             try:
                                 return_to_bank_field(page, "#ctl00_ContentPlaceHolder1_ddlBankName")
+                                city_loc = page.locator("#ctl00_ContentPlaceHolder1_ddlCity")
+                                if city_loc.count() > 0 and city_loc.first.is_visible():
+                                    cur_city = city_loc.first.input_value()
+                                    if cur_city and cur_city != "0":
+                                        page.evaluate(
+                                            "() => { if (typeof __doPostBack === 'function') __doPostBack('ctl00$ContentPlaceHolder1$ddlCity', ''); }"
+                                        )
                                 self.wait_for_aspnet_postback(page, timeout_ms=5000)
                             except Exception:
                                 pass
@@ -691,10 +716,20 @@ class BankSelectionBot(BotCore):
                                 self.log("بانک هدف در فهرست موجود نیست و پایش خودکار غیرفعال است.", "warning", page)
                                 return
 
-                            base_refresh = max(1.0, float(self.settings.get("bank_list_refresh_seconds", self.settings.get("bank_refresh_interval", 5.0))))
-                            # Gentle backoff after every 10 consecutive refreshes to respect server rate limits
-                            backoff = min(4.0, 1.0 + (list_refresh_count // 10) * 0.5)
-                            refresh_interval = round(base_refresh * backoff, 1)
+                            sniper_on = bool(self.settings.get("sniper_mode_enabled", False))
+                            if sniper_on:
+                                sniper_ms = max(200, int(self.settings.get("sniper_interval_ms", 800)))
+                                refresh_interval = round(sniper_ms / 1000.0, 2)
+                                self.log(
+                                    f"🎯 [شکار سهمیه Sniper] پایش و رفرش لحظه‌ای ({sniper_ms}ms)...",
+                                    "info",
+                                    page,
+                                )
+                            else:
+                                base_refresh = max(1.0, float(self.settings.get("bank_list_refresh_seconds", self.settings.get("bank_refresh_interval", 5.0))))
+                                # Gentle backoff after every 10 consecutive refreshes to respect server rate limits
+                                backoff = min(4.0, 1.0 + (list_refresh_count // 10) * 0.5)
+                                refresh_interval = round(base_refresh * backoff, 1)
 
                             DBHandler.update_runtime(
                                 self.nid,
@@ -704,8 +739,13 @@ class BankSelectionBot(BotCore):
                                 retry_count=list_refresh_count,
                             )
                             self.suspend_watchdog(refresh_interval + 15.0)
-                            if sleep_with_stop(stop_event, refresh_interval, step=0.1):
+                            if sleep_with_stop(stop_event, refresh_interval, step=0.05 if sniper_on else 0.1):
                                 break
+
+                            # Clean expired bank cooldowns
+                            now_t = time.time()
+                            if hasattr(self, "_bank_cooldowns"):
+                                self._bank_cooldowns = {k: v for k, v in self._bank_cooldowns.items() if v > now_t}
                             # Refresh bank list via official city dropdown postback first (avoids losing session or returning to Step 1)
                             refreshed_via_postback = False
                             try:

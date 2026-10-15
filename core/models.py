@@ -102,6 +102,12 @@ class SettingsRequest(BaseModel):
     save_screenshot: Optional[bool] = None
     save_only_on_bank_change: Optional[bool] = None
     auto_repair_saved_pages: Optional[bool] = None
+    sniper_mode_enabled: Optional[bool] = None
+    sniper_interval_ms: Optional[int] = None
+    auto_switch_alternative_bank: Optional[bool] = None
+    fallback_to_in_person: Optional[bool] = None
+    bank_cooldown_seconds: Optional[int] = None
+
 
 
 class LoginRequest(BaseModel):
