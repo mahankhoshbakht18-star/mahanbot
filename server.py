@@ -114,6 +114,7 @@ from routes.otp import router as otp_router
 from routes.settings import router as settings_router
 from routes.jobs import router as jobs_router
 from routes.websocket import router as ws_router
+from routes.saved_pages import router as saved_pages_router
 
 app.include_router(auth_router)
 app.include_router(applicants_router)
@@ -121,6 +122,7 @@ app.include_router(otp_router)
 app.include_router(settings_router)
 app.include_router(jobs_router)
 app.include_router(ws_router)
+app.include_router(saved_pages_router)
 
 if __name__ == "__main__":
     import uvicorn

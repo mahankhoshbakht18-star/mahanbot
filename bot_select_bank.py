@@ -8,6 +8,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from database import DBHandler
 from event_logger import emit_structured_event
+from bank_page_manager import classify_capacity_or_error, BankPageState, is_reserve_text
 
 
 def _safe_path_part(value, fallback="unknown", max_length=80):
@@ -573,9 +574,11 @@ def _detect_page_error_or_capacity_message(bot, page) -> Tuple[Optional[str], st
     """Inspect DOM error labels (#ctl00_ContentPlaceHolder1_labErrMsg, alerts) for capacity full or errors."""
     error_selectors = [
         "#ctl00_ContentPlaceHolder1_labErrMsg",
+        "#ctl00_ContentPlaceHolder1_divGheireHozori",
         "#ctl00_ContentPlaceHolder1_lblMessage",
         "span[id*='ErrMsg']",
         "span[id*='lblError']",
+        "div[id*='ErrMsg']",
     ]
     for sel in error_selectors:
         try:
@@ -583,7 +586,13 @@ def _detect_page_error_or_capacity_message(bot, page) -> Tuple[Optional[str], st
             if loc.count() > 0 and loc.first.is_visible():
                 txt = (loc.first.inner_text() or "").strip()
                 if txt:
-                    kind = bot._classify_dialog(txt) if hasattr(bot, "_classify_dialog") else "generic_error"
+                    # Check bank_page_manager classification first
+                    c_kind, _ = classify_capacity_or_error(txt)
+                    if c_kind == BankPageState.CAPACITY_FULL:
+                        return "bank_capacity_full", txt
+                    elif c_kind == BankPageState.SESSION_EXPIRED:
+                        return "session_expired", txt
+                    kind = bot._classify_dialog(txt) if hasattr(bot, "_classify_dialog") else (c_kind or "generic_error")
                     return kind, txt
         except Exception:
             continue
@@ -1134,16 +1143,20 @@ def process_bank_selection_v2(bot, page, stop_event):
 
         bank_name = matched_entry["name"]
         desired_mode = matched_entry["mode"]
+        is_reserve_choice = _is_reserve_option(target_text or "")
+        current_bank_sig = f"{bank_name}:{target_value}"
 
-        bot.emit_event(
-            "BANK_OPTION_FOUND",
-            step="STEP_3_BANK_SELECT",
-            reason=f"bank={bank_name} value={target_value}",
-            result=target_text or bank_name,
-            message=f"بانک اولویت‌دار «{bank_name}» در فهرست پیدا شد: {target_text}",
-            level="info",
-            page=page,
-        )
+        if getattr(bot, "_last_found_bank_sig", None) != current_bank_sig:
+            bot._last_found_bank_sig = current_bank_sig
+            bot.emit_event(
+                "BANK_OPTION_FOUND",
+                step="STEP_3_BANK_SELECT",
+                reason=f"bank={bank_name} value={target_value}",
+                result=target_text or bank_name,
+                message=f"بانک اولویت‌دار «{bank_name}» در فهرست پیدا شد: {target_text}",
+                level="info",
+                page=page,
+            )
 
         # Clear any stale capacity full flag before selecting/testing
         bot.consume_recovery_flag("bank_capacity_full")
@@ -1339,21 +1352,29 @@ def process_bank_selection_v2(bot, page, stop_event):
                 )
 
         # Save checkpoint and emit BANK_FORM_READY before final submit decision
+        next_step_label = "FINAL_SUBMIT_RESERVE" if is_reserve_choice else "FINAL_SUBMIT"
+        op_result_label = "RESERVE_PENDING" if is_reserve_choice else "BANK_FORM_READY"
         bot.save_checkpoint(
             "STEP_3_BANK_SELECT",
             page=page,
             selected_bank=bank_name,
             selected_branch=selected_branch,
             bank_mode=effective_mode,
-            expected_next_step="FINAL_SUBMIT",
-            last_operation_result="BANK_FORM_READY",
+            is_reserve=is_reserve_choice,
+            expected_next_step=next_step_label,
+            last_operation_result=op_result_label,
+        )
+        ready_msg = (
+            f"فرم انتخاب بانک «{bank_name}» (رزرو در انتظار تخصیص ظرفیت - روش: {'غیرحضوری' if effective_mode == 'online' else 'حضوری'}) تکمیل و آماده ثبت است."
+            if is_reserve_choice else
+            f"فرم انتخاب بانک «{bank_name}» (روش: {'غیرحضوری' if effective_mode == 'online' else ('حضوری' if effective_mode == 'in_person' else 'پیش‌فرض')}) تکمیل و آماده ثبت است."
         )
         bot.emit_event(
             "BANK_FORM_READY",
             step="STEP_3_BANK_SELECT",
-            reason=f"bank={bank_name} mode={effective_mode} branch={selected_branch or 'none'}",
+            reason=f"bank={bank_name} mode={effective_mode} branch={selected_branch or 'none'} reserve={is_reserve_choice}",
             result="ready",
-            message=f"فرم انتخاب بانک «{bank_name}» (روش: {'غیرحضوری' if effective_mode == 'online' else ('حضوری' if effective_mode == 'in_person' else 'پیش‌فرض')}) تکمیل و آماده ثبت است.",
+            message=ready_msg,
             level="success",
             page=page,
         )
@@ -1362,16 +1383,30 @@ def process_bank_selection_v2(bot, page, stop_event):
         # 8. Final Submit check (auto_final_submit / final_submit)
         allow_final_submit = bool(bot.settings.get("auto_final_submit", bot.settings.get("final_submit", False)))
         if not allow_final_submit:
-            DBHandler.update_status(bot.nid, "انتخاب بانک آماده ثبت", f"بانک {bank_name} آماده است؛ منتظر تایید ثبت نهایی توسط کاربر")
-            bot.set_runtime_state(
-                "WAITING_USER_INPUT",
-                "FINAL_SUBMIT_WAIT",
-                browser_status="OPEN",
-                target_bank=bank_name,
-                selected_mode=effective_mode,
-                selected_branch=selected_branch,
-            )
-            bot.log(f"⏸️ گزینه بانک «{bank_name}» آماده شد؛ ثبت نهایی خودکار غیرفعال است (منتظر اقدام کاربر).", "warning", page)
+            if is_reserve_choice:
+                DBHandler.update_status(bot.nid, "رزرو در انتظار تخصیص ظرفیت", f"بانک {bank_name} (رزرو) آماده است؛ منتظر تایید ثبت نهایی توسط کاربر")
+                bot.set_runtime_state(
+                    "WAITING_USER_INPUT",
+                    "RESERVE_PENDING",
+                    browser_status="OPEN",
+                    target_bank=bank_name,
+                    selected_mode=effective_mode,
+                    selected_branch=selected_branch,
+                    is_reserve=True,
+                )
+                bot.log(f"⏸️ گزینه بانک «{bank_name}» آماده شد؛ وضعیت «رزرو در انتظار تخصیص ظرفیت» است (منتظر اقدام کاربر).", "warning", page)
+            else:
+                DBHandler.update_status(bot.nid, "انتخاب بانک آماده ثبت", f"بانک {bank_name} آماده است؛ منتظر تایید ثبت نهایی توسط کاربر")
+                bot.set_runtime_state(
+                    "WAITING_USER_INPUT",
+                    "FINAL_SUBMIT_WAIT",
+                    browser_status="OPEN",
+                    target_bank=bank_name,
+                    selected_mode=effective_mode,
+                    selected_branch=selected_branch,
+                    is_reserve=False,
+                )
+                bot.log(f"⏸️ گزینه بانک «{bank_name}» آماده شد؛ ثبت نهایی خودکار غیرفعال است (منتظر اقدام کاربر).", "warning", page)
             return "option_selected_waiting_user"
 
         # 9. Perform Final Submit ONCE and verify official site response

@@ -81,7 +81,9 @@ class SettingsRequest(BaseModel):
     bank_refresh_interval: Optional[float] = None
     bank_list_refresh_seconds: Optional[float] = None
     bank_capacity_recheck_seconds: Optional[float] = None
+    capacity_check_interval_seconds: Optional[float] = None
     bank_monitor_enabled: Optional[bool] = None
+    capacity_check_enabled: Optional[bool] = None
     allow_reserve_bank: Optional[bool] = None
     default_bank_mode: Optional[str] = None
     resume_from_checkpoint: Optional[bool] = None

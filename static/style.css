@@ -1481,3 +1481,56 @@ label {
     grid-template-columns: 1fr;
   }
 }
+
+/* ════════════════ SAVED PAGES & CAPACITY TIMER ════════════════ */
+.capacity-timer-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 16px;
+  background: linear-gradient(135deg, rgba(139, 92, 246, 0.1), rgba(244, 114, 182, 0.12));
+  border: 1px solid rgba(139, 92, 246, 0.25);
+  border-radius: 999px;
+  font-size: 13px;
+  color: var(--primary);
+  font-weight: 600;
+}
+.capacity-timer-pill i {
+  color: var(--peach, #FFB38A);
+  animation: spinSlow 8s linear infinite;
+}
+@keyframes spinSlow {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+.badge-peach {
+  background-color: rgba(255, 179, 138, 0.2);
+  color: #D97706;
+  border: 1px solid rgba(255, 179, 138, 0.4);
+}
+.badge-purple {
+  background-color: rgba(167, 139, 250, 0.2);
+  color: #7C3AED;
+  border: 1px solid rgba(167, 139, 250, 0.4);
+}
+.badge-amber {
+  background-color: rgba(245, 158, 11, 0.2);
+  color: #B45309;
+  border: 1px solid rgba(245, 158, 11, 0.4);
+}
+.badge-gray {
+  background-color: rgba(156, 163, 175, 0.2);
+  color: #4B5563;
+  border: 1px solid rgba(156, 163, 175, 0.3);
+}
+
+.screenshot-container {
+  min-height: 240px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #f8fafc;
+  border-radius: 10px;
+  padding: 12px;
+}

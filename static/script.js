@@ -368,6 +368,13 @@ function switchView(viewId, navEl) {
 
     if(viewId === 'bank-select') fetchApplicants('bank-select');
 
+    if(viewId === 'saved-pages') {
+        loadSavedPages();
+        startCapacityCountdown();
+    } else {
+        stopCapacityCountdown();
+    }
+
     if(viewId === 'status') fetchApplicants('status');
 
     if(viewId === 'recover') fetchApplicants('recover');
@@ -2397,6 +2404,8 @@ function refreshCurrentView() {
 
     if (currentViewId === 'bank-select') renderBankSelectList(allUsersData);
 
+    if (currentViewId === 'saved-pages') renderSavedPagesTable(filteredSavedPages);
+
     if (currentViewId === 'status') renderStatusList(allUsersData);
 
 }
@@ -2924,5 +2933,355 @@ function filterApplicantsTable(viewType) {
             r.style.display = (!query || text.includes(query)) ? '' : 'none';
         });
     }
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   MAHANBOT v1.8.0 Saved Pages & Bank Recovery Management
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+let allSavedPages = [];
+let filteredSavedPages = [];
+let capacityCountdownTimer = null;
+let capacitySecondsLeft = 20;
+let currentHealthFolder = '';
+
+async function loadSavedPages() {
+    const tbody = document.getElementById('savedPagesListBody');
+    if (!allSavedPages.length && tbody) {
+        tbody.innerHTML = '<tr><td colspan="8" class="text-center py-4 text-muted"><i class="fa-solid fa-spinner fa-spin ms-2"></i> در حال بارگذاری اطلاعات صفحات ذخیره‌شده...</td></tr>';
+    }
+    try {
+        const res = await apiCall('/saved-pages', 'GET');
+        if (res && res.status === 'ok') {
+            allSavedPages = res.saved_pages || [];
+            filteredSavedPages = [...allSavedPages];
+
+            // Update stats
+            const statTot = document.getElementById('savedStatTotal');
+            const statRes = document.getElementById('savedStatResumable');
+            const statWait = document.getElementById('savedStatWaiting');
+            const statRep = document.getElementById('savedStatNeedsRepair');
+            if (statTot) statTot.textContent = (res.total_saved || 0).toLocaleString('fa-IR');
+            if (statRes) statRes.textContent = (res.resumable_count || 0).toLocaleString('fa-IR');
+            if (statWait) statWait.textContent = (res.waiting_capacity_count || 0).toLocaleString('fa-IR');
+            if (statRep) statRep.textContent = (res.needs_repair_count || 0).toLocaleString('fa-IR');
+
+            filterSavedPages();
+        }
+    } catch (err) {
+        console.error('loadSavedPages error:', err);
+        if (tbody) {
+            tbody.innerHTML = `<tr><td colspan="8" class="text-center py-4 text-danger"><i class="fa-solid fa-triangle-exclamation ms-2"></i> خطا در دریافت اطلاعات صفحات ذخیره‌شده: ${escapeHtml(err.message || String(err))}</td></tr>`;
+        }
+    }
+}
+
+function filterSavedPages() {
+    const q = (document.getElementById('savedPagesSearch')?.value || '').trim().toLowerCase();
+    const filter = document.getElementById('savedPagesFilter')?.value || 'all';
+
+    filteredSavedPages = allSavedPages.filter(p => {
+        // Text search
+        const nameMatch = (p.full_name || '').toLowerCase().includes(q);
+        const nidMatch = (p.nid || '').toLowerCase().includes(q);
+        const folderMatch = (p.folder || '').toLowerCase().includes(q);
+        const textOk = !q || nameMatch || nidMatch || folderMatch;
+
+        if (!textOk) return false;
+
+        if (filter === 'all') return true;
+        if (filter === 'resumable') return p.can_resume && p.state !== 'CAPACITY_FULL';
+        if (filter === 'capacity') return p.state === 'CAPACITY_FULL';
+        if (filter === 'confirmed') return p.state === 'REGISTRATION_CONFIRMED' || !!p.tracking_code;
+        if (filter === 'repair') return p.state === 'NEEDS_REPAIR' || !p.manifest_valid;
+        return true;
+    });
+
+    const badge = document.getElementById('savedPagesCountBadge');
+    if (badge) badge.textContent = `${filteredSavedPages.length.toLocaleString('fa-IR')} مورد`;
+
+    renderSavedPagesTable(filteredSavedPages);
+}
+
+function renderSavedPagesTable(pages) {
+    const tbody = document.getElementById('savedPagesListBody');
+    if (!tbody) return;
+
+    if (!pages || !pages.length) {
+        tbody.innerHTML = '<tr><td colspan="8" class="text-center py-4 text-muted"><i class="fa-regular fa-folder-open fa-2x d-block mb-2 text-secondary"></i> موردی برای نمایش یافت نشد.</td></tr>';
+        return;
+    }
+
+    tbody.innerHTML = pages.map(p => {
+        const maskedNid = formatNid(p.nid);
+        const bankName = (typeof p.selected_bank === 'object' && p.selected_bank ? (p.selected_bank.bank_name || p.selected_bank.text) : p.selected_bank) || 'تعیین نشده';
+        const modeBadge = p.selected_mode === 'online' ? '<span class="badge badge-purple me-1">غیرحضوری</span>' : (p.selected_mode === 'in_person' ? '<span class="badge bg-secondary me-1">حضوری</span>' : '');
+        const reserveBadge = p.is_reserve ? '<span class="badge badge-peach me-1">رزرو</span>' : '';
+        const dateStr = p.last_updated ? new Date(p.last_updated * 1000).toLocaleDateString('fa-IR', { hour: '2-digit', minute: '2-digit' }) : '-';
+        const errText = p.error_message ? `<span class="text-danger small d-block text-truncate" style="max-width:200px" title="${escapeHtml(p.error_message)}"><i class="fa-solid fa-triangle-exclamation ms-1"></i>${escapeHtml(p.error_message)}</span>` : '<span class="text-muted small">عادی</span>';
+
+        const viewBtn = p.latest_html ? `<button class="btn btn-sm btn-outline-primary me-1" title="مشاهده اسنپ‌شات" onclick="viewSavedPage('${escapeHtml(p.folder)}', '${escapeHtml(p.latest_html || '')}', '${escapeHtml(p.latest_png || '')}')"><i class="fa-solid fa-eye"></i></button>` : '';
+        const healthBtn = `<button class="btn btn-sm btn-outline-info me-1" title="بررسی سلامت" onclick="healthCheckSavedPage('${escapeHtml(p.folder)}')"><i class="fa-solid fa-heart-pulse"></i></button>`;
+        const repairBtn = `<button class="btn btn-sm btn-outline-warning me-1" title="ترمیم مانیفست" onclick="repairSavedPageSingle('${escapeHtml(p.folder)}')"><i class="fa-solid fa-screwdriver-wrench"></i></button>`;
+        const resumeBtn = p.can_resume && p.nid ? `<button class="btn btn-sm btn-success" title="ادامه عملیات بات" onclick="resumeSavedPage('${escapeHtml(p.nid)}')"><i class="fa-solid fa-play"></i></button>` : `<button class="btn btn-sm btn-light text-muted" disabled title="غیرقابل ادامه"><i class="fa-solid fa-play"></i></button>`;
+
+        return `<tr>
+            <td>
+                <div class="fw-bold">${escapeHtml(p.full_name || p.folder)}</div>
+                <small class="text-muted">${escapeHtml(p.folder)}</small>
+            </td>
+            <td><code class="text-primary">${escapeHtml(maskedNid)}</code></td>
+            <td><span class="small">${escapeHtml(p.province || '-')} / ${escapeHtml(p.city || '-')}</span></td>
+            <td>
+                <span class="badge bg-light text-dark">${p.snapshot_count} فایل</span>
+                <small class="d-block text-muted" style="font-size:11px">${dateStr}</small>
+            </td>
+            <td>
+                <div>${modeBadge}${reserveBadge}<strong>${escapeHtml(bankName)}</strong></div>
+            </td>
+            <td>
+                <span class="badge ${p.badge_class || 'bg-secondary'}" style="${p.badge_color ? 'color:' + p.badge_color : ''}">${escapeHtml(p.status_fa || p.state)}</span>
+            </td>
+            <td>${errText}</td>
+            <td class="text-nowrap">
+                ${viewBtn}
+                ${healthBtn}
+                ${repairBtn}
+                ${resumeBtn}
+            </td>
+        </tr>`;
+    }).join('');
+}
+
+async function viewSavedPage(folder, htmlFile, pngFile) {
+    const modalEl = document.getElementById('savedPageModal');
+    if (!modalEl) return;
+
+    const applicantEl = document.getElementById('spModalApplicant');
+    const badgeEl = document.getElementById('spModalBadge');
+    const subEl = document.getElementById('spModalSub');
+    const iframe = document.getElementById('spHtmlFrame');
+    const img = document.getElementById('spPngImg');
+    const noPng = document.getElementById('spNoPng');
+    const directLink = document.getElementById('spDirectLink');
+
+    const pageObj = allSavedPages.find(p => p.folder === folder) || {};
+    if (applicantEl) applicantEl.textContent = pageObj.full_name || folder;
+    if (badgeEl) {
+        badgeEl.className = `badge ms-2 ${pageObj.badge_class || 'bg-secondary'}`;
+        badgeEl.textContent = pageObj.status_fa || pageObj.state || 'نامشخص';
+    }
+    if (subEl) subEl.textContent = `پوشه: ${folder} | کدملی: ${formatNid(pageObj.nid)} | آخرین اسنپ‌شات: ${htmlFile || 'ندارد'}`;
+
+    if (iframe) {
+        if (htmlFile) {
+            iframe.src = `/saved-pages/${encodeURIComponent(folder)}/snapshot/${encodeURIComponent(htmlFile)}`;
+        } else {
+            iframe.src = 'about:blank';
+        }
+    }
+
+    if (directLink && htmlFile) {
+        directLink.href = `/saved-pages/${encodeURIComponent(folder)}/snapshot/${encodeURIComponent(htmlFile)}`;
+        directLink.style.display = 'inline-flex';
+    } else if (directLink) {
+        directLink.style.display = 'none';
+    }
+
+    if (img && noPng) {
+        if (pngFile) {
+            img.src = `/saved-pages/${encodeURIComponent(folder)}/snapshot/${encodeURIComponent(pngFile)}`;
+            img.style.display = 'inline-block';
+            noPng.style.display = 'none';
+        } else {
+            img.style.display = 'none';
+            noPng.style.display = 'block';
+        }
+    }
+
+    // Trigger analysis tab fetch
+    fetchSavedPageAnalysis(folder);
+
+    const modal = bootstrap.Modal.getOrCreateInstance(modalEl);
+    modal.show();
+}
+
+async function fetchSavedPageAnalysis(folder) {
+    const loading = document.getElementById('spAnalysisLoading');
+    const content = document.getElementById('spAnalysisContent');
+    if (loading) loading.style.display = 'block';
+    if (content) content.style.display = 'none';
+
+    try {
+        const res = await apiCall(`/saved-pages/${encodeURIComponent(folder)}/analysis`, 'GET');
+        if (res && res.status === 'ok') {
+            const an = res.analysis || {};
+            const anApp = document.getElementById('spAnApplicant');
+            const anLoc = document.getElementById('spAnLocation');
+            const anBank = document.getElementById('spAnBank');
+            const anMode = document.getElementById('spAnMode');
+            const alertBox = document.getElementById('spAnAlertBox');
+            const alertText = document.getElementById('spAnAlertText');
+            const banksTable = document.getElementById('spAnBanksTable');
+
+            if (anApp) anApp.textContent = `${an.applicant_name || '-'} (${formatNid(an.applicant_nid)})`;
+            if (anLoc) anLoc.textContent = `${an.province || '-'} / ${an.city || '-'}`;
+            if (anBank) anBank.textContent = an.selected_bank ? (an.selected_bank.bank_name || an.selected_bank.text) : 'انتخاب نشده';
+            if (anMode) anMode.textContent = an.selected_mode === 'online' ? 'غیرحضوری (آنلاین)' : (an.selected_mode === 'in_person' ? 'حضوری' : 'پیش‌فرض');
+
+            if (an.error_message && alertBox && alertText) {
+                alertBox.style.display = 'block';
+                alertText.textContent = an.error_message;
+            } else if (alertBox) {
+                alertBox.style.display = 'none';
+            }
+
+            if (banksTable) {
+                const banks = an.available_banks || [];
+                if (!banks.length) {
+                    banksTable.innerHTML = '<tr><td colspan="5" class="text-center text-muted py-2">هیچ گزینه‌ای در dropdown یافت نشد.</td></tr>';
+                } else {
+                    banksTable.innerHTML = banks.map(b => {
+                        const capBadge = b.is_reserve ? '<span class="badge badge-peach">رزرو / در انتظار ظرفیت</span>' : '<span class="badge badge-success">دارای ظرفیت ثبت‌نام</span>';
+                        const selMarker = b.is_selected ? '<span class="badge bg-primary ms-1">انتخاب‌شده</span>' : '';
+                        return `<tr>
+                            <td><code>${escapeHtml(b.value)}</code></td>
+                            <td><strong>${escapeHtml(b.bank_name)}</strong> ${selMarker}</td>
+                            <td>${capBadge}</td>
+                            <td>${b.queue_count !== null && b.queue_count !== undefined ? b.queue_count.toLocaleString('fa-IR') + ' نفر' : '-'}</td>
+                            <td><small class="text-muted">${b.is_reserve ? 'رزرو' : 'عادی'}</small></td>
+                        </tr>`;
+                    }).join('');
+                }
+            }
+
+            if (loading) loading.style.display = 'none';
+            if (content) content.style.display = 'block';
+        }
+    } catch (e) {
+        if (loading) loading.innerHTML = `<span class="text-danger">خطا در بارگذاری تحلیل: ${escapeHtml(e.message || String(e))}</span>`;
+    }
+}
+
+async function healthCheckSavedPage(folder) {
+    currentHealthFolder = folder;
+    const modalEl = document.getElementById('healthCheckModal');
+    if (!modalEl) return;
+
+    const loading = document.getElementById('hcLoading');
+    const content = document.getElementById('hcContent');
+    const alertBox = document.getElementById('hcStatusAlert');
+    const manifestEl = document.getElementById('hcManifestStatus');
+    const filesEl = document.getElementById('hcTotalFiles');
+    const snapsEl = document.getElementById('hcSnapshotsRecorded');
+    const cpEl = document.getElementById('hcDbCheckpoint');
+    const issuesBox = document.getElementById('hcIssuesBox');
+    const issuesList = document.getElementById('hcIssuesList');
+
+    if (loading) loading.style.display = 'block';
+    if (content) content.style.display = 'none';
+
+    const modal = bootstrap.Modal.getOrCreateInstance(modalEl);
+    modal.show();
+
+    try {
+        const res = await apiCall(`/saved-pages/${encodeURIComponent(folder)}/health-check`, 'POST');
+        if (res && res.status === 'ok') {
+            if (alertBox) {
+                alertBox.className = `alert mb-3 ${res.healthy ? 'alert-success' : 'alert-warning'}`;
+                alertBox.innerHTML = res.healthy ?
+                    '<i class="fa-solid fa-circle-check ms-2"></i> ساختار این پرونده، مانیفست و اسنپ‌شات‌ها کاملاً سالم و همگام هستند.' :
+                    '<i class="fa-solid fa-triangle-exclamation ms-2"></i> برخی ناهماهنگی‌ها در این پرونده شناسایی شد که با دکمه ترمیم قابل اصلاح است.';
+            }
+
+            if (manifestEl) manifestEl.textContent = res.manifest_status === 'ok' ? 'سالم و معتبر' : (res.manifest_status === 'missing' ? 'ناموجود' : 'خراب');
+            if (filesEl) filesEl.textContent = (res.total_files || 0).toLocaleString('fa-IR');
+            if (snapsEl) snapsEl.textContent = (res.snapshots_recorded || 0).toLocaleString('fa-IR');
+            if (cpEl) cpEl.textContent = res.has_db_checkpoint ? 'موجود و فعال' : 'ناموجود';
+
+            const issues = res.issues || [];
+            if (issues.length && issuesBox && issuesList) {
+                issuesBox.style.display = 'block';
+                issuesList.innerHTML = issues.map(iss => `<li>${escapeHtml(iss)}</li>`).join('');
+            } else if (issuesBox) {
+                issuesBox.style.display = 'none';
+            }
+
+            if (loading) loading.style.display = 'none';
+            if (content) content.style.display = 'block';
+        }
+    } catch (e) {
+        if (loading) loading.innerHTML = `<span class="text-danger">خطا در بررسی سلامت: ${escapeHtml(e.message || String(e))}</span>`;
+    }
+}
+
+async function repairCurrentHealthFolder() {
+    if (!currentHealthFolder) return;
+    await repairSavedPageSingle(currentHealthFolder);
+    healthCheckSavedPage(currentHealthFolder);
+}
+
+async function repairSavedPageSingle(folder) {
+    try {
+        const res = await apiCall(`/saved-pages/${encodeURIComponent(folder)}/repair`, 'POST');
+        showToast('ترمیم مانیفست انجام شد', 'success');
+        await loadSavedPages();
+    } catch (e) {
+        showToast(`خطا در ترمیم: ${e.message || String(e)}`, 'error');
+    }
+}
+
+async function repairAllSavedPages() {
+    try {
+        const res = await apiCall('/saved-pages/repair-all', 'POST');
+        const msg = `ترمیم همگانی انجام شد. پوشه‌ها: ${res.folders || 0}، مانیفست‌های ترمیم‌شده: ${res.manifests_repaired || 0}، فایل‌های بازیابی‌شده: ${res.orphan_files_added || 0}`;
+        showToast(msg, 'success');
+        await loadSavedPages();
+    } catch (e) {
+        showToast(`خطا در ترمیم همگانی: ${e.message || String(e)}`, 'error');
+    }
+}
+
+async function resumeSavedPage(nid) {
+    if (!nid) return;
+    const ok = confirm(`آیا مایل به ادامه عملیات ربات برای متقاضی با کدملی ${formatNid(nid)} از آخرین چک‌پوینت ذخیره‌شده هستید؟`);
+    if (!ok) return;
+
+    try {
+        const res = await apiCall(`/saved-pages/resume/${encodeURIComponent(nid)}`, 'POST');
+        showToast(res.message || 'ربات با موفقیت ادامه یافت.', 'success');
+        setUserStatus(nid, 'Running');
+        switchView('dashboard');
+    } catch (e) {
+        showToast(e.message || 'خطا در ادامه عملیات', 'error');
+    }
+}
+
+function startCapacityCountdown() {
+    stopCapacityCountdown();
+    capacitySecondsLeft = 20;
+    updateCapacityCountdownDisplay();
+    capacityCountdownTimer = setInterval(() => {
+        capacitySecondsLeft--;
+        if (capacitySecondsLeft <= 0) {
+            capacitySecondsLeft = 20;
+            if (currentViewId === 'saved-pages') {
+                loadSavedPages();
+            }
+        }
+        updateCapacityCountdownDisplay();
+    }, 1000);
+}
+
+function stopCapacityCountdown() {
+    if (capacityCountdownTimer) {
+        clearInterval(capacityCountdownTimer);
+        capacityCountdownTimer = null;
+    }
+}
+
+function updateCapacityCountdownDisplay() {
+    const el = document.getElementById('capacityCountdownVal');
+    if (el) el.textContent = capacitySecondsLeft;
 }
 

@@ -76,6 +76,7 @@
       <div onclick="switchView('add',this)"><button class="nav-link"><i class="fa-solid fa-user-plus"></i><span>ثبت متقاضی</span></button></div>
       <div onclick="switchView('list',this)"><button class="nav-link"><i class="fa-solid fa-address-card"></i><span>ثبت‌نام اولیه</span></button></div>
       <div onclick="switchView('bank-select',this)"><button class="nav-link"><i class="fa-solid fa-building-columns"></i><span>انتخاب بانک</span></button></div>
+      <div onclick="switchView('saved-pages',this)"><button class="nav-link"><i class="fa-solid fa-file-shield"></i><span>صفحات ذخیره‌شده</span></button></div>
       <div onclick="switchView('status',this)"><button class="nav-link"><i class="fa-solid fa-magnifying-glass-chart"></i><span>مشاهده وضعیت</span></button></div>
       <div onclick="switchView('recover',this)"><button class="nav-link"><i class="fa-solid fa-rotate-left"></i><span>بازیابی درخواست</span></button></div>
       <div onclick="switchView('delete-req',this)"><button class="fa-trash-nav nav-link"><i class="fa-solid fa-trash-can"></i><span>حذف درخواست</span></button></div>
@@ -650,6 +651,114 @@
       </article>
     </section>
 
+    <!-- ════════════════ VIEW: SAVED PAGES (صفحات ذخیره‌شده و بازیابی) ════════════════ -->
+    <section id="view-saved-pages" class="view-section">
+      <div class="page-heading">
+        <div>
+          <span class="section-kicker">مدیریت اسنپ‌شات‌ها و چک‌پوینت‌ها</span>
+          <h2>صفحات ذخیره‌شده و کنترل ظرفیت</h2>
+          <p>مشاهده اسنپ‌شات‌های HTML و PNG صفحه سوم، پایش دوره‌ای ظرفیت، بررسی سلامت فایل‌ها و ادامه هوشمند عملیات.</p>
+        </div>
+        <div class="d-flex gap-2 align-items-center flex-wrap">
+          <div class="capacity-timer-pill" id="savedPagesCapacityTimer">
+            <i class="fa-solid fa-clock-rotate-left"></i>
+            <span>بررسی دوره‌ای ظرفیت: <strong id="capacityCountdownVal">۲۰</strong>s</span>
+          </div>
+          <button class="btn btn-outline-primary action-pill" onclick="repairAllSavedPages()">
+            <i class="fa-solid fa-screwdriver-wrench"></i>
+            <span>ترمیم همگانی مانیفست‌ها</span>
+          </button>
+          <button class="btn btn-light action-pill" onclick="loadSavedPages()">
+            <i class="fa-solid fa-arrows-rotate"></i>
+            <span>به‌روزرسانی</span>
+          </button>
+        </div>
+      </div>
+
+      <!-- 4 Stat Cards for Saved Pages -->
+      <div class="stats-grid mb-4">
+        <article class="stat-card c-total">
+          <span class="stat-icon indigo"><i class="fa-solid fa-folder-open"></i></span>
+          <div>
+            <small>کل پرونده‌های ذخیره‌شده</small>
+            <strong id="savedStatTotal">۰</strong>
+          </div>
+        </article>
+        <article class="stat-card c-success">
+          <span class="stat-icon green"><i class="fa-solid fa-play"></i></span>
+          <div>
+            <small>آماده ادامه و رزرو</small>
+            <strong id="savedStatResumable">۰</strong>
+          </div>
+        </article>
+        <article class="stat-card c-bank">
+          <span class="stat-icon amber"><i class="fa-solid fa-hourglass-half"></i></span>
+          <div>
+            <small>در انتظار ظرفیت بانک</small>
+            <strong id="savedStatWaiting">۰</strong>
+          </div>
+        </article>
+        <article class="stat-card c-otp">
+          <span class="stat-icon pink"><i class="fa-solid fa-triangle-exclamation"></i></span>
+          <div>
+            <small>نیازمند ترمیم یا بررسی</small>
+            <strong id="savedStatNeedsRepair">۰</strong>
+          </div>
+        </article>
+      </div>
+
+      <!-- Filter and Search Bar -->
+      <article class="panel mb-4">
+        <div class="filter-row">
+          <div class="search-box">
+            <i class="fa-solid fa-magnifying-glass"></i>
+            <input type="text" id="savedPagesSearch" placeholder="جستجو بر اساس نام متقاضی یا کدملی..." oninput="filterSavedPages()" class="form-control">
+          </div>
+          <div class="filter-actions">
+            <select id="savedPagesFilter" class="form-select" onchange="filterSavedPages()">
+              <option value="all">همه وضعیت‌ها</option>
+              <option value="resumable">قابل ادامه (آماده ثبت / رزرو)</option>
+              <option value="capacity">تکمیل ظرفیت (پایش دوره‌ای)</option>
+              <option value="confirmed">ثبت قطعی (دارای کد رهگیری)</option>
+              <option value="repair">نیازمند ترمیم مانیفست</option>
+            </select>
+          </div>
+        </div>
+      </article>
+
+      <!-- Saved Pages Table Panel -->
+      <article class="panel">
+        <div class="panel-title">
+          <div>
+            <h3><i class="fa-solid fa-layer-group ms-2 text-primary"></i> فهرست اسنپ‌شات‌های ثبت‌شده متقاضیان</h3>
+            <p>اطلاعات حساس (کدملی) بر اساس تنظیمات پنهان‌سازی نمایش داده می‌شوند.</p>
+          </div>
+          <span id="savedPagesCountBadge" class="badge bg-light text-dark">۰ مورد</span>
+        </div>
+        <div class="table-responsive mt-3">
+          <table class="table modern-table align-middle">
+            <thead>
+              <tr>
+                <th>نام متقاضی</th>
+                <th>کد ملی</th>
+                <th>استان / شهر</th>
+                <th>اسنپ‌شات‌ها</th>
+                <th>بانک انتخابی / روش</th>
+                <th>وضعیت صفحه سوم</th>
+                <th>پیام / خطای سامانه</th>
+                <th>عملیات</th>
+              </tr>
+            </thead>
+            <tbody id="savedPagesListBody">
+              <tr>
+                <td colspan="8" class="text-center py-4 text-muted">در حال بارگذاری اطلاعات صفحات ذخیره‌شده...</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </article>
+    </section>
+
     <!-- ════════════════ VIEW: STATUS (مشاهده وضعیت) ════════════════ -->
     <section id="view-status" class="view-section">
       <div class="page-heading">
@@ -1007,6 +1116,172 @@
       </details>
     </section>
   </main>
+
+  <!-- ════════════════ MODAL: SNAPSHOT PREVIEW ════════════════ -->
+  <div class="modal fade" id="savedPageModal" tabindex="-1" aria-labelledby="savedPageModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-xl modal-dialog-centered modal-dialog-scrollable">
+      <div class="modal-content">
+        <div class="modal-header">
+          <div>
+            <h5 class="modal-title" id="savedPageModalLabel">
+              <i class="fa-solid fa-file-invoice text-primary ms-2"></i>
+              <span id="spModalApplicant">نام متقاضی</span>
+              <span id="spModalBadge" class="badge ms-2">وضعیت</span>
+            </h5>
+            <small class="text-muted" id="spModalSub">کدملی: --- | فایل: ---</small>
+          </div>
+          <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="بستن"></button>
+        </div>
+        <div class="modal-body p-0">
+          <!-- Modal Tabs -->
+          <ul class="nav nav-tabs px-3 pt-2 bg-light border-bottom" id="spModalTabs" role="tablist">
+            <li class="nav-item" role="presentation">
+              <button class="nav-link active" id="spTabHtml-tab" data-bs-toggle="tab" data-bs-target="#spTabHtml" type="button" role="tab">
+                <i class="fa-solid fa-code ms-1 text-primary"></i> پیش‌نمایش HTML
+              </button>
+            </li>
+            <li class="nav-item" role="presentation">
+              <button class="nav-link" id="spTabPng-tab" data-bs-toggle="tab" data-bs-target="#spTabPng" type="button" role="tab">
+                <i class="fa-solid fa-image ms-1 text-info"></i> تصویر اسکرین‌شات
+              </button>
+            </li>
+            <li class="nav-item" role="presentation">
+              <button class="nav-link" id="spTabAnalysis-tab" data-bs-toggle="tab" data-bs-target="#spTabAnalysis" type="button" role="tab">
+                <i class="fa-solid fa-chart-pie ms-1 text-success"></i> تحلیل بانک‌ها و ظرفیت
+              </button>
+            </li>
+          </ul>
+
+          <div class="tab-content" id="spModalTabContent">
+            <!-- Tab 1: HTML Iframe -->
+            <div class="tab-pane fade show active p-2" id="spTabHtml" role="tabpanel">
+              <iframe id="spHtmlFrame" src="about:blank" style="width:100%;height:580px;border:none;border-radius:8px;background:#ffffff;"></iframe>
+            </div>
+            <!-- Tab 2: PNG Screenshot -->
+            <div class="tab-pane fade p-3 text-center" id="spTabPng" role="tabpanel">
+              <div id="spPngContainer" class="screenshot-container">
+                <img id="spPngImg" src="" alt="اسکرین‌شات صفحه سوم" style="max-width:100%;border-radius:8px;box-shadow:0 4px 16px rgba(0,0,0,0.1);">
+                <div id="spNoPng" class="text-muted py-5" style="display:none;">
+                  <i class="fa-regular fa-image fa-3x mb-2 text-secondary"></i>
+                  <p>تصویر اسکرین‌شات برای این اسنپ‌شات یافت نشد.</p>
+                </div>
+              </div>
+            </div>
+            <!-- Tab 3: Analysis & Banks List -->
+            <div class="tab-pane fade p-4" id="spTabAnalysis" role="tabpanel">
+              <div id="spAnalysisLoading" class="text-center py-4 text-muted">در حال تحلیل ساختار صفحه...</div>
+              <div id="spAnalysisContent" style="display:none;">
+                <div class="row g-3 mb-3">
+                  <div class="col-md-3">
+                    <div class="p-3 bg-light rounded-3 text-center">
+                      <small class="text-muted d-block">متقاضی</small>
+                      <strong id="spAnApplicant" class="text-primary">-</strong>
+                    </div>
+                  </div>
+                  <div class="col-md-3">
+                    <div class="p-3 bg-light rounded-3 text-center">
+                      <small class="text-muted d-block">استان / شهر</small>
+                      <strong id="spAnLocation">-</strong>
+                    </div>
+                  </div>
+                  <div class="col-md-3">
+                    <div class="p-3 bg-light rounded-3 text-center">
+                      <small class="text-muted d-block">بانک انتخاب‌شده</small>
+                      <strong id="spAnBank" class="text-purple">-</strong>
+                    </div>
+                  </div>
+                  <div class="col-md-3">
+                    <div class="p-3 bg-light rounded-3 text-center">
+                      <small class="text-muted d-block">روش پذیرش</small>
+                      <strong id="spAnMode">-</strong>
+                    </div>
+                  </div>
+                </div>
+
+                <div id="spAnAlertBox" class="alert alert-warning mb-3" style="display:none;">
+                  <i class="fa-solid fa-circle-exclamation ms-2"></i>
+                  <span id="spAnAlertText"></span>
+                </div>
+
+                <h6 class="fw-bold mb-2"><i class="fa-solid fa-list-check ms-1 text-primary"></i> فهرست بانک‌های استخراج‌شده در این اسنپ‌شات:</h6>
+                <div class="table-responsive">
+                  <table class="table table-sm table-bordered">
+                    <thead class="table-light">
+                      <tr>
+                        <th>کد</th>
+                        <th>نام بانک</th>
+                        <th>وضعیت ظرفیت</th>
+                        <th>متقاضیان در صف</th>
+                        <th>نوع</th>
+                      </tr>
+                    </thead>
+                    <tbody id="spAnBanksTable"></tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <a id="spDirectLink" href="#" target="_blank" class="btn btn-outline-secondary action-pill">
+            <i class="fa-solid fa-arrow-up-right-from-square"></i>
+            <span>باز کردن در پنجره جدید</span>
+          </a>
+          <button type="button" class="btn btn-primary action-pill" data-bs-dismiss="modal">بستن</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ════════════════ MODAL: HEALTH CHECK ════════════════ -->
+  <div class="modal fade" id="healthCheckModal" tabindex="-1" aria-labelledby="healthCheckModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h5 class="modal-title" id="healthCheckModalLabel">
+            <i class="fa-solid fa-heart-pulse text-danger ms-2"></i>
+            <span>گزارش سلامت پرونده ذخیره‌شده</span>
+          </h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="بستن"></button>
+        </div>
+        <div class="modal-body">
+          <div id="hcLoading" class="text-center py-4 text-muted">در حال اجرای بررسی سلامت...</div>
+          <div id="hcContent" style="display:none;">
+            <div id="hcStatusAlert" class="alert mb-3"></div>
+            <ul class="list-group list-group-flush mb-3">
+              <li class="list-group-item d-flex justify-content-between align-items-center">
+                <span>وضعیت فایل مانیفست:</span>
+                <strong id="hcManifestStatus">-</strong>
+              </li>
+              <li class="list-group-item d-flex justify-content-between align-items-center">
+                <span>کل فایل‌های پوشه:</span>
+                <strong id="hcTotalFiles">۰</strong>
+              </li>
+              <li class="list-group-item d-flex justify-content-between align-items-center">
+                <span>اسنپ‌شات‌های ثبت‌شده:</span>
+                <strong id="hcSnapshotsRecorded">۰</strong>
+              </li>
+              <li class="list-group-item d-flex justify-content-between align-items-center">
+                <span>چک‌پوینت در دیتابیس:</span>
+                <strong id="hcDbCheckpoint">-</strong>
+              </li>
+            </ul>
+            <div id="hcIssuesBox" class="mt-2" style="display:none;">
+              <h6 class="text-danger small fw-bold">موارد شناسایی‌شده:</h6>
+              <ul id="hcIssuesList" class="small text-danger ps-3 mb-0"></ul>
+            </div>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button id="hcRepairBtn" type="button" class="btn btn-warning action-pill" onclick="repairCurrentHealthFolder()">
+            <i class="fa-solid fa-screwdriver-wrench"></i>
+            <span>ترمیم خودکار این پوشه</span>
+          </button>
+          <button type="button" class="btn btn-secondary action-pill" data-bs-dismiss="modal">بستن</button>
+        </div>
+      </div>
+    </div>
+  </div>
 
   <div id="toastContainer" class="toast-container position-fixed bottom-0 start-0 p-3"></div>
 

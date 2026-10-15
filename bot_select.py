@@ -648,12 +648,13 @@ class BankSelectionBot(BotCore):
                         elif result == "capacity_full":
                             set_state("BANK_CAPACITY_FULL")
                             capacity_recheck_count += 1
-                            base_recheck = max(5.0, float(self.settings.get("bank_capacity_recheck_seconds", 20.0)))
+                            base_recheck = max(5.0, float(self.settings.get("capacity_check_interval_seconds", self.settings.get("bank_capacity_recheck_seconds", 20.0))))
                             # Apply gentle backoff if repeated capacity full (capped at 120s)
                             backoff_factor = min(3.0, 1.0 + (capacity_recheck_count - 1) * 0.25)
                             wait_sec = min(120.0, round(base_recheck * backoff_factor, 1))
 
-                            if not bool(self.settings.get("bank_monitor_enabled", True)):
+                            is_monitor_on = bool(self.settings.get("capacity_check_enabled", self.settings.get("bank_monitor_enabled", True)))
+                            if not is_monitor_on:
                                 self.log("⏸️ ظرفیت بانک تکمیل است و پایش خودکار غیرفعال است؛ منتظر اقدام کاربر.", "warning", page)
                                 self.suspend_watchdog(300)
                                 if sleep_with_stop(stop_event, 5.0, step=0.2):

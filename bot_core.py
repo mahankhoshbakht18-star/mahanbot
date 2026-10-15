@@ -1094,8 +1094,18 @@ class BotCore:
             return False
         if self._recovery_in_progress or getattr(self, "_dialog_handling", False):
             return False
+        # Check actual stage first to prevent stale OTP step on Step 3
+        try:
+            stage_probe = self.detect_actual_page_stage(page)
+            if stage_probe == "STEP_3_BANK_SELECT":
+                self.clear_otp_locks()
+                if self._current_step in {"OTP_MANUAL_REQUIRED", "STEP_2_OTP", "WAITING_SMS"}:
+                    self._current_step = "STEP_3_BANK_SELECT"
+        except Exception:
+            pass
+
         # Do not trigger watchdog while waiting for user manual input (CAPTCHA / OTP / Capacity decision)
-        if self._current_step in {"CAPTCHA_MANUAL_REQUIRED", "OTP_MANUAL_REQUIRED", "BANK_CAPACITY_FULL", "FINAL_SUBMIT_WAIT"}:
+        if self._current_step in {"CAPTCHA_MANUAL_REQUIRED", "OTP_MANUAL_REQUIRED", "BANK_CAPACITY_FULL", "FINAL_SUBMIT_WAIT", "RESERVE_PENDING"}:
             self._last_progress_time = now
             return False
         if now - self._last_progress_time < self._watchdog_timeout:
