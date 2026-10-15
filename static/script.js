@@ -91,6 +91,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
     pollApplicants();
     loadSubscriptionManager();
+    loadAppearanceSettings();
     updateDebugPanel();
     setInterval(updateEmbeddedBrowser, 900);
 
@@ -706,79 +707,52 @@ function renderDashboard(users) {
     tbody.innerHTML = '';
 
     let runningCount = 0, successCount = 0, codeCount = 0, runningNid = null;
-
+    let otpWaitingCount = 0, bankWaitingCount = 0;
     let activeUser = null;
 
-
-
     users.forEach(user => {
-
         let d = parseUserData(user.data);
-
         if(d.tracking_code) codeCount++;
-
-        if(user.status.toLowerCase().includes('success')) successCount++;
-
-
-
         const normalizedStatus = String(user.status || '').toLowerCase();
+        if(normalizedStatus.includes('success')) successCount++;
+        if(normalizedStatus.includes('otp') || normalizedStatus.includes('sms') || normalizedStatus.includes('پیامک') || normalizedStatus.includes('wait')) otpWaitingCount++;
+        if(normalizedStatus.includes('bank') || normalizedStatus.includes('بانک') || normalizedStatus.includes('select') || normalizedStatus.includes('انتخاب')) bankWaitingCount++;
+
         const isActive = ['running', 'registering', 'selecting', 'waiting sms', 'waiting otp']
             .some(s => normalizedStatus.includes(s)) || jobIdByNid.has(String(user.national_id));
 
         if (isActive) {
-
             runningCount++;
-
             if(user.status.includes('Wait')) runningNid = user.national_id;
-
             else if (!runningNid) runningNid = user.national_id;
 
             if (!activeUser || user.status.includes('Running')) {
-
                 activeUser = user;
-
             }
 
-
-
             const tr = document.createElement('tr');
-
             tr.dataset.nid = user.national_id;
-
             tr.innerHTML = `
-
-                <td><strong>${user.full_name}</strong><br><small>${user.national_id}</small></td>
-
+                <td><strong>${user.full_name}</strong><br><small class="font-monospace">${formatNid(user.national_id)}</small></td>
                 <td><span class="badge ${getStatusBadge(user.status)}">${translateStatus(user.status)}</span></td>
-
                 <td><button class="btn btn-sm btn-danger rounded-circle" onclick="stopBot('${user.national_id}')"><i class="fas fa-power-off"></i></button></td>
-
             `;
-
             tbody.appendChild(tr);
-
         }
-
     });
-
-
 
     if(runningCount===0) tbody.innerHTML = `<tr><td colspan="3" class="text-muted small py-3">${getMessage('labels.inactive', '')}</td></tr>`;
 
     window.currentActiveBotNid = runningNid || window.currentActiveBotNid || null;
-
     renderActiveApplicantCard(activeUser);
-
-
+    updateProcessStepper(activeUser);
 
     if(document.getElementById('stat-total')) document.getElementById('stat-total').innerText = users.length;
-
     if(document.getElementById('stat-active')) document.getElementById('stat-active').innerText = runningCount;
-
     if(document.getElementById('stat-success')) document.getElementById('stat-success').innerText = successCount;
-
     if(document.getElementById('stat-codes')) document.getElementById('stat-codes').innerText = codeCount;
-
+    if(document.getElementById('stat-otp')) document.getElementById('stat-otp').innerText = otpWaitingCount;
+    if(document.getElementById('stat-bank')) document.getElementById('stat-bank').innerText = bankWaitingCount;
 }
 
 
@@ -830,8 +804,7 @@ function renderActiveApplicantCard(user) {
 
 
     nameEl.textContent = user.full_name || '---';
-
-    metaEl.textContent = `کد ملی: ${user.national_id || '-'} | موبایل: ${mobile}`;
+    metaEl.textContent = `کد ملی: ${formatNid(user.national_id)} | موبایل: ${formatMobile(mobile)}`;
 
     statusEl.textContent = translateStatus(user.status);
 
@@ -1060,7 +1033,7 @@ function renderMainList(data) {
 
                 <td onclick="editUser(${idx})" style="cursor:pointer; color:var(--primary-color); font-weight:bold;">${user.full_name} <i class="fas fa-pen small ms-1 text-muted"></i></td>
 
-                <td class="font-monospace">${user.national_id}</td>
+                <td class="font-monospace">${formatNid(user.national_id)}</td>
 
                 <td class="font-monospace text-success">${code}</td>
 
@@ -1121,7 +1094,7 @@ function renderSimpleList(data, elId, actionFn, txt, cls) {
 
     data.forEach(user => {
 
-        tbody.innerHTML += `<tr><td>${user.full_name}</td><td class="font-monospace">${user.national_id}</td><td><button class="btn btn-sm ${cls}" onclick="${actionFn}('${user.national_id}')">${txt}</button></td></tr>`;
+        tbody.innerHTML += `<tr><td>${user.full_name}</td><td class="font-monospace">${formatNid(user.national_id)}</td><td><button class="btn btn-sm ${cls}" onclick="${actionFn}('${user.national_id}')">${txt}</button></td></tr>`;
 
     });
 
@@ -2356,13 +2329,12 @@ function handleSocketEvent(payload) {
     }
     scheduleRenderLogs();
     if (payload.type === 'favorite_found') {
-
         showFavoriteToast(payload);
-
         playAlertSound();
-
     }
-
+    if (payload.event === 'FINAL_SUBMIT_CONFIRMED' || payload.type === 'FINAL_SUBMIT_CONFIRMED' || (payload.type === 'applicant_updated' && String(payload.status).toLowerCase().includes('success'))) {
+        triggerCelebrationConfetti();
+    }
 }
 
 
@@ -2670,6 +2642,287 @@ function getLevelColor(level) {
     };
 
     return palette[level.toLowerCase()] || '#cfd8dc';
+}
 
+/* ═══════════════════════════════════════════════════════════════════════════
+   MAHANBOT v1.8.0 Modern UI/UX Interactive Enhancements
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+window.maskSensitiveData = true;
+
+function toggleSensitiveMasking() {
+    window.maskSensitiveData = !window.maskSensitiveData;
+    const icon = document.getElementById('maskToggleIcon');
+    const text = document.getElementById('maskToggleText');
+    if (icon && text) {
+        if (window.maskSensitiveData) {
+            icon.className = 'fa-solid fa-eye-slash';
+            text.textContent = 'پنهان‌سازی اطلاعات';
+        } else {
+            icon.className = 'fa-solid fa-eye';
+            text.textContent = 'نمایش اطلاعات';
+        }
+    }
+    refreshCurrentView();
+    if (currentViewId === 'dashboard') {
+        renderDashboard(allUsersData);
+    }
+}
+
+function formatNid(nid) {
+    if (!nid) return '-';
+    const s = String(nid).trim();
+    if (!window.maskSensitiveData || s.length < 6) return s;
+    return `${s.slice(0, 2)}******${s.slice(-2)}`;
+}
+
+function formatMobile(m) {
+    if (!m) return '-';
+    const s = String(m).trim();
+    if (!window.maskSensitiveData || s.length < 8) return s;
+    return `${s.slice(0, 4)}***${s.slice(-4)}`;
+}
+
+function updateProcessStepper(activeUser) {
+    const badge = document.getElementById('stepperApplicantBadge');
+    const step1 = document.getElementById('stepper-step-1');
+    const step2 = document.getElementById('stepper-step-2');
+    const step3 = document.getElementById('stepper-step-3');
+    const step4 = document.getElementById('stepper-step-4');
+    const step5 = document.getElementById('stepper-step-5');
+    const line1 = document.getElementById('stepper-line-1');
+    const line2 = document.getElementById('stepper-line-2');
+    const line3 = document.getElementById('stepper-line-3');
+    const line4 = document.getElementById('stepper-line-4');
+
+    if (!step1 || !step2 || !step3 || !step4 || !step5) return;
+
+    const allSteps = [step1, step2, step3, step4, step5];
+    const allLines = [line1, line2, line3, line4];
+
+    allSteps.forEach(s => s.classList.remove('active', 'completed'));
+    allLines.forEach(l => l && l.classList.remove('completed'));
+
+    if (!activeUser) {
+        if (badge) badge.innerHTML = '<i class="fa-solid fa-circle-dot ms-1 text-muted"></i> در انتظار پرونده فعال';
+        return;
+    }
+
+    const name = activeUser.full_name || 'کاربر فعال';
+    const status = String(activeUser.status || '').toLowerCase();
+    if (badge) {
+        badge.innerHTML = `<i class="fa-solid fa-bolt ms-1 text-primary"></i> ${name} (${translateStatus(activeUser.status)})`;
+    }
+
+    if (status.includes('success') || status.includes('کد رهگیری') || (activeUser.data && parseUserData(activeUser.data).tracking_code)) {
+        allSteps.forEach(s => s.classList.add('completed'));
+        allLines.forEach(l => l && l.classList.add('completed'));
+    } else if (status.includes('bank') || status.includes('بانک') || status.includes('select') || status.includes('انتخاب') || status.includes('capacity')) {
+        step1.classList.add('completed');
+        step2.classList.add('completed');
+        step3.classList.add('completed');
+        step4.classList.add('active');
+        if (line1) line1.classList.add('completed');
+        if (line2) line2.classList.add('completed');
+        if (line3) line3.classList.add('completed');
+    } else if (status.includes('otp') || status.includes('sms') || status.includes('پیامک') || status.includes('wait')) {
+        step1.classList.add('completed');
+        step2.classList.add('completed');
+        step3.classList.add('active');
+        if (line1) line1.classList.add('completed');
+        if (line2) line2.classList.add('completed');
+    } else if (status.includes('register') || status.includes('captcha') || status.includes('کپچا') || status.includes('هویت')) {
+        step1.classList.add('completed');
+        step2.classList.add('active');
+        if (line1) line1.classList.add('completed');
+    } else {
+        step1.classList.add('active');
+    }
+}
+
+function selectVisualLoanType(type) {
+    const mCard = document.getElementById('loanCardMarriage');
+    const cCard = document.getElementById('loanCardChild');
+    const sel = document.getElementById('inpLoanType');
+    if (mCard && cCard) {
+        if (type === 'marriage') {
+            mCard.classList.add('active');
+            cCard.classList.remove('active');
+        } else {
+            mCard.classList.remove('active');
+            cCard.classList.add('active');
+        }
+    }
+    if (sel && sel.value !== type) {
+        sel.value = type;
+        toggleLoanTypeFields();
+    }
+}
+
+function syncVisualLoanCard() {
+    const sel = document.getElementById('inpLoanType');
+    if (sel) selectVisualLoanType(sel.value);
+}
+
+function selectVisualBankMode(mode) {
+    const oCard = document.getElementById('bankModeCardOnline');
+    const pCard = document.getElementById('bankModeCardInPerson');
+    const sel = document.getElementById('inpBankMode');
+    if (oCard && pCard) {
+        if (mode === 'online') {
+            oCard.classList.add('active');
+            pCard.classList.remove('active');
+        } else {
+            oCard.classList.remove('active');
+            pCard.classList.add('active');
+        }
+    }
+    if (sel && sel.value !== mode) {
+        sel.value = mode;
+        toggleBranchFieldByMode();
+    }
+}
+
+function syncVisualBankMode() {
+    const sel = document.getElementById('inpBankMode');
+    if (sel) selectVisualBankMode(sel.value || 'online');
+}
+
+let confettiAnimationId = null;
+function triggerCelebrationConfetti() {
+    const canvas = document.getElementById('confettiCanvas');
+    if (!canvas) return;
+    const soundEnabled = document.getElementById('confettiSoundToggle')?.checked !== false;
+    if (soundEnabled) {
+        try {
+            const ctx = new (window.AudioContext || window.webkitAudioContext)();
+            const osc = ctx.createOscillator();
+            const gain = ctx.createGain();
+            osc.type = 'triangle';
+            osc.frequency.setValueAtTime(523.25, ctx.currentTime);
+            osc.frequency.exponentialRampToValueAtTime(659.25, ctx.currentTime + 0.15);
+            osc.frequency.exponentialRampToValueAtTime(783.99, ctx.currentTime + 0.3);
+            gain.gain.setValueAtTime(0.12, ctx.currentTime);
+            gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.6);
+            osc.connect(gain);
+            gain.connect(ctx.destination);
+            osc.start();
+            osc.stop(ctx.currentTime + 0.65);
+        } catch (e) {}
+    }
+
+    canvas.style.display = 'block';
+    canvas.width = window.innerWidth;
+    canvas.height = window.innerHeight;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+
+    const colors = ['#8B5CF6', '#F472B6', '#FFB38A', '#60A5FA', '#34D399', '#F59E0B', '#FDE047'];
+    const particles = [];
+    for (let i = 0; i < 110; i++) {
+        particles.push({
+            x: canvas.width * 0.5 + (Math.random() - 0.5) * 240,
+            y: canvas.height * 0.4 + (Math.random() - 0.5) * 120,
+            vx: (Math.random() - 0.5) * 14,
+            vy: Math.random() * -12 - 4,
+            size: Math.random() * 8 + 4,
+            color: colors[Math.floor(Math.random() * colors.length)],
+            rotation: Math.random() * 360,
+            vRot: (Math.random() - 0.5) * 10,
+            opacity: 1
+        });
+    }
+
+    let start = Date.now();
+    if (confettiAnimationId) cancelAnimationFrame(confettiAnimationId);
+
+    function renderConfetti() {
+        const elapsed = Date.now() - start;
+        if (elapsed > 4000) {
+            canvas.style.display = 'none';
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            return;
+        }
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        const fade = elapsed > 2800 ? (4000 - elapsed) / 1200 : 1;
+
+        particles.forEach(p => {
+            p.x += p.vx;
+            p.y += p.vy;
+            p.vy += 0.35;
+            p.rotation += p.vRot;
+            ctx.save();
+            ctx.translate(p.x, p.y);
+            ctx.rotate((p.rotation * Math.PI) / 180);
+            ctx.globalAlpha = Math.max(0, p.opacity * fade);
+            ctx.fillStyle = p.color;
+            ctx.fillRect(-p.size / 2, -p.size / 2, p.size, p.size * 0.7);
+            ctx.restore();
+        });
+
+        confettiAnimationId = requestAnimationFrame(renderConfetti);
+    }
+    confettiAnimationId = requestAnimationFrame(renderConfetti);
+}
+
+function applyThemePreset(preset) {
+    if (preset === 'default') {
+        delete document.documentElement.dataset.theme;
+    } else {
+        document.documentElement.dataset.theme = preset;
+    }
+    const sel = document.getElementById('themeColorSelect');
+    if (sel && sel.value !== preset) sel.value = preset;
+    try { localStorage.setItem('mahan_theme', preset); } catch (e) {}
+}
+
+function toggleReducedMotion(enabled) {
+    if (enabled) {
+        document.body.classList.add('reduced-motion');
+    } else {
+        document.body.classList.remove('reduced-motion');
+    }
+    const chk = document.getElementById('reducedMotionToggle');
+    if (chk && chk.checked !== enabled) chk.checked = enabled;
+    try { localStorage.setItem('mahan_reduced_motion', enabled ? 'true' : 'false'); } catch (e) {}
+}
+
+function applyFontSize(size) {
+    const map = { normal: '13.5px', medium: '15px', large: '16.5px' };
+    document.body.style.fontSize = map[size] || '13.5px';
+    const sel = document.getElementById('fontSizeSelect');
+    if (sel && sel.value !== size) sel.value = size;
+    try { localStorage.setItem('mahan_font_size', size); } catch (e) {}
+}
+
+function loadAppearanceSettings() {
+    try {
+        const theme = localStorage.getItem('mahan_theme') || 'default';
+        applyThemePreset(theme);
+        const reduced = localStorage.getItem('mahan_reduced_motion') === 'true';
+        toggleReducedMotion(reduced);
+        const size = localStorage.getItem('mahan_font_size') || 'normal';
+        applyFontSize(size);
+    } catch (e) {}
+}
+
+function filterApplicantsTable(viewType) {
+    if (viewType === 'list') {
+        const input = document.getElementById('listSearchInput');
+        const query = (input?.value || '').trim().toLowerCase();
+        const rows = document.querySelectorAll('#applicantsListBody tr');
+        rows.forEach(r => {
+            const text = r.textContent.toLowerCase();
+            r.style.display = (!query || text.includes(query)) ? '' : 'none';
+        });
+    } else if (viewType === 'bank-select') {
+        const input = document.getElementById('bankSelectSearchInput');
+        const query = (input?.value || '').trim().toLowerCase();
+        const rows = document.querySelectorAll('#bankSelectListBody tr');
+        rows.forEach(r => {
+            const text = r.textContent.toLowerCase();
+            r.style.display = (!query || text.includes(query)) ? '' : 'none';
+        });
+    }
 }
 
