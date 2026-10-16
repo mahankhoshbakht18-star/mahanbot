@@ -122,6 +122,7 @@ from routes.settings import router as settings_router
 from routes.jobs import router as jobs_router
 from routes.websocket import router as ws_router
 from routes.saved_pages import router as saved_pages_router
+from routes.diagnostic import router as diagnostic_router
 
 app.include_router(auth_router)
 app.include_router(applicants_router)
@@ -130,6 +131,7 @@ app.include_router(settings_router)
 app.include_router(jobs_router)
 app.include_router(ws_router)
 app.include_router(saved_pages_router)
+app.include_router(diagnostic_router)
 
 if __name__ == "__main__":
     import uvicorn

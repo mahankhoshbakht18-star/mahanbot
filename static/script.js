@@ -2447,14 +2447,46 @@ function handleSocketEvent(payload) {
         logEvents.shift();
     }
     scheduleRenderLogs();
-    if (payload.type === 'favorite_found') {
-        showFavoriteToast(payload);
-        playAlertSound();
-    }
-    if (payload.event === 'FINAL_SUBMIT_CONFIRMED' || payload.type === 'FINAL_SUBMIT_CONFIRMED' || (payload.type === 'applicant_updated' && String(payload.status).toLowerCase().includes('success'))) {
+
+    // Phase 4: Real-time Sound & Toast Alert Dispatching
+    const evType = (payload.type || '').toLowerCase();
+    const evCode = (payload.event_code || payload.event || '').toUpperCase();
+
+    if (evType === 'favorite_found' || evType === 'quota_available' || evCode === 'BANK_OPTION_FOUND') {
+        const bankName = payload.bank || payload.detail || payload.result || 'بانک منتخب';
+        showFavoriteToast({
+            bank: bankName,
+            detail: payload.detail || payload.message,
+            nid: payload.nid
+        });
+        playAlertSound('quota');
+    } else if (evType === 'registration_confirmed' || evCode === 'FINAL_SUBMIT_CONFIRMED' || evCode === 'BANK_FINAL_SUBMIT_CONFIRMED') {
+        const tracking = payload.tracking_code || payload.result || '';
+        showMahanToast(
+            'ثبت نام قطعی انجام شد! 🎉',
+            `درخواست تسهیلات با موفقیت در سامانه ثبت شد.${tracking ? ' کد پیگیری: ' + tracking : ''}`,
+            'success',
+            { icon: 'fa-trophy', delay: 10000 }
+        );
+        playAlertSound('success');
         triggerCelebrationConfetti();
+    } else if (evType === 'otp_required' || evCode === 'OTP_REQUIRED') {
+        showMahanToast(
+            'نیاز به کد پیامک (OTP) 📱',
+            payload.message || 'سامانه در انتظار ورود کد تایید پیامکی است.',
+            'info',
+            { icon: 'fa-comment-sms', delay: 8000 }
+        );
+        playAlertSound('action');
+    } else if (evType === 'capacity_full' || evCode === 'BANK_CAPACITY_FULL') {
+        showMahanToast(
+            'تکمیل ظرفیت بانک ⚠️',
+            payload.message || payload.detail || 'ظرفیت پذیرش بانک در این استان تکمیل است.',
+            'warning',
+            { icon: 'fa-triangle-exclamation', delay: 6000 }
+        );
+        playAlertSound('warning');
     }
-}
 
 
 
@@ -2622,85 +2654,224 @@ function renderLogs(clearInitial = false) {
 
 
 
-function showFavoriteToast(payload) {
+function isSoundAlertsEnabled() {
+    const val = localStorage.getItem('mahanbot_sound_alerts');
+    if (val !== null) return val === 'true';
+    const toggle = document.getElementById('soundAlertsToggle');
+    return toggle ? toggle.checked : true;
+}
 
+function toggleSoundAlerts(enabled) {
+    localStorage.setItem('mahanbot_sound_alerts', String(enabled));
+    if (enabled) {
+        playAlertSound('quota');
+        showMahanToast('هشدارهای صوتی فعال شد', 'آلارم هنگام یافتن سهمیه، دریافت پیامک و ثبت نهایی پخش خواهد شد.', 'info', { icon: 'fa-volume-high', delay: 3000 });
+    }
+}
+
+function playAlertSound(type = 'quota') {
+    if (!isSoundAlertsEnabled()) return;
+
+    try {
+        const AudioCtx = window.AudioContext || window.webkitAudioContext;
+        if (!AudioCtx) return;
+        const ctx = new AudioCtx();
+        if (ctx.state === 'suspended') {
+            ctx.resume();
+        }
+
+        const now = ctx.currentTime;
+
+        // Frequencies for each sound mode
+        // quota: C5 -> E5 -> G5 (Ascending C Major chord arpeggio)
+        // action: A4 -> A5 (Double ping)
+        // success: C5 -> E5 -> G5 -> C6 (Triumphant fanfare)
+        // warning: E4 -> C4 (Gentle descending reminder)
+        let tones = [
+            { f: 523.25, start: 0, dur: 0.12 },
+            { f: 659.25, start: 0.10, dur: 0.12 },
+            { f: 783.99, start: 0.20, dur: 0.25 },
+        ];
+
+        if (type === 'action') {
+            tones = [
+                { f: 587.33, start: 0, dur: 0.10 },
+                { f: 880.00, start: 0.12, dur: 0.22 },
+            ];
+        } else if (type === 'success') {
+            tones = [
+                { f: 523.25, start: 0, dur: 0.10 },
+                { f: 659.25, start: 0.08, dur: 0.10 },
+                { f: 783.99, start: 0.16, dur: 0.12 },
+                { f: 1046.50, start: 0.26, dur: 0.35 },
+            ];
+        } else if (type === 'warning') {
+            tones = [
+                { f: 349.23, start: 0, dur: 0.15 },
+                { f: 261.63, start: 0.13, dur: 0.25 },
+            ];
+        }
+
+        const masterGain = ctx.createGain();
+        masterGain.gain.setValueAtTime(0.25, now);
+        masterGain.connect(ctx.destination);
+
+        let maxEnd = 0;
+        tones.forEach(t => {
+            const osc = ctx.createOscillator();
+            const toneGain = ctx.createGain();
+            osc.type = 'sine';
+            osc.frequency.setValueAtTime(t.f, now + t.start);
+
+            // Envelope to prevent audible clicks
+            toneGain.gain.setValueAtTime(0.0001, now + t.start);
+            toneGain.gain.exponentialRampToValueAtTime(0.3, now + t.start + 0.02);
+            toneGain.gain.exponentialRampToValueAtTime(0.0001, now + t.start + t.dur);
+
+            osc.connect(toneGain);
+            toneGain.connect(masterGain);
+
+            osc.start(now + t.start);
+            osc.stop(now + t.start + t.dur);
+            if (t.start + t.dur > maxEnd) maxEnd = t.start + t.dur;
+        });
+
+        setTimeout(() => {
+            try { ctx.close(); } catch (e) {}
+        }, (maxEnd + 0.1) * 1000);
+
+    } catch (e) {
+        console.warn('Audio alert skipped:', e);
+    }
+}
+
+function testAudioAlert(type = 'quota') {
+    playAlertSound(type);
+    const labels = {
+        quota: 'آلارم سهمیه (یافتن بانک)',
+        action: 'آلارم پیامک / اقدام دستی',
+        success: 'آلارم ثبت موفق قطعی',
+        warning: 'آلارم تکمیل ظرفیت',
+    };
+    showMahanToast(
+        labels[type] || 'تست صدای آلارم',
+        'صوت آزمایشی با موفقیت در مرورگر پخش شد.',
+        type === 'success' ? 'success' : (type === 'warning' ? 'warning' : 'info'),
+        { icon: 'fa-bell', delay: 3500 }
+    );
+}
+
+function showMahanToast(title, message, type = 'info', options = {}) {
     const container = document.getElementById('toastContainer');
-
     if (!container) return;
 
-    const bankName = payload.bank || payload.detail || '  ';
+    const delay = options.delay || 6000;
+    const icon = options.icon || (type === 'success' ? 'fa-circle-check' : (type === 'warning' ? 'fa-triangle-exclamation' : 'fa-circle-info'));
+    
+    // Theme palette mappings
+    const bgMap = {
+        success: 'linear-gradient(135deg, #ECFDF5 0%, #D1FAE5 100%)',
+        warning: 'linear-gradient(135deg, #FFFBEB 0%, #FEF3C7 100%)',
+        info: 'linear-gradient(135deg, #EFF6FF 0%, #DBEAFE 100%)',
+        danger: 'linear-gradient(135deg, #FFF1F2 0%, #FFE4E6 100%)',
+    };
+    const borderMap = {
+        success: '#10B981',
+        warning: '#F59E0B',
+        info: '#3B82F6',
+        danger: '#EF4444',
+    };
+    const colorMap = {
+        success: '#065F46',
+        warning: '#92400E',
+        info: '#1E40AF',
+        danger: '#991B1B',
+    };
+
+    const bg = bgMap[type] || bgMap.info;
+    const border = borderMap[type] || borderMap.info;
+    const textCol = colorMap[type] || colorMap.info;
 
     const toastEl = document.createElement('div');
-
-    toastEl.className = 'toast align-items-center text-bg-warning border-0 mb-2';
-
+    toastEl.className = 'toast border-0 mb-2 shadow-lg';
+    toastEl.style.cssText = `background: ${bg}; border-right: 4px solid ${border} !important; border-radius: 12px; min-width: 300px; color: ${textCol}; backdrop-filter: blur(8px);`;
     toastEl.setAttribute('role', 'alert');
-
     toastEl.setAttribute('aria-live', 'assertive');
-
     toastEl.setAttribute('aria-atomic', 'true');
 
     toastEl.innerHTML = `
-
-        <div class="d-flex">
-
-            <div class="toast-body">
-
-                     : ${bankName}
-
+        <div class="d-flex align-items-center p-3">
+            <div class="me-2" style="font-size: 1.35rem; color: ${border};">
+                <i class="fa-solid ${icon}"></i>
             </div>
-
-            <button type="button" class="btn-close btn-close-white me-2 m-auto" data-bs-dismiss="toast" aria-label="Close"></button>
-
+            <div class="toast-body p-0 flex-grow-1 ms-2">
+                <div class="fw-bold mb-1" style="font-size: 0.92rem;">${title}</div>
+                <div class="small opacity-75" style="line-height: 1.4;">${message}</div>
+            </div>
+            <button type="button" class="btn-close ms-2" data-bs-dismiss="toast" aria-label="بستن"></button>
         </div>
-
     `;
 
     container.appendChild(toastEl);
-
-    const toast = new bootstrap.Toast(toastEl, { delay: 5000 });
-
-    toast.show();
-
-    toastEl.addEventListener('hidden.bs.toast', () => toastEl.remove());
-
+    if (window.bootstrap && bootstrap.Toast) {
+        const toast = new bootstrap.Toast(toastEl, { delay: delay });
+        toast.show();
+        toastEl.addEventListener('hidden.bs.toast', () => toastEl.remove());
+    } else {
+        setTimeout(() => toastEl.remove(), delay);
+    }
 }
 
+function showFavoriteToast(payload) {
+    const bankName = payload.bank || payload.detail || 'بانک مورد نظر';
+    const nidText = payload.nid ? ` (متقاضی: ${payload.nid})` : '';
+    showMahanToast(
+        'سهمیه بانک باز شد! 🎯',
+        `گزینه «${bankName}» در دسترس قرار گرفت.${nidText}`,
+        'warning',
+        { icon: 'fa-crosshairs', delay: 8000 }
+    );
+}
 
-
-function playAlertSound() {
+async function downloadDiagnosticZip() {
+    showMahanToast(
+        'آماده‌سازی بسته عیب‌یابی...',
+        'فایل‌های لاگ، وضعیت سیستم، اسکرین‌شات‌ها و صفحات در حال بسته‌بندی هستند.',
+        'info',
+        { icon: 'fa-file-zipper', delay: 4000 }
+    );
 
     try {
+        const url = `${httpBase}/diagnostic/export-zip?include_saved_pages=true`;
+        const res = await fetch(url);
+        if (!res.ok) {
+            throw new Error(`خطای سرور: ${res.status}`);
+        }
+        const blob = await res.blob();
+        const a = document.createElement('a');
+        const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+        a.href = window.URL.createObjectURL(blob);
+        a.download = `mahanbot-diagnostic-${timestamp}.zip`;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        setTimeout(() => window.URL.revokeObjectURL(a.href), 1000);
 
-        const ctx = new (window.AudioContext || window.webkitAudioContext)();
-
-        const oscillator = ctx.createOscillator();
-
-        const gain = ctx.createGain();
-
-        oscillator.type = 'sine';
-
-        oscillator.frequency.value = 880;
-
-        gain.gain.value = 0.2;
-
-        oscillator.connect(gain);
-
-        gain.connect(ctx.destination);
-
-        oscillator.start();
-
-        setTimeout(() => {
-
-            oscillator.stop();
-
-            ctx.close();
-
-        }, 300);
-
-    } catch (e) {
-
-        console.warn('Audio alert blocked', e);
+        showMahanToast(
+            'دانلود با موفقیت آغاز شد ✅',
+            'بسته زیپ عیب‌یابی شامل تمام لاگ‌ها، اسکرین‌شات‌ها و اطلاعات تشخیصی دریافت گردید.',
+            'success',
+            { icon: 'fa-circle-check', delay: 5000 }
+        );
+    } catch (err) {
+        showMahanToast(
+            'خطا در دانلود بسته تشخیصی ❌',
+            err.message || 'امکان ارتباط با سرور وجود ندارد.',
+            'danger',
+            { icon: 'fa-triangle-exclamation', delay: 6000 }
+        );
+    }
+}
 
     }
 

@@ -272,6 +272,54 @@ def emit_structured_event(
     if event_code not in formatted_msg:
         formatted_msg = f"[{event_code}] {formatted_msg}"
     log_event(nid, job_id, formatted_msg, level=level, meta=meta)
+
+    # Real-time WebSocket event dispatch for frontend notifications, audio alerts, and confetti
+    try:
+        if event_code == "BANK_OPTION_FOUND":
+            EVENT_BROADCASTER.emit_event(
+                build_event(
+                    "favorite_found",
+                    nid=nid,
+                    job_id=job_id,
+                    bank=result or reason,
+                    detail=reason,
+                    message=f"سهمیه بانک {result or reason} آماده ثبت شد!",
+                )
+            )
+        elif event_code in {"BANK_FINAL_SUBMIT_CONFIRMED", "FINAL_SUBMIT_CONFIRMED"}:
+            EVENT_BROADCASTER.emit_event(
+                build_event(
+                    "registration_confirmed",
+                    nid=nid,
+                    job_id=job_id,
+                    tracking_code=result,
+                    detail=reason,
+                    message=f"ثبت نام قطعی انجام شد! {result}",
+                )
+            )
+        elif event_code == "OTP_REQUIRED":
+            EVENT_BROADCASTER.emit_event(
+                build_event(
+                    "otp_required",
+                    nid=nid,
+                    job_id=job_id,
+                    detail=reason,
+                    message="کد پیامک OTP مورد نیاز است.",
+                )
+            )
+        elif event_code == "BANK_CAPACITY_FULL":
+            EVENT_BROADCASTER.emit_event(
+                build_event(
+                    "capacity_full",
+                    nid=nid,
+                    job_id=job_id,
+                    detail=reason,
+                    message=f"ظرفیت بانک تکمیل است: {reason}",
+                )
+            )
+    except Exception:
+        pass
+
     return meta
 
 

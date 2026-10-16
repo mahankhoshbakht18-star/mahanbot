@@ -119,10 +119,16 @@
           <h2>مرکز پایش زنده و پیشرفت هوشمند</h2>
           <p>وضعیت بات‌ها، کدهای پیامک، ظرفیت لحظه‌ای بانک‌ها و پیشرفت مراحل با بالاترین دقت و هماهنگی به‌روزرسانی می‌شود.</p>
         </div>
-        <button class="btn btn-light action-pill" onclick="fetchDashboardData()">
-          <i class="fa-solid fa-arrows-rotate"></i>
-          <span>به‌روزرسانی</span>
-        </button>
+        <div class="d-flex align-items-center gap-2">
+          <button class="btn btn-outline-light action-pill" onclick="downloadDiagnosticZip()" title="دانلود گزارش تشخیصی، اسکرین‌شات‌ها و لاگ‌ها به فرمت ZIP">
+            <i class="fa-solid fa-file-zipper"></i>
+            <span>بسته عیب‌یابی (ZIP)</span>
+          </button>
+          <button class="btn btn-light action-pill" onclick="fetchDashboardData()">
+            <i class="fa-solid fa-arrows-rotate"></i>
+            <span>به‌روزرسانی</span>
+          </button>
+        </div>
       </div>
 
       <!-- 6 Colorful Modern Stat Cards -->
@@ -878,6 +884,15 @@
             <input id="confettiSoundToggle" type="checkbox" checked>
             نمایش انیمیشن جشن (Confetti) هنگام ثبت نهایی موفق
           </label>
+          <label class="check-card">
+            <input id="soundAlertsToggle" type="checkbox" checked onchange="toggleSoundAlerts(this.checked)">
+            پخش هشدارهای صوتی بات (سهمیه، پیامک، ثبت نهایی)
+          </label>
+          <div class="d-flex align-items-center gap-2 mt-1">
+            <button type="button" class="btn btn-sm btn-light" onclick="testAudioAlert('quota')"><i class="fa-solid fa-bell ms-1 text-warning"></i> تست صدای سهمیه</button>
+            <button type="button" class="btn btn-sm btn-light" onclick="testAudioAlert('action')"><i class="fa-solid fa-circle-exclamation ms-1 text-info"></i> تست صدای پیامک</button>
+            <button type="button" class="btn btn-sm btn-light" onclick="testAudioAlert('success')"><i class="fa-solid fa-trophy ms-1 text-success"></i> تست صدای ثبت موفق</button>
+          </div>
         </div>
       </article>
 
@@ -1003,6 +1018,7 @@
           <div class="form-actions">
             <button class="btn btn-primary" onclick="saveSettings()">ذخیره تنظیمات بات</button>
             <button class="btn btn-light" onclick="repairSavedPages()">تعمیر صفحات ذخیره‌شده</button>
+            <button class="btn btn-outline-info" onclick="downloadDiagnosticZip()"><i class="fa-solid fa-file-zipper ms-1"></i> دانلود بسته تشخیصی (ZIP)</button>
           </div>
           <div id="savedPagesRepairResult" class="small mt-2"></div>
         </article>
