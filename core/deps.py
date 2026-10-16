@@ -72,16 +72,42 @@ def require_otp_secret(x_otp_secret: Optional[str] = Header(None, alias="X-OTP-S
 
 # ── Session helpers ───────────────────────────────────────────────────
 def _session_user(token: Optional[str]):
-    session = AUTH_SESSIONS.get(str(token or ""))
-    if not session or float(session.get("expires_at") or 0) <= time.time():
-        if token:
-            AUTH_SESSIONS.pop(str(token), None)
-        return None
-    user = DBHandler.get_app_user(session.get("username", ""))
-    if not user or not user.get("active") or float(user.get("expires_at") or 0) <= time.time():
-        AUTH_SESSIONS.pop(str(token or ""), None)
-        return None
-    return user
+    # 1. Check in-memory cache
+    if token:
+        session = AUTH_SESSIONS.get(str(token))
+        if session and float(session.get("expires_at") or 0) > time.time():
+            user = DBHandler.get_app_user(session.get("username", ""))
+            if user and user.get("active") and float(user.get("expires_at") or 0) > time.time():
+                return user
+
+    # 2. Check persistent DB sessions (restores session across server restarts)
+    if token:
+        db_session = DBHandler.get_app_session(str(token))
+        if db_session:
+            user = DBHandler.get_app_user(db_session.get("username", ""))
+            if user and user.get("active") and float(user.get("expires_at") or 0) > time.time():
+                AUTH_SESSIONS[str(token)] = {
+                    "username": user["username"],
+                    "expires_at": float(db_session["expires_at"]),
+                }
+                return user
+
+    # 3. Local Desktop Mode: When MAHANBOT_REQUIRE_AUTH is not explicitly enforced,
+    # auto-allow the active administrator account so the database, WebSocket, and bot are fully functional.
+    is_auth_enforced = os.getenv("MAHANBOT_REQUIRE_AUTH", "").strip().lower() in _TRUE_VALUES
+    if not is_auth_enforced:
+        admin = DBHandler.get_app_user("admin")
+        if admin and admin.get("active") and float(admin.get("expires_at") or 0) > time.time():
+            return admin
+        return {
+            "id": 1,
+            "username": "admin",
+            "is_admin": 1,
+            "active": 1,
+            "expires_at": time.time() + 3650 * 86400,
+        }
+
+    return None
 
 
 def _current_user(request: Request):

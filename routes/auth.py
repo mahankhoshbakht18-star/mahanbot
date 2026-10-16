@@ -43,10 +43,12 @@ def login(req: LoginRequest):
     if not user:
         raise HTTPException(status_code=401, detail="نام کاربری، رمز یا اعتبار اشتراک صحیح نیست")
     token = secrets.token_urlsafe(32)
+    expires_at = min(float(user["expires_at"]), time.time() + 30 * 86400)
     AUTH_SESSIONS[token] = {
         "username": user["username"],
-        "expires_at": min(float(user["expires_at"]), time.time() + 30 * 86400),
+        "expires_at": expires_at,
     }
+    DBHandler.save_app_session(token, user["username"], expires_at)
     response = JSONResponse({
         "status": "ok",
         "username": user["username"],
@@ -54,15 +56,17 @@ def login(req: LoginRequest):
         "license_valid_until": user["expires_at"],
     })
     response.set_cookie(
-        AUTH_COOKIE, token, httponly=True, samesite="strict", secure=False,
-        max_age=max(1, int(AUTH_SESSIONS[token]["expires_at"] - time.time())), path="/",
+        AUTH_COOKIE, token, httponly=True, samesite="lax", secure=False,
+        max_age=max(1, int(expires_at - time.time())), path="/",
     )
     return response
 
 
 @router.post("/logout")
 def logout(request: Request):
-    AUTH_SESSIONS.pop(request.cookies.get(AUTH_COOKIE, ""), None)
+    token = request.cookies.get(AUTH_COOKIE, "")
+    AUTH_SESSIONS.pop(token, None)
+    DBHandler.delete_app_session(token)
     response = JSONResponse({"status": "ok"})
     response.delete_cookie(AUTH_COOKIE, path="/")
     return response

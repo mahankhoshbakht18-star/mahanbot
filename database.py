@@ -282,6 +282,15 @@ class DBHandler:
                     )"""
                 )
 
+                c.execute(
+                    """CREATE TABLE IF NOT EXISTS app_sessions (
+                        token TEXT PRIMARY KEY,
+                        username TEXT NOT NULL COLLATE NOCASE,
+                        expires_at REAL NOT NULL,
+                        created_at REAL NOT NULL
+                    )"""
+                )
+
                 default_config = json.dumps(DEFAULT_CONFIG, ensure_ascii=False)
                 c.execute("INSERT OR IGNORE INTO settings (key, value) VALUES ('config', ?)", (default_config,))
                 c.execute("SELECT value FROM settings WHERE key='config'")
@@ -508,6 +517,46 @@ class DBHandler:
             )
             conn.commit()
             return cur.rowcount > 0
+
+    @staticmethod
+    def save_app_session(token: str, username: str, expires_at: float) -> None:
+        """Persist session token across server restarts."""
+        if not token:
+            return
+        with DBHandler._connect() as conn:
+            conn.execute(
+                "INSERT INTO app_sessions (token, username, expires_at, created_at) VALUES (?, ?, ?, ?) "
+                "ON CONFLICT(token) DO UPDATE SET username=excluded.username, expires_at=excluded.expires_at",
+                (str(token).strip(), str(username).strip(), float(expires_at), time.time()),
+            )
+            conn.commit()
+
+    @staticmethod
+    def get_app_session(token: str) -> Optional[Dict[str, Any]]:
+        """Retrieve persistent session if not expired."""
+        if not token:
+            return None
+        try:
+            with DBHandler._connect(row_factory=True) as conn:
+                row = conn.execute(
+                    "SELECT * FROM app_sessions WHERE token=? AND expires_at > ?",
+                    (str(token).strip(), time.time()),
+                ).fetchone()
+                return dict(row) if row else None
+        except Exception:
+            return None
+
+    @staticmethod
+    def delete_app_session(token: str) -> None:
+        """Remove session on logout."""
+        if not token:
+            return
+        try:
+            with DBHandler._connect() as conn:
+                conn.execute("DELETE FROM app_sessions WHERE token=?", (str(token).strip(),))
+                conn.commit()
+        except Exception:
+            pass
 
     @staticmethod
     def get_applicant(nid: str):

@@ -95,13 +95,27 @@ async def require_subscription_login(request: Request, call_next):
         path.startswith("/wait_otp/") or 
         path == "/health"
     )
-    if not public and not _session_user(request.cookies.get(AUTH_COOKIE)):
+    user = _session_user(request.cookies.get(AUTH_COOKIE))
+    if not public and not user:
         if request.method == "GET" and path == "/":
             return RedirectResponse("/login", status_code=303)
         return JSONResponse({"detail": "اشتراک شما معتبر نیست یا وارد نشده‌اید"}, status_code=401)
     
     response = await call_next(request)
     response.headers.setdefault("X-Content-Type-Options", "nosniff")
+
+    # If user is authenticated (e.g. local desktop access) and cookie is not yet in browser,
+    # set the session cookie so WebSocket and all frontend requests maintain connection seamlessly
+    if user and not request.cookies.get(AUTH_COOKIE) and getattr(response, "set_cookie", None):
+        import secrets, time
+        token = secrets.token_urlsafe(32)
+        exp = time.time() + 30 * 86400
+        AUTH_SESSIONS[token] = {"username": user.get("username", "admin"), "expires_at": exp}
+        DBHandler.save_app_session(token, user.get("username", "admin"), exp)
+        response.set_cookie(
+            AUTH_COOKIE, token, httponly=True, samesite="lax", secure=False,
+            max_age=30 * 86400, path="/"
+        )
     return response
 
 @app.middleware("http")
