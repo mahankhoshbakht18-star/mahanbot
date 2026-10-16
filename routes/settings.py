@@ -2,7 +2,7 @@
 routes/settings.py — Settings, browser profile, allowed domains, saved pages.
 """
 import os
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, status
 
@@ -62,6 +62,7 @@ def update_settings(req: SettingsRequest, _: bool = Depends(require_api_key)):
         ("bank_list_refresh_seconds", 1.0, 300.0),
         ("bank_capacity_recheck_seconds", 5.0, 600.0),
         ("retry_delay", 0.0, 30.0),
+        ("proxy_health_check_timeout", 1.0, 30.0),
     ):
         if key in payload and payload[key] is not None and not low <= float(payload[key]) <= high:
             raise HTTPException(status_code=422, detail=f"{key} out of range")
@@ -75,6 +76,7 @@ def update_settings(req: SettingsRequest, _: bool = Depends(require_api_key)):
         ("navigation_timeout_ms", 1000, 120000),
         ("browser_window_width", 360, 3840),
         ("browser_window_height", 320, 2160),
+        ("max_concurrency", 1, 32),
     ):
         if key in payload and payload[key] is not None and not low <= int(payload[key]) <= high:
             raise HTTPException(status_code=422, detail=f"{key} out of range")
@@ -92,7 +94,51 @@ def update_settings(req: SettingsRequest, _: bool = Depends(require_api_key)):
     current = DBHandler.get_config()
     current.update(payload)
     updated = DBHandler.update_config(current)
+
+    # Dynamic scaling of job workers if max_concurrency updated
+    if "max_concurrency" in payload:
+        import core.state as _state
+        if _state.JOB_QUEUE is not None:
+            _state.JOB_QUEUE.set_max_concurrency(payload["max_concurrency"])
+
+    # Reload proxy pool cache if proxy_list updated
+    if "proxy_list" in payload:
+        from proxy_manager import get_proxy_pool
+        get_proxy_pool().load_from_text(str(payload.get("proxy_list") or ""))
+
     return {"status": "ok", "config": updated}
+
+
+# ── Proxy endpoints ──────────────────────────────────────────────────
+@router.post("/api/proxies/test")
+def test_proxies_endpoint(req_body: Optional[Dict[str, Any]] = None):
+    """Test proxy pool connectivity and latency in parallel."""
+    from proxy_manager import get_proxy_pool
+    pool = get_proxy_pool()
+    proxy_text = ""
+    if req_body and "proxy_list" in req_body:
+        proxy_text = str(req_body["proxy_list"] or "")
+    else:
+        cfg = DBHandler.get_config()
+        proxy_text = str(cfg.get("proxy_list") or "")
+    pool.load_from_text(proxy_text)
+    results = pool.test_all()
+    return {
+        "status": "ok",
+        "total": len(results),
+        "healthy_count": sum(1 for r in results if r["healthy"]),
+        "results": results,
+    }
+
+
+@router.get("/api/proxies/pool")
+def get_proxy_pool_status():
+    from proxy_manager import get_proxy_pool
+    cfg = DBHandler.get_config()
+    pool = get_proxy_pool()
+    pool.load_from_text(str(cfg.get("proxy_list") or ""))
+    return pool.get_pool_status()
+
 
 
 # ── Saved pages ───────────────────────────────────────────────────────

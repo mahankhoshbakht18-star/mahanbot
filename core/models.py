@@ -107,6 +107,10 @@ class SettingsRequest(BaseModel):
     auto_switch_alternative_bank: Optional[bool] = None
     fallback_to_in_person: Optional[bool] = None
     bank_cooldown_seconds: Optional[int] = None
+    max_concurrency: Optional[int] = None
+    proxy_rotation_strategy: Optional[str] = None
+    anti_detection_enabled: Optional[bool] = None
+    proxy_health_check_timeout: Optional[float] = None
 
 
 

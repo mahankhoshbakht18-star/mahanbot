@@ -301,8 +301,14 @@ def normalize_browser_profile(profile: Optional[Dict[str, Any]]) -> Dict[str, An
     data["timeout_ms"] = timeout_ms
 
     proxy = data.get("proxy")
-    data["proxy"] = proxy.strip() if isinstance(proxy, str) and proxy.strip() else None
+    if isinstance(proxy, dict):
+        data["proxy"] = proxy
+    elif isinstance(proxy, str) and proxy.strip():
+        data["proxy"] = proxy.strip()
+    else:
+        data["proxy"] = None
 
+    data["anti_detection_enabled"] = bool(data.get("anti_detection_enabled", True))
     data["user_data_dir"] = _resolve_user_data_dir(data.get("user_data_dir"))
     return data
 
@@ -582,6 +588,12 @@ def launch_browser(profile: Dict[str, Any]) -> Tuple[Any, Any, Any, Any]:
                 if flag not in args:
                     args.append(flag)
 
+            if normalized.get("anti_detection_enabled", True):
+                from browser_fingerprint import get_stealth_args
+                for sa in get_stealth_args():
+                    if sa not in args:
+                        args.append(sa)
+
             if not normalized["headless"] and not normalized.get("start_maximized", False):
                 args = [a for a in args if not a.startswith("--window-size=") and not a.startswith("--window-position=")]
                 args.append(f"--window-size={geom['width']},{geom['height']}")
@@ -590,7 +602,24 @@ def launch_browser(profile: Dict[str, Any]) -> Tuple[Any, Any, Any, Any]:
             launch_options["args"] = args
 
         if normalized["proxy"]:
-            launch_options["proxy"] = {"server": normalized["proxy"]}
+            p = normalized["proxy"]
+            if isinstance(p, dict):
+                proxy_cfg = {"server": p.get("server") or p.get("raw")}
+                if p.get("username") and p.get("password"):
+                    proxy_cfg["username"] = p["username"]
+                    proxy_cfg["password"] = p["password"]
+                launch_options["proxy"] = proxy_cfg
+            elif isinstance(p, str):
+                from proxy_manager import parse_proxy_string
+                parsed_p = parse_proxy_string(p)
+                if parsed_p:
+                    proxy_cfg = {"server": parsed_p["server"]}
+                    if parsed_p.get("username") and parsed_p.get("password"):
+                        proxy_cfg["username"] = parsed_p["username"]
+                        proxy_cfg["password"] = parsed_p["password"]
+                    launch_options["proxy"] = proxy_cfg
+                else:
+                    launch_options["proxy"] = {"server": p}
 
         effective_viewport = {
             "width": geom["width"],
@@ -608,6 +637,10 @@ def launch_browser(profile: Dict[str, Any]) -> Tuple[Any, Any, Any, Any]:
         else:
             browser = browser_type.launch(**launch_options)
             context = browser.new_context(viewport=effective_viewport)
+
+        if normalized.get("anti_detection_enabled", True):
+            from browser_fingerprint import apply_stealth_shield
+            apply_stealth_shield(context)
 
         page = context.pages[0] if context.pages else context.new_page()
         page.set_default_timeout(normalized["timeout_ms"])

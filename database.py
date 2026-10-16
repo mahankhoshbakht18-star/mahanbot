@@ -74,6 +74,10 @@ DEFAULT_CONFIG = {
     "browser_remember_position": True,
     "use_proxy": False,
     "proxy_list": "",
+    "proxy_rotation_strategy": "round_robin",
+    "proxy_health_check_timeout": 4.0,
+    "max_concurrency": 4,
+    "anti_detection_enabled": True,
 }
 
 
@@ -148,6 +152,13 @@ def normalize_config(stored: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     merged["auto_switch_alternative_bank"] = bool(merged.get("auto_switch_alternative_bank", True))
     merged["fallback_to_in_person"] = bool(merged.get("fallback_to_in_person", False))
     merged["bank_cooldown_seconds"] = _bounded(merged.get("bank_cooldown_seconds"), 30, 5, 600, int)
+    merged["max_concurrency"] = _bounded(merged.get("max_concurrency"), 4, 1, 32, int)
+    merged["anti_detection_enabled"] = bool(merged.get("anti_detection_enabled", True))
+    strat = str(merged.get("proxy_rotation_strategy") or "round_robin").strip().lower()
+    if strat not in {"round_robin", "per_applicant", "random_healthy"}:
+        strat = "round_robin"
+    merged["proxy_rotation_strategy"] = strat
+    merged["proxy_health_check_timeout"] = _bounded(merged.get("proxy_health_check_timeout"), 4.0, 1.0, 30.0)
     merged["default_bank_mode"] = str(merged.get("default_bank_mode", "online") or "online").strip().lower()
     if merged["default_bank_mode"] not in {"online", "in_person"}:
         merged["default_bank_mode"] = "online"

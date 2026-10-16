@@ -1476,6 +1476,16 @@ async function loadSettings() {
             document.getElementById('set_bank_cooldown').value = s.bank_cooldown_seconds ?? 30;
         }
 
+        if (document.getElementById('set_max_concurrency')) {
+            document.getElementById('set_max_concurrency').value = s.max_concurrency ?? 4;
+        }
+        if (document.getElementById('set_anti_detection')) {
+            document.getElementById('set_anti_detection').checked = s.anti_detection_enabled !== false;
+        }
+        if (document.getElementById('set_proxy_strategy')) {
+            document.getElementById('set_proxy_strategy').value = s.proxy_rotation_strategy || 'round_robin';
+        }
+
     } catch(e) {}
 
 }
@@ -1711,8 +1721,10 @@ async function saveSettings() {
         sniper_mode_enabled: document.getElementById('set_sniper_mode') ? document.getElementById('set_sniper_mode').checked : false,
         sniper_interval_ms: document.getElementById('set_sniper_interval') ? parseInt(document.getElementById('set_sniper_interval').value, 10) : 800,
         auto_switch_alternative_bank: document.getElementById('set_auto_switch_bank') ? document.getElementById('set_auto_switch_bank').checked : true,
-        fallback_to_in_person: document.getElementById('set_fallback_in_person') ? document.getElementById('set_fallback_in_person').checked : false,
-        bank_cooldown_seconds: document.getElementById('set_bank_cooldown') ? parseInt(document.getElementById('set_bank_cooldown').value, 10) : 30
+        bank_cooldown_seconds: document.getElementById('set_bank_cooldown') ? parseInt(document.getElementById('set_bank_cooldown').value, 10) : 30,
+        max_concurrency: document.getElementById('set_max_concurrency') ? parseInt(document.getElementById('set_max_concurrency').value, 10) : 4,
+        anti_detection_enabled: document.getElementById('set_anti_detection') ? document.getElementById('set_anti_detection').checked : true,
+        proxy_rotation_strategy: document.getElementById('set_proxy_strategy') ? document.getElementById('set_proxy_strategy').value : 'round_robin'
 
     };
 
@@ -1722,8 +1734,75 @@ async function saveSettings() {
 
     applyBrowserDisplayMode(payload.browser_display_mode);
 
-    alert(getMessage('alerts.settings_saved', '    .'));
+    alert(getMessage('alerts.settings_saved', 'تنظیمات با موفقیت ذخیره شد.'));
 
+}
+
+async function testProxyPool() {
+    const btn = document.getElementById('btnTestProxies');
+    const container = document.getElementById('proxyTestResults');
+    if (!container) return;
+
+    if (btn) {
+        btn.disabled = true;
+        btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin ms-1"></i> در حال آزمایش...';
+    }
+    container.innerHTML = '<div class="alert alert-info py-2 px-3 small my-2"><i class="fa-solid fa-spinner fa-spin ms-1"></i> در حال بررسی و تست اتصال پروکسی‌ها...</div>';
+
+    try {
+        const res = await fetch(`${httpBase}/proxies/test`, {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({ timeout: 3.5 })
+        });
+        const data = await res.json();
+
+        if (!data.results || data.results.length === 0) {
+            container.innerHTML = '<div class="alert alert-warning py-2 px-3 small my-2">هیچ پروکسی معتبری در لیست یافت نشد یا پروکسی‌ها غیرفعال هستند.</div>';
+            return;
+        }
+
+        let html = `<div class="mt-2 p-2 rounded" style="background:var(--bg-card, #f8fafc); border:1px solid var(--border-soft, #e2e8f0);">
+            <div class="d-flex justify-content-between align-items-center mb-2">
+                <span class="small fw-bold">نتیجه آزمایش سلامت (${data.total} پروکسی: <span class="text-success">${data.healthy} سالم</span> | <span class="text-danger">${data.failed} خطا</span>)</span>
+            </div>
+            <div class="table-responsive" style="max-height:220px; overflow-y:auto;">
+                <table class="table table-sm table-borderless align-middle mb-0" style="font-size:0.83rem;">
+                    <thead>
+                        <tr class="text-muted" style="border-bottom:1px solid var(--border-soft, #cbd5e1);">
+                            <th>آدرس پروکسی</th>
+                            <th>وضعیت</th>
+                            <th>پینگ</th>
+                            <th>توضیحات</th>
+                        </tr>
+                    </thead>
+                    <tbody>`;
+
+        for (const item of data.results) {
+            const isOk = item.status === 'healthy';
+            const badgeClass = isOk ? 'badge bg-success-subtle text-success' : 'badge bg-danger-subtle text-danger';
+            const statusIcon = isOk ? '<i class="fa-solid fa-circle-check ms-1"></i>سالم' : '<i class="fa-solid fa-circle-xmark ms-1"></i>خطا';
+            const latencyStr = item.latency_ms > 0 ? `${item.latency_ms} ms` : '-';
+            const errorMsg = item.error ? `<span class="text-muted small">${item.error}</span>` : '<span class="text-success small">آماده اتصال</span>';
+
+            html += `<tr>
+                <td dir="ltr" class="font-monospace text-start">${item.proxy}</td>
+                <td><span class="${badgeClass}">${statusIcon}</span></td>
+                <td><span class="fw-bold">${latencyStr}</span></td>
+                <td>${errorMsg}</td>
+            </tr>`;
+        }
+
+        html += `</tbody></table></div></div>`;
+        container.innerHTML = html;
+    } catch (err) {
+        container.innerHTML = `<div class="alert alert-danger py-2 px-3 small my-2">خطا در ارتباط با سرور تست پروکسی: ${err.message}</div>`;
+    } finally {
+        if (btn) {
+            btn.disabled = false;
+            btn.innerHTML = '<i class="fa-solid fa-bolt ms-1"></i> آزمایش سلامت پروکسی‌ها';
+        }
+    }
 }
 
 

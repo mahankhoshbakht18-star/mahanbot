@@ -973,12 +973,33 @@
             </label>
             <label class="check-card"><input id="set_headless" type="checkbox"> اجرای مرورگر مخفی</label>
             <label class="check-card"><input id="set_useproxy" type="checkbox"> استفاده از پروکسی</label>
+            <label class="check-card text-success fw-bold" style="background:#ECFDF5; border-color:#A7F3D0;">
+              <input id="set_anti_detection" type="checkbox" checked>
+              <i class="fa-solid fa-user-secret ms-1 text-success"></i> سپر ضد تشخیص هویت مرورگر (Anti-Detection Shield)
+            </label>
+            <label>حداکثر اجرای همزمان متقاضیان (Concurrency Workers)
+              <input id="set_max_concurrency" type="number" min="1" max="32" value="4" class="form-control">
+            </label>
+            <label>استراتژی چرخش پروکسی
+              <select id="set_proxy_strategy" class="form-select">
+                <option value="round_robin">چرخشی نوبتی (Round Robin)</option>
+                <option value="per_applicant">اختصاصی برای هر متقاضی (Sticky Session)</option>
+                <option value="random_healthy">انتخاب تصادفی از پروکسی‌های باکیفیت</option>
+              </select>
+            </label>
           </div>
           <input id="set_captcha" type="hidden" value="0">
           <input id="set_captcha_mode" type="hidden" value="model">
-          <label class="mt-3">فهرست پروکسی‌ها (در هر خط یک پروکسی)
-            <textarea id="set_proxylist" class="form-control" rows="3"></textarea>
-          </label>
+          <div class="mt-3">
+            <div class="d-flex justify-content-between align-items-center mb-1">
+              <label class="mb-0 fw-bold">فهرست پروکسی‌ها (پشتیبانی از http, socks5, ip:port:user:pass)</label>
+              <button id="btnTestProxies" type="button" class="btn btn-sm btn-outline-success" onclick="testProxyPool()">
+                <i class="fa-solid fa-bolt ms-1"></i> آزمایش سلامت پروکسی‌ها
+              </button>
+            </div>
+            <textarea id="set_proxylist" class="form-control" rows="3" placeholder="http://1.2.3.4:8080&#10;socks5://user:pass@5.6.7.8:1080"></textarea>
+            <div id="proxyTestResults" class="mt-2"></div>
+          </div>
           <div class="form-actions">
             <button class="btn btn-primary" onclick="saveSettings()">ذخیره تنظیمات بات</button>
             <button class="btn btn-light" onclick="repairSavedPages()">تعمیر صفحات ذخیره‌شده</button>

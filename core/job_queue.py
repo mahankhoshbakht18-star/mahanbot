@@ -65,11 +65,32 @@ class JobQueue:
         self._workers: list[threading.Thread] = []
         self._shutting_down = False
 
+    @property
+    def max_concurrency(self) -> int:
+        return self._max_concurrency
+
+    @property
+    def workers(self) -> list[threading.Thread]:
+        return self._workers
+
     def start(self) -> None:
         for index in range(self._max_concurrency):
             t = threading.Thread(target=self._worker_loop, args=(index,), daemon=True)
             t.start()
             self._workers.append(t)
+
+    def set_max_concurrency(self, new_limit: int) -> int:
+        new_limit = max(1, min(32, int(new_limit)))
+        with self._condition:
+            old_limit = self._max_concurrency
+            self._max_concurrency = new_limit
+            if new_limit > old_limit:
+                for index in range(old_limit, new_limit):
+                    t = threading.Thread(target=self._worker_loop, args=(index,), daemon=True)
+                    t.start()
+                    self._workers.append(t)
+            self._condition.notify_all()
+        return self._max_concurrency
 
     def stop(self, timeout: float = 5.0) -> None:
         """Wake idle workers and let daemon threads exit on shutdown."""
@@ -268,6 +289,19 @@ class JobQueue:
         browser_profile["always_on_top"] = bool(settings.get("browser_always_on_top", browser_profile.get("always_on_top", False)))
         browser_profile["remember_position"] = bool(settings.get("browser_remember_position", browser_profile.get("remember_position", True)))
         browser_profile["viewport"] = {"width": browser_profile["window_width"], "height": browser_profile["window_height"]}
+        browser_profile["anti_detection_enabled"] = bool(settings.get("anti_detection_enabled", True))
+
+        if settings.get("use_proxy") and settings.get("proxy_list"):
+            try:
+                from proxy_manager import get_proxy_pool
+                pool = get_proxy_pool()
+                pool.load_from_text(str(settings.get("proxy_list") or ""))
+                strat = str(settings.get("proxy_rotation_strategy") or "round_robin")
+                assigned_proxy = pool.get_proxy(strategy=strat, applicant_id=job.nid)
+                if assigned_proxy:
+                    browser_profile["proxy"] = assigned_proxy
+            except Exception:
+                pass
 
         captcha_service = _get_captcha_service()
         log_callback = build_log_callback(job.id)
@@ -299,7 +333,14 @@ def _get_captcha_service():
 
 def get_max_concurrency() -> int:
     try:
-        value = int(os.getenv("MAHANBOT_MAX_CONCURRENCY", "8"))
+        cfg = DBHandler.get_config()
+        val = cfg.get("max_concurrency")
+        if val is not None:
+            return max(1, min(32, int(val)))
+    except Exception:
+        pass
+    try:
+        value = int(os.getenv("MAHANBOT_MAX_CONCURRENCY", "4"))
     except ValueError:
-        value = 8
+        value = 4
     return max(1, min(32, value))
