@@ -16,14 +16,18 @@ from contextlib import contextmanager
 from typing import Dict
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Response, status
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DB_PATH = os.getenv("MAHAN_OTP_DB", os.path.join(BASE_DIR, "otp_codes.db"))
 OTP_TTL_SECONDS = max(30, int(os.getenv("MAHAN_OTP_TTL", "180")))
+DOWNLOADS_DIR = os.getenv("MAHAN_DOWNLOADS_DIR", os.path.join(BASE_DIR, "downloads"))
+os.makedirs(DOWNLOADS_DIR, exist_ok=True)
 
-app = FastAPI(title="Mahan OTP", version="1.1.0")
+app = FastAPI(title="Mahan OTP", version="2.0.1")
+app.mount("/downloads", StaticFiles(directory=DOWNLOADS_DIR), name="downloads")
 _events: Dict[str, asyncio.Event] = {}
 
 
@@ -96,6 +100,26 @@ def health():
     return {"status": "ok"}
 
 
+@app.get("/api/version")
+@app.get("/version")
+def version_info():
+    return {
+        "latest_version": "2.0.1",
+        "release_date": "2026-10-22",
+        "release_notes": [
+            "پشتیبانی از دانلود مستقیم اپلیکیشن فورواردر پیامک نسخه ۲.۰.۱",
+            "افزایش ابعاد استاندارد پنجره مرورگر به ۹۰۰x۶۲۰ و مقیاس ۱۰۰٪ طبیعی متن",
+            "کارت پایش بلادرنگ وضعیت مرحله ۳ در داشبورد عملیاتی",
+            "مرکز به‌روزرسانی هوشمند درون‌برنامه‌ای با پشتیبان‌گیری خودکار دیتابیس",
+            "سیستم استان و شهرهای آبشاری با پایگاه داده یکپارچه جغرافیایی",
+            "تفکیک نگارش مدیر (ADMIN) و کاربر (CLIENT) با لانچرهای مجزا"
+        ],
+        "download_url": "https://otp.mahanvip.ir/downloads/mahanbot-latest.zip",
+        "apk_url": "https://otp.mahanvip.ir/downloads/mahan-otp-2.0.1.apk",
+        "mandatory": False
+    }
+
+
 @app.post("/receive_sms")
 async def receive_sms(req: SMSRequest, _: None = Depends(require_otp_secret)):
     nid = normalize_nid(req.nid)
@@ -133,13 +157,13 @@ async def wait_otp(nid: str, timeout: int = 120, min_ts: float = 0.0):
     deadline = time.monotonic() + timeout
     event = _events.setdefault(normalized, asyncio.Event())
     while True:
+        event.clear()
         record = read_fresh(normalized, float(min_ts))
         if record:
             return record
         remaining = deadline - time.monotonic()
         if remaining <= 0:
             return Response(status_code=204)
-        event.clear()
         try:
             await asyncio.wait_for(event.wait(), remaining)
         except asyncio.TimeoutError:

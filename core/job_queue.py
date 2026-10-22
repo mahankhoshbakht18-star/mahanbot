@@ -166,6 +166,20 @@ class JobQueue:
         with self._lock:
             return self._jobs.get(job_id)
 
+    def stop_all(self, bot_name: Optional[str] = None) -> list[str]:
+        target_ids = []
+        with self._lock:
+            for job in self._jobs.values():
+                if job.status in self.ACTIVE_STATUSES:
+                    if bot_name is None or job.bot_name.lower() == bot_name.lower():
+                        target_ids.append(job.id)
+        cancelled = []
+        for jid in target_ids:
+            res = self.cancel(jid)
+            if res:
+                cancelled.append(jid)
+        return cancelled
+
     # ── Worker internals ──────────────────────────────────────────────
 
     def _worker_loop(self, worker_id: int) -> None:

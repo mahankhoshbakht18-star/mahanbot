@@ -27,7 +27,7 @@ class TestQuotaSnipingConfig(unittest.TestCase):
         cfg = normalize_config({})
         self.assertIn("sniper_mode_enabled", cfg)
         self.assertFalse(cfg["sniper_mode_enabled"])
-        self.assertEqual(cfg["sniper_interval_ms"], 800)
+        self.assertEqual(cfg["sniper_interval_ms"], 5000)
         self.assertTrue(cfg["auto_switch_alternative_bank"])
         self.assertFalse(cfg["fallback_to_in_person"])
         self.assertEqual(cfg["bank_cooldown_seconds"], 30)
@@ -35,20 +35,20 @@ class TestQuotaSnipingConfig(unittest.TestCase):
     def test_normalize_config_bounds(self):
         cfg = normalize_config({
             "sniper_mode_enabled": True,
-            "sniper_interval_ms": 50,  # Below min (200) -> bounded to default 800
+            "sniper_interval_ms": 50,  # Below the minimum five seconds.
             "bank_cooldown_seconds": 2,  # Below min (5) -> bounded to default 30
         })
         self.assertTrue(cfg["sniper_mode_enabled"])
-        self.assertEqual(cfg["sniper_interval_ms"], 800)
+        self.assertEqual(cfg["sniper_interval_ms"], 5000)
         self.assertEqual(cfg["bank_cooldown_seconds"], 30)
 
         cfg_valid = normalize_config({
             "sniper_mode_enabled": True,
-            "sniper_interval_ms": 400,
+            "sniper_interval_ms": 7000,
             "bank_cooldown_seconds": 45,
             "fallback_to_in_person": True,
         })
-        self.assertEqual(cfg_valid["sniper_interval_ms"], 400)
+        self.assertEqual(cfg_valid["sniper_interval_ms"], 7000)
         self.assertEqual(cfg_valid["bank_cooldown_seconds"], 45)
         self.assertTrue(cfg_valid["fallback_to_in_person"])
 
@@ -107,8 +107,16 @@ class TestWaterfallBankSelection(unittest.TestCase):
             # Saderat online mode fails with capacity full dialog, but Mellat succeeds!
             def mock_select_mode(bot, page, mode, bank_name):
                 if bank_name == "صادرات":
+                    pending = [True]
+                    def consume(key):
+                        if key == 'bank_capacity_full' and pending[0]:
+                            pending[0] = False
+                            return True
+                        return False
+                    bot.consume_recovery_flag.side_effect = consume
                     return "online", False  # Saderat mode full
                 else:
+                    bot.consume_recovery_flag.side_effect = None
                     return "online", True   # Mellat succeeds
 
             with patch("bot_select_bank._select_bank_mode", side_effect=mock_select_mode), \
@@ -192,7 +200,7 @@ class TestSniperEndpoints(unittest.TestCase):
     def test_settings_endpoint_persists_sniper_config(self):
         payload = {
             "sniper_mode_enabled": True,
-            "sniper_interval_ms": 600,
+            "sniper_interval_ms": 6000,
             "auto_switch_alternative_bank": True,
             "fallback_to_in_person": True,
             "bank_cooldown_seconds": 25,
@@ -204,7 +212,7 @@ class TestSniperEndpoints(unittest.TestCase):
         self.assertEqual(get_res.status_code, 200)
         data = get_res.json()
         self.assertTrue(data.get("sniper_mode_enabled"))
-        self.assertEqual(data.get("sniper_interval_ms"), 600)
+        self.assertEqual(data.get("sniper_interval_ms"), 6000)
         self.assertTrue(data.get("auto_switch_alternative_bank"))
         self.assertTrue(data.get("fallback_to_in_person"))
         self.assertEqual(data.get("bank_cooldown_seconds"), 25)

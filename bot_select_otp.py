@@ -1,4 +1,5 @@
 import json
+import hashlib
 import re
 import time
 from database import DBHandler
@@ -68,6 +69,9 @@ def _bank_select_visible_now(page) -> bool:
 
 def _entry_form_visible_now(page) -> bool:
     """بررسی بازگشت به مرحله اول (کد ملی)"""
+    otp_loc, _ = _locate_otp_input(page)
+    if otp_loc is not None or _bank_select_visible_now(page):
+        return False
     selectors = ["#ctl00_ContentPlaceHolder1_tbIDNo", "input[name$='tbIDNo']"]
     for _, scope in _iter_scopes(page):
         for selector in selectors:
@@ -232,15 +236,16 @@ def get_otp_from_db_fresh(bot):
         if record:
             raw_code = str(record.get("otp") or "").strip()
             rec_ts = float(record.get("ts") or 0.0)
-            if raw_code.isdigit() and 4 <= len(raw_code) <= 8:
-                if rec_ts == 0.0 or (rec_ts >= min_ts and (now - rec_ts) <= validity_sec):
-                    return raw_code, "local_db"
+            from otp_transport import fresh_record
+            valid = fresh_record(bot, record, now)
+            if valid:
+                return valid, "local_db"
 
         # 2) Throttle remote server HTTP polling to once every 3.0s so manual browser entry is never blocked
         last_poll = float(getattr(bot, "_last_remote_otp_poll_ts", 0.0) or 0.0)
         if now - last_poll >= 3.0:
             bot._last_remote_otp_poll_ts = now
-            code = bot.get_otp_code(timeout=1)
+            code = bot.get_otp_code(stop_event=getattr(bot, "_active_stop_event", None), timeout=1)
             if code and str(code).strip():
                 clean = str(code).strip()
                 if clean.isdigit() and 4 <= len(clean) <= 8:
@@ -290,9 +295,9 @@ def _detect_failure_type(page) -> str:
         if "کد امنیتی" in body and ("اشتباه" in body or "نادرست" in body or "صحیح" in body or "نامعتبر" in body):
             return "captcha"
         if ("کد تایید" in body or "کد تأیید" in body) and ("نامعتبر" in body or "منقضی" in body or "اشتباه" in body):
-            return "otp"
+            return "otp_expired"
         if "نامعتبر" in body or "منقضی" in body:
-            return "otp"
+            return "otp_expired"
         return None
     except Exception:
         return None
@@ -339,26 +344,26 @@ def _post_submit_watch(bot, page, stop_event, sleep_with_stop_fn, last_code: str
             _log_fa(bot, "↩️ بازگشت به فرم ورود تشخیص داده شد.", "warning", page)
             return "stopped", None, None
 
-        new_code, source = get_otp_from_db_fresh(bot)
-        if new_code and new_code != last_code:
-            _log_fa(bot, f"⚡ کد جدید در زمان انتظار از منبع {source} رسید.", "warning", page)
-            return "new_code", new_code, source
-
         fail_type = _detect_failure_type(page)
-        if fail_type == "otp" or getattr(bot, "_last_dialog_action", None) == "otp_expired":
+        if fail_type in ("otp", "otp_expired") or getattr(bot, "_last_dialog_action", None) == "otp_expired" or getattr(bot, "_recovery_flags", {}).get("otp_expired"):
+            rejected = getattr(bot, "_consumed_otp_digests", set())
+            rejected.add(hashlib.sha256(str(last_code).encode()).hexdigest())
+            bot._consumed_otp_digests = rejected
             bot.emit_event(
                 "OTP_EXPIRED",
                 step="STEP_2_OTP",
                 reason="site_rejected_otp",
-                result="waiting_new_otp",
-                message="کد پیامک نامعتبر یا منقضی تشخیص داده شد؛ پاکسازی و انتظار برای کد جدید.",
+                result="restart_step1",
+                message="الارم انقضای کد پیامک از سامانه دریافت شد؛ بازگشت خودکار به مرحله ۱ جهت دریافت کد جدید ۱۲۰ ثانیه‌ای.",
                 level="warning",
                 page=page,
             )
             bot.clear_otp_backend()
-            bot.mark_otp_entry_time()
-            DBHandler.update_status(bot.nid, "منتظر پیامک", "OTP expired; waiting for fresh code")
-            return "retry", None, None
+            if hasattr(bot, "clear_otp_locks"):
+                bot.clear_otp_locks()
+            bot._set_recovery_flag("otp_expired")
+            DBHandler.update_status(bot.nid, "کد منقضی - شروع مجدد", "کد تایید منقضی شد؛ در حال بازگشت به مرحله ۱ جهت اخذ کد جدید")
+            return "otp_expired", None, None
         elif fail_type == "captcha" or getattr(bot, "_last_dialog_action", None) == "captcha_invalid":
             bot._last_dialog_action = None
             _log_fa(bot, "❌ کپچای مرحله پیامک اشتباه بود؛ دریافت تصویر جدید و حل مجدد با مدل...", "warning", page)
@@ -381,7 +386,9 @@ def fast_otp_sync_and_inject(bot, page, stop_event, sleep_with_stop_fn):
     """
     default_ttl = int(bot.settings.get("otp_validity_seconds", 120))
     effective_ttl = _detect_site_otp_ttl(page, default_seconds=default_ttl)
-    otp_issued_at = bot.mark_otp_entry_time()
+    otp_issued_at = float(getattr(bot, "_otp_entry_time", 0) or 0) or bot.mark_otp_entry_time()
+    receive_deadline = time.monotonic() + max(1, int(bot.settings.get("otp_receive_timeout", effective_ttl)))
+    manual_required = False
 
     bot.emit_event(
         "OTP_REQUIRED",
@@ -406,6 +413,7 @@ def fast_otp_sync_and_inject(bot, page, stop_event, sleep_with_stop_fn):
         pass
 
     last_injected_code = None
+    submission_pending = False
     otp_received_at = 0.0
     otp_not_found_ts = 0.0
     captcha_failures = 0
@@ -415,6 +423,7 @@ def fast_otp_sync_and_inject(bot, page, stop_event, sleep_with_stop_fn):
         bot.mark_progress("waiting_for_otp_loop")
 
         if _bank_select_visible_now(page):
+            DBHandler.update_runtime(bot.nid, otp_state="OTP_ACCEPTED")
             if hasattr(bot, "clear_otp_locks"):
                 bot.clear_otp_locks()
             DBHandler.update_status(bot.nid, "انتخاب بانک", "ورود به مرحله انتخاب بانک")
@@ -457,94 +466,88 @@ def fast_otp_sync_and_inject(bot, page, stop_event, sleep_with_stop_fn):
 
         otp_not_found_ts = 0.0
 
-        dom_val = (_safe_input_value(otp_locator) or "").strip()
-        code, source = get_otp_from_db_fresh(bot)
-        if not code and dom_val.isdigit():
-            if len(dom_val) >= 6:
+        from otp_transport import normalized_code
+        dom_val = normalized_code(_safe_input_value(otp_locator))
+        code, source = (last_injected_code, "pending_submission") if submission_pending else get_otp_from_db_fresh(bot)
+        if not code and dom_val.isascii() and dom_val.isdigit() and 4 <= len(dom_val) <= 8:
+            if hashlib.sha256(dom_val.encode()).hexdigest() not in getattr(bot, "_consumed_otp_digests", set()):
                 code, source = dom_val, "browser_manual"
-            elif len(dom_val) == 5:
-                # Wait briefly to make sure the user is not still typing the 6th digit
-                if getattr(bot, "_partial_dom_otp_val", "") != dom_val:
-                    bot._partial_dom_otp_val = dom_val
-                    bot._partial_dom_otp_ts = time.time()
-                elif (time.time() - getattr(bot, "_partial_dom_otp_ts", 0.0)) >= 0.75:
-                    code, source = dom_val, "browser_manual"
+                DBHandler.set_otp(bot.nid, dom_val, ts=time.time(), status="manual")
+                _log_fa(bot, f"✍️ کد تایید دستی در فیلد مرورگر شناسایی شد ({dom_val[:2]}**{dom_val[-2:]})؛ تایید و پردازش...", "info", page)
 
-        if time.time() - otp_issued_at >= effective_ttl and not code:
-            bot.emit_event(
-                "OTP_EXPIRED",
-                step="STEP_2_OTP",
-                reason=f"elapsed>{effective_ttl}s",
-                result="expired",
-                message=f"مهلت {effective_ttl} ثانیه‌ای کد پیامک به پایان رسید.",
-                level="warning",
-                page=page,
-            )
-            bot.clear_otp_backend()
-            if not bot.register_otp_failure("otp_ttl_expired"):
-                DBHandler.update_status(bot.nid, "نیازمند ورود مجدد", "تعداد دفعات انقضای پیامک به سقف مجاز رسید")
-                return "otp_expired"
-            otp_issued_at = bot.mark_otp_entry_time()
-            return "otp_expired"
-
+        if (time.monotonic() >= receive_deadline or time.time() - otp_issued_at >= effective_ttl) and not code and not manual_required:
+            DBHandler.update_runtime(bot.nid, otp_state="SMS_TIMEOUT")
+            bot.emit_event("SMS_TIMEOUT", step="STEP_2_OTP", result="MANUAL_OTP_REQUIRED",
+                           message="پیامک در مهلت تعیین‌شده نرسید؛ ورود دستی در همین صفحه فعال است.", page=page)
+            DBHandler.update_runtime(bot.nid, otp_state="MANUAL_OTP_REQUIRED")
+            manual_required = True
         if not code:
             if sleep_with_stop_fn(stop_event, 0.3):
                 break
             continue
 
-        if code != last_injected_code:
-            otp_received_at = time.time()
-            captcha_failures = 0
+        if not submission_pending:
+            DBHandler.update_runtime(bot.nid, otp_state="CODE_VALIDATED")
 
-        if otp_received_at and time.time() - otp_received_at >= effective_ttl:
-            bot.emit_event(
-                "OTP_EXPIRED",
-                step="STEP_2_OTP",
-                reason="injected_otp_ttl_expired",
-                result="cleared",
-                message="اعتبار کد پیامک جاری به پایان رسید؛ منتظر کد جدید.",
-                level="warning",
-                page=page,
-            )
-            bot.clear_otp_backend()
-            bot.mark_otp_entry_time()
-            DBHandler.update_status(bot.nid, "منتظر پیامک", "OTP expired; waiting for fresh code")
-            last_injected_code = None
-            otp_received_at = 0.0
-            continue
+            if code != last_injected_code:
+                record = DBHandler.get_otp_record(bot.nid) or {}
+                otp_received_at = float(record.get("ts") or time.time()) if record.get("otp") == code else time.time()
+                captcha_failures = 0
 
-        current_val = _safe_input_value(otp_locator)
-        if current_val != code:
-            if not _inject_otp_code(bot, page, otp_locator, code):
-                if sleep_with_stop_fn(stop_event, 0.3):
+            if otp_received_at and time.time() - otp_received_at >= effective_ttl:
+                rejected = getattr(bot, "_consumed_otp_digests", set())
+                rejected.add(hashlib.sha256(str(code).encode()).hexdigest())
+                bot._consumed_otp_digests = rejected
+                bot.emit_event(
+                    "OTP_EXPIRED",
+                    step="STEP_2_OTP",
+                    reason="injected_otp_ttl_expired",
+                    result="cleared",
+                    message="اعتبار کد پیامک جاری به پایان رسید؛ منتظر کد جدید.",
+                    level="warning",
+                    page=page,
+                )
+                bot.clear_otp_backend()
+                bot.mark_otp_entry_time()
+                DBHandler.update_status(bot.nid, "منتظر پیامک", "OTP expired; waiting for fresh code")
+                last_injected_code = None
+                otp_received_at = 0.0
+                continue
+
+            current_val = _safe_input_value(otp_locator)
+            if current_val != code:
+                if not _inject_otp_code(bot, page, otp_locator, code):
+                    if sleep_with_stop_fn(stop_event, 0.3):
+                        break
+                    continue
+                last_injected_code = code
+            else:
+                last_injected_code = code
+
+            DBHandler.update_runtime(bot.nid, otp_state="OTP_SUBMITTED")
+            if not submission_pending and not _solve_otp_captcha_fast(bot, page):
+                captcha_failures += 1
+                if captcha_failures >= max_captcha_retries and bool(bot.settings.get("pause_for_manual_captcha", True)):
+                    from bot_select_captcha import wait_for_manual_captcha_handoff
+                    if wait_for_manual_captcha_handoff(
+                        bot,
+                        page,
+                        "#ctl00_ContentPlaceHolder1_tbCaptcha2",
+                        "#ctl00_ContentPlaceHolder1_btnContinue1",
+                        stop_event,
+                        source="otp_stage",
+                        success_selectors=("#ctl00_ContentPlaceHolder1_ddlBankName", "select[name$='ddlBankName']"),
+                    ):
+                        if hasattr(bot, "clear_otp_locks"):
+                            bot.clear_otp_locks()
+                        return "bank_ready"
+                    return None
+                _refresh_captcha_image(bot, page)
+                if sleep_with_stop_fn(stop_event, 0.4):
                     break
                 continue
-            last_injected_code = code
-        else:
-            last_injected_code = code
 
-        if not _solve_otp_captcha_fast(bot, page):
-            captcha_failures += 1
-            if captcha_failures >= max_captcha_retries and bool(bot.settings.get("pause_for_manual_captcha", True)):
-                from bot_select_captcha import wait_for_manual_captcha_handoff
-                if wait_for_manual_captcha_handoff(
-                    bot,
-                    page,
-                    "#ctl00_ContentPlaceHolder1_tbCaptcha2",
-                    "#ctl00_ContentPlaceHolder1_btnContinue1",
-                    stop_event,
-                    source="otp_stage",
-                    success_selectors=("#ctl00_ContentPlaceHolder1_ddlBankName", "select[name$='ddlBankName']"),
-                ):
-                    if hasattr(bot, "clear_otp_locks"):
-                        bot.clear_otp_locks()
-                    return "bank_ready"
-                return None
-            _refresh_captcha_image(bot, page)
-            if sleep_with_stop_fn(stop_event, 0.4):
-                break
-            continue
-
+        submission_pending = True
         status, new_code, _ = _post_submit_watch(
             bot=bot,
             page=page,
@@ -554,15 +557,29 @@ def fast_otp_sync_and_inject(bot, page, stop_event, sleep_with_stop_fn):
             wait_seconds=10.0,
         )
 
+        if status == "otp_expired":
+            _log_fa(bot, "🔄 کد تایید منقضی شد؛ بازگشت خودکار به مرحله ۱ متقاضی برای صدور کد جدید ۱۲۰ ثانیه‌ای...", "warning", page)
+            bot._set_recovery_flag("otp_expired")
+            return "otp_expired"
+
         if status == "bank":
+            consumed = getattr(bot, "_consumed_otp_digests", set())
+            consumed.add(hashlib.sha256(str(code).encode()).hexdigest())
+            bot._consumed_otp_digests = consumed
+            record = DBHandler.get_otp_record(bot.nid) or {}
+            DBHandler.set_otp(bot.nid, code, ts=record.get("ts"), status="consumed")
+            from relay_transport import finish as finish_relay
+            finish_relay(bot, consumed=True)
+            DBHandler.update_runtime(bot.nid, otp_state="OTP_ACCEPTED")
             if hasattr(bot, "clear_otp_locks"):
                 bot.clear_otp_locks()
             return "bank_ready"
 
-        if status == "new_code" and new_code:
+        if status == "retry":
+            submission_pending = False
             continue
-
-        if status in {"retry", "timeout"}:
+        if status == "timeout":
+            DBHandler.update_runtime(bot.nid, otp_state="OTP_RESULT_PENDING")
             continue
 
         if status == "stopped":
@@ -587,7 +604,10 @@ def detect_otp_failure(bot, page) -> bool:
 def handle_otp_dialog(bot, dialog):
     msg = dialog.message() if callable(getattr(dialog, "message", None)) else getattr(dialog, "message", "")
     if msg and any(x in msg for x in ["نامعتبر", "منقضی"]) and "ظرفیت" not in msg:
-        _log_fa(bot, f"🚨 هشدار دیالوگ OTP: {msg}", "error")
+        _log_fa(bot, f"🚨 هشدار دیالوگ OTP: {msg}؛ ثبت انقضا و بازگشت خودکار به مرحله ۱", "error")
+        bot._last_dialog_action = "otp_expired"
+        bot._last_dialog_message = msg
+        bot._set_recovery_flag("otp_expired")
         dialog.accept()
         return True
     return False

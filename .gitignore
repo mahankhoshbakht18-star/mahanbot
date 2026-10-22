@@ -1,27 +1,66 @@
-# فایل‌های سیستمی و کش پایتون
+# ==========================================
+# MAHANBOT .gitignore — Comprehensive Protection
+# ==========================================
+
+# 1. Python System & Bytecode
 __pycache__/
-*.pyc
+*.py[cod]
+*$py.class
+.pytest_cache/
+.coverage
+htmlcov/
 .history/
 
-# پایگاه داده (اگر حاوی اطلاعات واقعی کاربران است نباید آپلود شود)
+# 2. Database Files (Never commit real applicant data or runtime DBs)
 *.db
-cbi_ultimate.db
+*.db-journal
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite3
+cbi_ultimate*.db
+otp_codes.db
+bot.db
 
-# فایل‌های مدل هوش مصنوعی (اگر خیلی حجیم باشند، گیت ممکن است خطا دهد، اما 26 مگابایت فعلا اوکی است)
-# *.pth
-
-# فایل‌های حساس و محیطی
+# 3. Environment & Secrets
 .env
+.env.*
+!.env.example
+.relay.private.env
 venv/
+.venv/
+env/
+ENV/
+
+# 4. User Privacy & Session Captures
+static/live_browser/*.jpg
+static/live_browser/*.jpeg
+static/live_browser/*.png
+!static/live_browser/.gitkeep
+static/test_*.png
+static/preview_*.png
+saved_pages/
+screenshots/
+chrome_profiles/
+diagnostics/
+backups/
+logs/
+*.log
+مشاهده_وضعیت/
+
+# 5. Build Artifacts & Packaging
+dist/
+build/
+*.spec
 mahanscripts.zip
-screenshots/
+mahan/
 Debug Script.py
-mahan/
-*.png
-screenshots/
-Debug Script.py
-mahan/
-*.png
-screenshots/
-mahan/
-*.png
+downloads/*.zip
+updates_staging/
+
+# 6. IDE & OS files
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+desktop.ini

@@ -76,6 +76,7 @@ def sanitize_log_text(text: str) -> str:
     if not text:
         return ""
     out = str(text)
+    out = re.sub(r"(?i)((?:otp|کد\s*(?:تایید|تأیید|پیامک|ورود))\s*[:=]?\s*)[0-9۰-۹٠-٩]{4,8}\b", r"\1[redacted]", out)
     # Mask 11-digit mobile numbers (09xxxxxxxxx)
     out = re.sub(r"\b(09\d)(\d{6})(\d{2})\b", r"\1******\3", out)
     # Mask 10-digit numeric strings (National IDs / Postal Codes)

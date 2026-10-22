@@ -1,0 +1,972 @@
+<!DOCTYPE html>
+<html lang="fa" dir="rtl">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>MAHANBOT 2.0 — پیش‌نمایش تم اقیانوسی عمیق و صفحه پایش دوسطحی</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.rtl.min.css">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Vazirmatn:wght@300;400;500;600;700;800;900&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      /* Deep Ocean Dark Palette */
+      --bg-ocean-deep: #0A192F;
+      --bg-ocean-darker: #060D17;
+      --bg-surface: #112240;
+      --bg-surface-elevated: #172A45;
+      --bg-surface-hover: #1E3A5F;
+      
+      /* Vibrant Turquoise Accents */
+      --turquoise-primary: #00E5D4;
+      --turquoise-deep: #00BFB3;
+      --turquoise-dark: #009F98;
+      --turquoise-glow: rgba(0, 229, 212, 0.25);
+      --turquoise-border: #00BFB3;
+      
+      /* Rich Gold & Amber */
+      --gold-primary: #F59E0B;
+      --gold-deep: #E5A900;
+      --gold-glow: rgba(245, 158, 11, 0.25);
+      
+      /* Text & Typography */
+      --text-primary: #F8FAFC;
+      --text-secondary: #94A3B8;
+      --text-muted: #64748B;
+      --border-dark: #1E3A5F;
+      --border-subtle: #162C4E;
+
+      /* Sidebar Specifics */
+      --sidebar-width: 260px;
+    }
+
+    * {
+      box-sizing: border-box;
+      font-family: 'Vazirmatn', -apple-system, BlinkMacSystemFont, sans-serif;
+    }
+
+    body {
+      background-color: var(--bg-ocean-deep);
+      color: var(--text-primary);
+      margin: 0;
+      padding: 0;
+      min-height: 100vh;
+      display: flex;
+      overflow-x: hidden;
+    }
+
+    /* ════════════════ SIDEBAR: BOLD TURQUOISE (کنتراست بالا) ════════════════ */
+    .sidebar {
+      width: var(--sidebar-width);
+      background: linear-gradient(180deg, #008F89 0%, #00BFB3 45%, #009F98 100%);
+      color: #FFFFFF;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      flex-shrink: 0;
+      box-shadow: 4px 0 24px rgba(0, 0, 0, 0.4);
+      z-index: 100;
+      position: sticky;
+      top: 0;
+    }
+
+    .sidebar-brand {
+      padding: 24px 20px;
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.18);
+    }
+
+    .brand-icon {
+      width: 46px;
+      height: 46px;
+      background: #0A192F;
+      color: var(--turquoise-primary);
+      border-radius: 12px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 22px;
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.25);
+      border: 1px solid rgba(0, 229, 212, 0.4);
+    }
+
+    .brand-title {
+      font-weight: 900;
+      font-size: 19px;
+      letter-spacing: 0.5px;
+      line-height: 1.2;
+    }
+
+    .brand-sub {
+      font-size: 11px;
+      opacity: 0.85;
+      font-weight: 500;
+    }
+
+    .sidebar-menu {
+      list-style: none;
+      padding: 16px 12px;
+      margin: 0;
+      flex-grow: 1;
+    }
+
+    .sidebar-item {
+      margin-bottom: 6px;
+    }
+
+    .sidebar-link {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 11px 16px;
+      color: rgba(255, 255, 255, 0.88);
+      text-decoration: none;
+      font-weight: 600;
+      font-size: 14px;
+      border-radius: 10px;
+      transition: all 0.2s ease;
+    }
+
+    .sidebar-link:hover {
+      background: rgba(10, 25, 47, 0.25);
+      color: #FFFFFF;
+      transform: translateX(-3px);
+    }
+
+    .sidebar-link.active {
+      background: #0A192F;
+      color: var(--turquoise-primary);
+      box-shadow: 0 4px 16px rgba(10, 25, 47, 0.4);
+      border-right: 4px solid var(--gold-primary);
+    }
+
+    .sidebar-link i {
+      font-size: 18px;
+      width: 24px;
+      text-align: center;
+    }
+
+    .sidebar-footer {
+      padding: 16px 20px;
+      border-top: 1px solid rgba(255, 255, 255, 0.18);
+      font-size: 12px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      background: rgba(0, 0, 0, 0.1);
+    }
+
+    /* ════════════════ MAIN CONTENT AREA ════════════════ */
+    .main-wrapper {
+      flex-grow: 1;
+      padding: 28px 36px;
+      background: radial-gradient(circle at 85% 15%, #112646 0%, #0A192F 70%);
+      min-height: 100vh;
+    }
+
+    /* Topbar */
+    .topbar {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 28px;
+      padding-bottom: 20px;
+      border-bottom: 1px solid var(--border-dark);
+    }
+
+    .topbar-title h1 {
+      font-size: 24px;
+      font-weight: 800;
+      margin: 0 0 6px 0;
+      color: #FFFFFF;
+    }
+
+    .topbar-title p {
+      margin: 0;
+      font-size: 13px;
+      color: var(--text-secondary);
+    }
+
+    .topbar-actions {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    /* Top Stats Cards */
+    .stats-row {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 16px;
+      margin-bottom: 28px;
+    }
+
+    .stat-box {
+      background: var(--bg-surface);
+      border: 1px solid var(--border-dark);
+      border-radius: 12px;
+      padding: 16px 20px;
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      transition: border-color 0.2s;
+    }
+
+    .stat-box:hover {
+      border-color: var(--turquoise-primary);
+    }
+
+    .stat-icon {
+      width: 48px;
+      height: 48px;
+      border-radius: 10px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 22px;
+    }
+
+    .stat-icon.turquoise {
+      background: rgba(0, 229, 212, 0.12);
+      color: var(--turquoise-primary);
+      border: 1px solid rgba(0, 229, 212, 0.3);
+    }
+
+    .stat-icon.gold {
+      background: rgba(245, 158, 11, 0.12);
+      color: var(--gold-primary);
+      border: 1px solid rgba(245, 158, 11, 0.3);
+    }
+
+    .stat-icon.blue {
+      background: rgba(59, 130, 246, 0.12);
+      color: #60A5FA;
+      border: 1px solid rgba(59, 130, 246, 0.3);
+    }
+
+    .stat-icon.green {
+      background: rgba(16, 185, 129, 0.12);
+      color: #34D399;
+      border: 1px solid rgba(16, 185, 129, 0.3);
+    }
+
+    .stat-content small {
+      display: block;
+      color: var(--text-secondary);
+      font-size: 12px;
+      margin-bottom: 4px;
+    }
+
+    .stat-content strong {
+      font-size: 22px;
+      font-weight: 800;
+      color: #FFFFFF;
+      font-family: monospace;
+    }
+
+    /* Global Control Bar */
+    .control-panel {
+      background: var(--bg-surface);
+      border: 1px solid var(--border-dark);
+      border-radius: 14px;
+      padding: 18px 24px;
+      margin-bottom: 32px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 16px;
+    }
+
+    .control-group {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      flex-wrap: wrap;
+    }
+
+    .input-pill {
+      background: var(--bg-ocean-deep);
+      border: 1px solid var(--border-dark);
+      border-radius: 8px;
+      padding: 6px 12px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 13px;
+    }
+
+    .input-pill input {
+      background: transparent;
+      border: none;
+      color: var(--turquoise-primary);
+      width: 50px;
+      text-align: center;
+      font-weight: 700;
+      font-family: monospace;
+    }
+
+    .input-pill input:focus {
+      outline: none;
+    }
+
+    /* Buttons */
+    .btn-action-primary {
+      background: var(--turquoise-deep);
+      color: #0A192F;
+      border: none;
+      font-weight: 700;
+      padding: 9px 20px;
+      border-radius: 8px;
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      transition: all 0.2s;
+    }
+
+    .btn-action-primary:hover {
+      background: var(--turquoise-primary);
+      box-shadow: 0 0 16px var(--turquoise-glow);
+      color: #060D17;
+    }
+
+    .btn-action-danger {
+      background: #EF4444;
+      color: #FFFFFF;
+      border: none;
+      font-weight: 700;
+      padding: 9px 18px;
+      border-radius: 8px;
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      transition: all 0.2s;
+    }
+
+    .btn-action-danger:hover {
+      background: #DC2626;
+      box-shadow: 0 0 14px rgba(239, 68, 68, 0.4);
+    }
+
+    /* ════════════════ TWO-TIER BANK MONITORING LAYOUT ════════════════ */
+    .tier-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 16px;
+    }
+
+    .tier-title {
+      font-size: 17px;
+      font-weight: 800;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .tier-title i {
+      color: var(--turquoise-primary);
+    }
+
+    .tier-badge {
+      font-size: 12px;
+      padding: 4px 12px;
+      border-radius: 20px;
+      font-weight: 700;
+    }
+
+    /* TIER 1: ACTIVE SNIPERS (بالایی) */
+    .active-tier-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(360px, 1fr));
+      gap: 20px;
+      margin-bottom: 36px;
+    }
+
+    .sniper-card {
+      background: var(--bg-surface);
+      border: 2px solid var(--turquoise-deep);
+      border-radius: 14px;
+      padding: 20px;
+      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.3), 0 0 16px var(--turquoise-glow);
+      position: relative;
+      overflow: hidden;
+      transition: transform 0.2s, box-shadow 0.2s;
+    }
+
+    .sniper-card:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 12px 30px rgba(0, 0, 0, 0.4), 0 0 24px var(--turquoise-glow);
+    }
+
+    .radar-pulse {
+      position: absolute;
+      top: 18px;
+      left: 18px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 12px;
+      font-weight: 700;
+      color: var(--turquoise-primary);
+      background: rgba(0, 229, 212, 0.1);
+      padding: 4px 12px;
+      border-radius: 20px;
+      border: 1px solid rgba(0, 229, 212, 0.3);
+    }
+
+    .pulse-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: var(--turquoise-primary);
+      animation: pulseAnim 1.4s infinite;
+    }
+
+    @keyframes pulseAnim {
+      0% { transform: scale(0.9); box-shadow: 0 0 0 0 rgba(0, 229, 212, 0.7); }
+      70% { transform: scale(1.2); box-shadow: 0 0 0 8px rgba(0, 229, 212, 0); }
+      100% { transform: scale(0.9); box-shadow: 0 0 0 0 rgba(0, 229, 212, 0); }
+    }
+
+    .applicant-head {
+      margin-bottom: 14px;
+    }
+
+    .applicant-name {
+      font-size: 18px;
+      font-weight: 800;
+      color: #FFFFFF;
+      margin: 0 0 4px 0;
+    }
+
+    .applicant-nid {
+      font-size: 12px;
+      font-family: monospace;
+      color: var(--text-secondary);
+    }
+
+    .sniper-meta-grid {
+      background: var(--bg-surface-elevated);
+      border: 1px solid var(--border-dark);
+      border-radius: 10px;
+      padding: 12px 14px;
+      margin-bottom: 16px;
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px;
+      font-size: 12.5px;
+    }
+
+    .meta-item span:first-child {
+      color: var(--text-secondary);
+      display: block;
+      margin-bottom: 2px;
+    }
+
+    .meta-item span:last-child {
+      color: #FFFFFF;
+      font-weight: 700;
+    }
+
+    .countdown-bar-container {
+      margin-bottom: 16px;
+    }
+
+    .countdown-labels {
+      display: flex;
+      justify-content: space-between;
+      font-size: 12px;
+      margin-bottom: 6px;
+      color: var(--text-secondary);
+    }
+
+    .countdown-track {
+      height: 8px;
+      background: var(--bg-ocean-deep);
+      border-radius: 6px;
+      overflow: hidden;
+      border: 1px solid var(--border-dark);
+    }
+
+    .countdown-fill {
+      height: 100%;
+      background: linear-gradient(90deg, var(--turquoise-dark), var(--turquoise-primary));
+      width: 65%;
+      border-radius: 6px;
+      transition: width 0.3s;
+    }
+
+    .card-actions {
+      display: flex;
+      gap: 10px;
+    }
+
+    .btn-stop-sniper {
+      background: rgba(239, 68, 68, 0.15);
+      border: 1px solid rgba(239, 68, 68, 0.4);
+      color: #FCA5A5;
+      font-weight: 600;
+      padding: 7px 14px;
+      border-radius: 8px;
+      font-size: 12.5px;
+      flex-grow: 1;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      transition: all 0.2s;
+    }
+
+    .btn-stop-sniper:hover {
+      background: #EF4444;
+      color: #FFFFFF;
+    }
+
+    .btn-log-sniper {
+      background: var(--bg-surface-elevated);
+      border: 1px solid var(--border-dark);
+      color: var(--text-secondary);
+      font-size: 12.5px;
+      font-weight: 600;
+      padding: 7px 14px;
+      border-radius: 8px;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .btn-log-sniper:hover {
+      color: #FFFFFF;
+      border-color: var(--turquoise-primary);
+    }
+
+    /* TIER 2: QUEUED & STANDBY APPLICANTS (پایینی) */
+    .standby-tier-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+      gap: 18px;
+    }
+
+    .standby-card {
+      background: var(--bg-surface);
+      border: 1px solid var(--border-dark);
+      border-radius: 12px;
+      padding: 18px;
+      transition: all 0.2s;
+    }
+
+    .standby-card:hover {
+      border-color: var(--turquoise-deep);
+      background: var(--bg-surface-elevated);
+    }
+
+    .standby-head {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      margin-bottom: 12px;
+    }
+
+    .btn-start-single {
+      background: rgba(0, 229, 212, 0.12);
+      border: 1px solid var(--turquoise-deep);
+      color: var(--turquoise-primary);
+      font-weight: 700;
+      font-size: 12px;
+      padding: 6px 14px;
+      border-radius: 8px;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      transition: all 0.2s;
+    }
+
+    .btn-start-single:hover {
+      background: var(--turquoise-deep);
+      color: #0A192F;
+      box-shadow: 0 0 12px var(--turquoise-glow);
+    }
+
+    .badge-mode {
+      padding: 4px 10px;
+      border-radius: 6px;
+      font-size: 11px;
+      font-weight: 700;
+    }
+
+    .badge-mode.online {
+      background: rgba(0, 229, 212, 0.15);
+      color: var(--turquoise-primary);
+      border: 1px solid rgba(0, 229, 212, 0.3);
+    }
+
+    .badge-mode.in-person {
+      background: rgba(245, 158, 11, 0.15);
+      color: var(--gold-primary);
+      border: 1px solid rgba(245, 158, 11, 0.3);
+    }
+  </style>
+</head>
+<body>
+
+  <!-- ════════════════ SIDEBAR ════════════════ -->
+  <aside class="sidebar">
+    <div class="sidebar-brand">
+      <div class="brand-icon">
+        <i class="fa-solid fa-robot"></i>
+      </div>
+      <div>
+        <div class="brand-title">MAHANBOT</div>
+        <div class="brand-sub">تسهیلات ازدواج و فرزندآوری</div>
+      </div>
+    </div>
+
+    <ul class="sidebar-menu">
+      <li class="sidebar-item">
+        <a href="#dashboard" class="sidebar-link">
+          <i class="fa-solid fa-chart-line"></i>
+          <span>داشبورد عملیات</span>
+        </a>
+      </li>
+      <li class="sidebar-item">
+        <a href="#applicants" class="sidebar-link">
+          <i class="fa-solid fa-users"></i>
+          <span>مدیریت متقاضیان</span>
+        </a>
+      </li>
+      <li class="sidebar-item">
+        <a href="#register" class="sidebar-link">
+          <i class="fa-solid fa-user-plus"></i>
+          <span>ثبت‌نام اولیه</span>
+        </a>
+      </li>
+      <li class="sidebar-item">
+        <a href="#bank-select" class="sidebar-link active">
+          <i class="fa-solid fa-bullseye"></i>
+          <span>پایش و شکار بانک</span>
+        </a>
+      </li>
+      <li class="sidebar-item">
+        <a href="#saved-pages" class="sidebar-link">
+          <i class="fa-solid fa-floppy-disk"></i>
+          <span>صفحات ذخیره‌شده</span>
+        </a>
+      </li>
+      <li class="sidebar-item">
+        <a href="#status" class="sidebar-link">
+          <i class="fa-solid fa-clipboard-list"></i>
+          <span>گزارشات و وقایع</span>
+        </a>
+      </li>
+      <li class="sidebar-item">
+        <a href="#settings" class="sidebar-link">
+          <i class="fa-solid fa-sliders"></i>
+          <span>تنظیمات سامانه</span>
+        </a>
+      </li>
+      <li class="sidebar-item">
+        <a href="#support" class="sidebar-link">
+          <i class="fa-solid fa-headset"></i>
+          <span>پشتیبانی و نسخه ۲.۰</span>
+        </a>
+      </li>
+    </ul>
+
+    <div class="sidebar-footer">
+      <span>نسخه ۲.۰.۱ پایدار</span>
+      <span class="badge bg-dark text-warning"><i class="fa-solid fa-bolt"></i> PRO</span>
+    </div>
+  </aside>
+
+  <!-- ════════════════ MAIN CONTENT ════════════════ -->
+  <main class="main-wrapper">
+    <!-- Topbar -->
+    <header class="topbar">
+      <div class="topbar-title">
+        <h1>مرکز پایش زنده و شکار سهمیه بانک‌ها (مرحله ۳)</h1>
+        <p>پایش مداوم ظرفیت غیرحضوری بدون خروج از صفحه و بدون سوزاندن پیامک مجدد</p>
+      </div>
+      <div class="topbar-actions">
+        <span class="badge" style="background:#112240;border:1px solid #1E3A5F;color:#94A3B8;padding:8px 16px;border-radius:20px;font-size:13px;">
+          <i class="fa-solid fa-signal text-success ms-1"></i> ارتباط با بانک مرکزی: پایدار
+        </span>
+      </div>
+    </header>
+
+    <!-- Stats Bar -->
+    <section class="stats-row">
+      <div class="stat-box">
+        <div class="stat-icon turquoise">
+          <i class="fa-solid fa-crosshairs"></i>
+        </div>
+        <div class="stat-content">
+          <small>در حال پایش فعال</small>
+          <strong>۲ متقاضی</strong>
+        </div>
+      </div>
+
+      <div class="stat-box">
+        <div class="stat-icon gold">
+          <i class="fa-solid fa-hourglass-half"></i>
+        </div>
+        <div class="stat-content">
+          <small>در انتظار تخصیص سهمیه</small>
+          <strong>۵ نفر</strong>
+        </div>
+      </div>
+
+      <div class="stat-box">
+        <div class="stat-icon blue">
+          <i class="fa-solid fa-users"></i>
+        </div>
+        <div class="stat-content">
+          <small>کل پرونده‌های ثبت‌شده</small>
+          <strong>۱۴ نفر</strong>
+        </div>
+      </div>
+
+      <div class="stat-box">
+        <div class="stat-icon green">
+          <i class="fa-solid fa-circle-check"></i>
+        </div>
+        <div class="stat-content">
+          <small>شکار قطعی با کد رهگیری</small>
+          <strong>۷ موفق</strong>
+        </div>
+      </div>
+    </section>
+
+    <!-- Global Controls -->
+    <section class="control-panel">
+      <div class="control-group">
+        <div class="input-pill">
+          <i class="fa-regular fa-clock text-muted"></i>
+          <span>فاصله استعلام:</span>
+          <input type="text" value="3.5">
+          <span class="text-muted">ثانیه</span>
+        </div>
+
+        <div class="input-pill">
+          <i class="fa-solid fa-layer-group text-muted"></i>
+          <span>حداکثر مرورگر همزمان:</span>
+          <input type="text" value="4">
+        </div>
+      </div>
+
+      <div class="control-group">
+        <button class="btn-action-primary" onclick="alert('پایش همگانی تمام متقاضیان آغاز شد.')">
+          <i class="fa-solid fa-play"></i>
+          <span>شروع همگانی پایش سهمیه‌ها</span>
+        </button>
+        <button class="btn-action-danger" onclick="alert('تمام پایش‌ها موقتاً متوقف شدند.')">
+          <i class="fa-solid fa-stop"></i>
+          <span>توقف همگانی</span>
+        </button>
+      </div>
+    </section>
+
+    <!-- ════════════════ LEVEL 1: ACTIVE LIVE SNIPERS (ردیف بالایی) ════════════════ -->
+    <section class="mb-4">
+      <div class="tier-header">
+        <div class="tier-title">
+          <i class="fa-solid fa-bolt text-warning"></i>
+          <span>سطح ۱: متقاضیان در حال پایش فعال و زنده‌ی سهمیه</span>
+          <span class="tier-badge" style="background:rgba(0, 229, 212, 0.15);color:var(--turquoise-primary);border:1px solid var(--turquoise-deep);">
+            ۲ فعال در حال استعلام
+          </span>
+        </div>
+      </div>
+
+      <div class="active-tier-grid">
+        <!-- Sniper Card 1 -->
+        <article class="sniper-card">
+          <div class="radar-pulse">
+            <span class="pulse-dot"></span>
+            <span>استعلام زنده</span>
+          </div>
+
+          <div class="applicant-head">
+            <h3 class="applicant-name">سعید دادکاریان</h3>
+            <span class="applicant-nid">کد ملی: ۰۰۱۲****۷۸ | تهران، تهران</span>
+          </div>
+
+          <div class="sniper-meta-grid">
+            <div class="meta-item">
+              <span>بانک انتخابی زنده:</span>
+              <span class="text-warning"><i class="fa-solid fa-building-columns ms-1"></i> بانک ملت</span>
+            </div>
+            <div class="meta-item">
+              <span>روش مراجعه:</span>
+              <span class="text-info"><i class="fa-solid fa-laptop ms-1"></i> غیرحضوری (پیشتاز)</span>
+            </div>
+            <div class="meta-item">
+              <span>آخرین نتیجه DOM:</span>
+              <span class="text-danger">تکمیل ظرفیت (در صف انتظار)</span>
+            </div>
+            <div class="meta-item">
+              <span>تعداد بررسی:</span>
+              <span class="font-monospace text-light">۴۸ مرتبه</span>
+            </div>
+          </div>
+
+          <div class="countdown-bar-container">
+            <div class="countdown-labels">
+              <span>استعلام بعدی در:</span>
+              <span class="text-info font-monospace fw-bold">۱.۴ ثانیه</span>
+            </div>
+            <div class="countdown-track">
+              <div class="countdown-fill" style="width: 72%;"></div>
+            </div>
+          </div>
+
+          <div class="card-actions">
+            <button class="btn-stop-sniper" onclick="this.innerHTML='<i class=\"fa-solid fa-pause\"></i> متوقف شد';">
+              <i class="fa-solid fa-stop"></i> توقف پایش این متقاضی
+            </button>
+            <button class="btn-log-sniper" onclick="alert('مشاهده لاگ زنده مرورگر متقاضی');">
+              <i class="fa-solid fa-terminal"></i> کنسول زنده
+            </button>
+          </div>
+        </article>
+
+        <!-- Sniper Card 2 -->
+        <article class="sniper-card">
+          <div class="radar-pulse">
+            <span class="pulse-dot"></span>
+            <span>استعلام زنده</span>
+          </div>
+
+          <div class="applicant-head">
+            <h3 class="applicant-name">مریم اسکانی</h3>
+            <span class="applicant-nid">کد ملی: ۳۶۱۰****۹۵ | اصفهان، کاشان</span>
+          </div>
+
+          <div class="sniper-meta-grid">
+            <div class="meta-item">
+              <span>بانک انتخابی زنده:</span>
+              <span class="text-warning"><i class="fa-solid fa-building-columns ms-1"></i> بانک تجارت</span>
+            </div>
+            <div class="meta-item">
+              <span>روش مراجعه:</span>
+              <span class="text-info"><i class="fa-solid fa-laptop ms-1"></i> غیرحضوری (پیشتاز)</span>
+            </div>
+            <div class="meta-item">
+              <span>آخرین نتیجه DOM:</span>
+              <span class="text-danger">تکمیل ظرفیت</span>
+            </div>
+            <div class="meta-item">
+              <span>تعداد بررسی:</span>
+              <span class="font-monospace text-light">۳۱ مرتبه</span>
+            </div>
+          </div>
+
+          <div class="countdown-bar-container">
+            <div class="countdown-labels">
+              <span>استعلام بعدی در:</span>
+              <span class="text-info font-monospace fw-bold">۲.۸ ثانیه</span>
+            </div>
+            <div class="countdown-track">
+              <div class="countdown-fill" style="width: 45%;"></div>
+            </div>
+          </div>
+
+          <div class="card-actions">
+            <button class="btn-stop-sniper" onclick="this.innerHTML='<i class=\"fa-solid fa-pause\"></i> متوقف شد';">
+              <i class="fa-solid fa-stop"></i> توقف پایش این متقاضی
+            </button>
+            <button class="btn-log-sniper" onclick="alert('مشاهده لاگ زنده مرورگر متقاضی');">
+              <i class="fa-solid fa-terminal"></i> کنسول زنده
+            </button>
+          </div>
+        </article>
+      </div>
+    </section>
+
+    <!-- ════════════════ LEVEL 2: STANDBY & QUEUED APPLICANTS (ردیف پایینی) ════════════════ -->
+    <section>
+      <div class="tier-header">
+        <div class="tier-title">
+          <i class="fa-solid fa-clock-rotate-left text-muted"></i>
+          <span>سطح ۲: سایر متقاضیان (آماده پایش / در انتظار سهمیه)</span>
+          <span class="tier-badge" style="background:#172A45;color:var(--text-secondary);border:1px solid var(--border-dark);">
+            ۳ پرونده در صف
+          </span>
+        </div>
+      </div>
+
+      <div class="standby-tier-grid">
+        <!-- Standby Card 1 -->
+        <article class="standby-card">
+          <div class="standby-head">
+            <div>
+              <h4 class="mb-1 fw-bold fs-6">رضا محمدی</h4>
+              <small class="text-muted font-monospace">کد ملی: ۱۲۸۰****۴۱</small>
+            </div>
+            <span class="badge-mode online">غیرحضوری</span>
+          </div>
+
+          <div class="mb-3 small text-secondary">
+            <div><i class="fa-solid fa-location-dot ms-1 text-muted"></i> شیراز، فارس</div>
+            <div class="mt-1"><i class="fa-solid fa-list-ol ms-1 text-muted"></i> اولویت‌ها: بانک ملی، صادرات، تجارت</div>
+            <div class="mt-1 text-muted"><i class="fa-solid fa-circle-pause ms-1"></i> وضعیت: متوقف توسط کاربر</div>
+          </div>
+
+          <button class="btn-start-single w-100 justify-content-center" onclick="alert('پایش برای رضا محمدی آغاز شد!');">
+            <i class="fa-solid fa-play"></i>
+            <span>شروع پایش این متقاضی</span>
+          </button>
+        </article>
+
+        <!-- Standby Card 2 -->
+        <article class="standby-card">
+          <div class="standby-head">
+            <div>
+              <h4 class="mb-1 fw-bold fs-6">زهرا موسوی</h4>
+              <small class="text-muted font-monospace">کد ملی: ۰۴۴۰****۱۲</small>
+            </div>
+            <span class="badge-mode in-person">حضوری (شعبه مرکزی)</span>
+          </div>
+
+          <div class="mb-3 small text-secondary">
+            <div><i class="fa-solid fa-location-dot ms-1 text-muted"></i> تبریز، آذربایجان شرقی</div>
+            <div class="mt-1"><i class="fa-solid fa-list-ol ms-1 text-muted"></i> اولویت‌ها: بانک مسکن، سپه</div>
+            <div class="mt-1 text-muted"><i class="fa-solid fa-circle-pause ms-1"></i> وضعیت: آماده برای پایش</div>
+          </div>
+
+          <button class="btn-start-single w-100 justify-content-center" onclick="alert('پایش برای زهرا موسوی آغاز شد!');">
+            <i class="fa-solid fa-play"></i>
+            <span>شروع پایش این متقاضی</span>
+          </button>
+        </article>
+
+        <!-- Standby Card 3 -->
+        <article class="standby-card">
+          <div class="standby-head">
+            <div>
+              <h4 class="mb-1 fw-bold fs-6">علی رحمانی</h4>
+              <small class="text-muted font-monospace">کد ملی: ۳۲۵۰****۸۸</small>
+            </div>
+            <span class="badge-mode online">غیرحضوری</span>
+          </div>
+
+          <div class="mb-3 small text-secondary">
+            <div><i class="fa-solid fa-location-dot ms-1 text-muted"></i> مشهد، خراسان رضوی</div>
+            <div class="mt-1"><i class="fa-solid fa-list-ol ms-1 text-muted"></i> اولویت‌ها: بانک ملت، رفاه کارگران</div>
+            <div class="mt-1 text-muted"><i class="fa-solid fa-circle-pause ms-1"></i> وضعیت: در صف انتظار</div>
+          </div>
+
+          <button class="btn-start-single w-100 justify-content-center" onclick="alert('پایش برای علی رحمانی آغاز شد!');">
+            <i class="fa-solid fa-play"></i>
+            <span>شروع پایش این متقاضی</span>
+          </button>
+        </article>
+      </div>
+    </section>
+  </main>
+
+</body>
+</html>

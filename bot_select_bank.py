@@ -8,7 +8,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from database import DBHandler
 from event_logger import emit_structured_event
-from bank_page_manager import classify_capacity_or_error, BankPageState, is_reserve_text
+from bank_page_manager import classify_capacity_or_error, BankPageState, is_reserve_text, capture_dom_html
 
 
 def _safe_path_part(value, fallback="unknown", max_length=80):
@@ -20,7 +20,7 @@ def _safe_path_part(value, fallback="unknown", max_length=80):
 def _applicant_archive_dir(bot):
     full_name = bot.user_data.get("full_name") or bot.nid
     project_dir = os.path.dirname(os.path.abspath(__file__))
-    target = os.path.join(project_dir, "saved_pages", _safe_path_part(full_name))
+    target = os.path.join(os.getenv("MAHANBOT_SAVED_PAGES_DIR", os.path.join(project_dir, "saved_pages")), _safe_path_part(full_name))
     os.makedirs(target, exist_ok=True)
     return target
 
@@ -196,8 +196,14 @@ def _save_bank_page_if_changed(bot, page, bank_names):
     if bool(bot.settings.get("save_html", True)):
         html_path = os.path.join(folder, base_name + ".html")
         try:
+            try:
+                captured = capture_dom_html(page)
+            except Exception:
+                captured = None
+            if not isinstance(captured, str) or '<html' not in captured.lower():
+                captured = page.content()
             with open(html_path, "w", encoding="utf-8") as stream:
-                stream.write(page.content())
+                stream.write(captured)
             if os.path.getsize(html_path) > 0:
                 files.append(os.path.basename(html_path))
         except Exception:
@@ -242,7 +248,7 @@ def _save_bank_page_if_changed(bot, page, bank_names):
     return new_banks
 
 
-def repair_saved_pages(base_dir):
+def repair_saved_pages(base_dir, only_folder=None):
     """Repair manifests conservatively without deleting any captured page."""
     report = {
         "folders": 0,
@@ -255,6 +261,8 @@ def repair_saved_pages(base_dir):
     if not os.path.isdir(base_dir):
         return report
     for name in os.listdir(base_dir):
+        if only_folder is not None and name != only_folder:
+            continue
         folder = os.path.join(base_dir, name)
         if not os.path.isdir(folder):
             continue
@@ -334,10 +342,18 @@ def _is_reserve_option(option_text: str) -> bool:
 
 
 def _normalize_mode_value(raw_mode: Any) -> str:
-    """Normalize reception mode strings into 'online', 'in_person', or ''."""
-    m = _normalize_persian(raw_mode).lower()
+    """Normalize reception mode strings into 'only_online', 'prefer_online', 'prefer_in_person', 'only_in_person', or 'online', 'in_person'."""
+    m = _normalize_persian(raw_mode).lower().strip()
     if not m:
         return ""
+    if m in {"only_online", "فقط_غیرحضوری", "فقط غیرحضوری", "فقط غیر حضوری"}:
+        return "only_online"
+    if m in {"prefer_online", "ترجیحا_غیرحضوری", "ترجیحا غیرحضوری", "ترجیحاً غیرحضوری", "ترجیحا غیر حضوری", "ترجیحاً غیر حضوری"}:
+        return "prefer_online"
+    if m in {"prefer_in_person", "ترجیحا_حضوری", "ترجیحا حضوری", "ترجیحاً حضوری"}:
+        return "prefer_in_person"
+    if m in {"only_in_person", "فقط_حضوری", "فقط حضوری"}:
+        return "only_in_person"
     if m in {"online", "غیرحضوری", "غیر حضوری", "non_in_person", "electronic", "الکترونیکی", "اینترنتی"} or "غیر" in m:
         return "online"
     if m in {"in_person", "حضوری", "branch", "شعبه"} or ("حضوری" in m and "غیر" not in m):
@@ -440,28 +456,8 @@ def _select_dropdown_with_postback(bot, page, selector: str, target_value: str) 
     except Exception:
         selected_ok = False
 
-    if not selected_ok:
-        try:
-            selected_ok = bool(
-                page.evaluate(
-                    """({sel, val}) => {
-                        const el = document.querySelector(sel);
-                        if (!el) return false;
-                        el.value = val;
-                        for (const opt of Array.from(el.options || [])) {
-                            opt.selected = (String(opt.value) === String(val));
-                        }
-                        el.dispatchEvent(new Event('change', { bubbles: true }));
-                        if (typeof __doPostBack === 'function' && el.name) {
-                            setTimeout(() => { try { __doPostBack(el.name, ''); } catch (e) {} }, 0);
-                        }
-                        return true;
-                    }""",
-                    {"sel": selector, "val": val_str},
-                )
-            )
-        except Exception:
-            selected_ok = False
+    # Only native control events may initiate the site's postback. A second synthetic
+    # __doPostBack can race the first request and trigger CloseSession on full navigation.
 
     # Wait briefly for setTimeout('__doPostBack(...)', 0) to initiate async/sync postback
     try:
@@ -470,7 +466,9 @@ def _select_dropdown_with_postback(bot, page, selector: str, target_value: str) 
         pass
 
     if hasattr(bot, "wait_for_aspnet_postback"):
-        bot.wait_for_aspnet_postback(page, timeout_ms=8000)
+        if bot.wait_for_aspnet_postback(page, timeout_ms=8000) is False:
+            bot._bank_selection_issue = "postback_timeout"
+            return False
 
     return selected_ok
 
@@ -498,17 +496,17 @@ def _verify_dropdown_selection(page, selector: str, expected_value: str, expecte
             return False, val, txt
 
     # Fallback for mock environments where options list has a single matching item or page.selected_bank is tracked
-    if hasattr(page, "selected_bank") and "ddlBankName" in selector:
-        if str(getattr(page, "selected_bank", "")) == expected_str:
-            for opt in opts:
-                if str(opt.get("value") or "") == expected_str:
-                    return True, expected_str, str(opt.get("text") or "")
-            return True, expected_str, expected_bank_name
-    if hasattr(page, "selected_branch") and "ddlBranch" in selector:
-        if str(getattr(page, "selected_branch", "")) == expected_str:
-            return True, expected_str, ""
-
     return False, "", ""
+
+
+def _selection_issue(bot, page, reason, message):
+    bot._bank_selection_issue = reason
+    bot._bank_selection_issue_message = message
+    if hasattr(bot, "log"):
+        bot.log(f"⚠️ {message}", "warning")
+    bot.emit_event("BANK_SELECTION_FAILED", step="STEP_3_BANK_SELECT", reason=reason,
+                   result="manual_action_required", message=message, level="warning", page=page)
+    return False
 
 
 def _ensure_state_and_city_selected(bot, page, runtime_data: Dict[str, Any]) -> bool:
@@ -521,6 +519,14 @@ def _ensure_state_and_city_selected(bot, page, runtime_data: Dict[str, Any]) -> 
     state_ddl = "#ctl00_ContentPlaceHolder1_ddlState"
     city_ddl = "#ctl00_ContentPlaceHolder1_ddlCity"
 
+    # Province may be fixed by the authenticated application rather than editable here.
+    province_label = page.locator("#ctl00_ContentPlaceHolder1_labStateName")
+    if user_state and province_label.count() and province_label.first.is_visible():
+        actual_province = _normalize_persian_key(re.sub(r"^\s*استان\s+", "", _normalize_persian(province_label.first.inner_text())))
+        if actual_province and actual_province.replace(" ", "") != user_state.replace(" ", ""):
+            return _selection_issue(bot, page, "province_mismatch",
+                                    f"استان پرونده در صفحه زنده ({actual_province}) با استان متقاضی ({user_state_raw or user_state}) یکسان نیست؛ استان و شهر را بررسی کنید. نشست فعلی حفظ شد.")
+
     # 1) Check if state dropdown exists and needs selection
     try:
         state_loc = page.locator(state_ddl)
@@ -529,17 +535,22 @@ def _ensure_state_and_city_selected(bot, page, runtime_data: Dict[str, Any]) -> 
                 "(sel) => { const el = document.querySelector(sel); return el ? Array.from(el.options || []).map(o => ({v: o.value, t: (o.textContent||'').trim(), s: o.selected})) : []; }",
                 state_ddl,
             ) or []
+            matched_state = False
             for opt in state_opts:
                 t_norm = _normalize_persian_key(opt.get("t"))
                 val = str(opt.get("v") or "")
                 if not val or val == "0":
                     continue
-                if user_state == t_norm or user_state in t_norm or t_norm in user_state:
+                if user_state == t_norm:
+                    matched_state = True
                     if not opt.get("s"):
-                        _select_dropdown_with_postback(bot, page, state_ddl, val)
+                        if not _select_dropdown_with_postback(bot, page, state_ddl, val):
+                            return False
                     break
+            if not matched_state:
+                return _selection_issue(bot, page, "province_not_available", "استان تنظیم‌شده در فهرست صفحه موجود نیست؛ تنظیمات متقاضی را بررسی کنید.")
     except Exception:
-        pass
+        return False
 
     # 2) Check if city dropdown exists and needs selection
     try:
@@ -553,20 +564,30 @@ def _ensure_state_and_city_selected(bot, page, runtime_data: Dict[str, Any]) -> 
             currently_selected = next((o for o in valid_cities if o.get("s")), None)
 
             if user_city:
+                matched_city = False
                 for opt in valid_cities:
                     t_norm = _normalize_persian_key(opt.get("t"))
                     val = str(opt.get("v"))
-                    if user_city == t_norm or (len(user_city) > 2 and (user_city in t_norm or t_norm in user_city)):
+                    if user_city == t_norm:
+                        matched_city = True
                         if "سوران" in user_city and "سیب" not in user_city and "سیب" in t_norm:
                             continue
                         if not opt.get("s"):
-                            _select_dropdown_with_postback(bot, page, city_ddl, val)
+                            if not _select_dropdown_with_postback(bot, page, city_ddl, val):
+                                return False
                         break
+                if not matched_city:
+                    return _selection_issue(bot, page, "city_not_available", "شهر تنظیم‌شده در فهرست استان صفحه زنده موجود نیست؛ استان و شهر متقاضی را بررسی کنید.")
             elif currently_selected is None and len(valid_cities) == 1:
                 # If applicant city was left blank and only one city exists in the province dropdown, select it
-                _select_dropdown_with_postback(bot, page, city_ddl, str(valid_cities[0]["v"]))
+                if not _select_dropdown_with_postback(bot, page, city_ddl, str(valid_cities[0]["v"])):
+                    return False
+            if user_city:
+                verified, _, _ = _verify_dropdown_selection(page, city_ddl, val)
+                if not verified:
+                    return _selection_issue(bot, page, "city_selection_not_persisted", "انتخاب شهر پس از پاسخ سامانه تایید نشد؛ صفحه فعلی حفظ شد.")
     except Exception:
-        pass
+        return False
     return True
 
 
@@ -708,8 +729,8 @@ def _select_bank_mode(bot, page, desired_mode: str, bank_name: str) -> Tuple[str
     if not mode_norm:
         # Check if global settings specify a default bank mode (defaults to online)
         mode_norm = _normalize_mode_value(bot.settings.get("default_bank_mode", "online"))
-    wants_online = mode_norm == "online"
-    wants_in_person = mode_norm == "in_person"
+    wants_online = mode_norm in {"online", "only_online", "prefer_online"}
+    wants_in_person = mode_norm in {"in_person", "only_in_person", "prefer_in_person"}
 
     mode_controls = _inspect_mode_controls(page)
     if not mode_controls:
@@ -725,31 +746,13 @@ def _select_bank_mode(bot, page, desired_mode: str, bank_name: str) -> Tuple[str
                 break
 
     if not mode_controls:
-        # On ve.cbi.ir/SelectBnkShb.aspx, when a bank does not render a separate mode radio/select
-        # (and either has no branch dropdown or handles non-in-person directly on bank postback),
-        # confirm the mode accordingly.
         effective = "online" if wants_online else ("in_person" if wants_in_person else "default")
-        if wants_online or wants_in_person:
-            label_fa = "غیرحضوری" if wants_online else "حضوری"
-            bot.emit_event(
-                "BANK_MODE_SELECTED",
-                step="STEP_3_BANK_SELECT",
-                reason=f"bank={bank_name}",
-                result=effective,
-                message=f"روش {label_fa} برای {bank_name} اعمال شد.",
-                level="info",
-                page=page,
-            )
-            bot.emit_event(
-                "BANK_MODE_VERIFIED",
-                step="STEP_3_BANK_SELECT",
-                reason=f"bank={bank_name} mode={effective}",
-                result="verified",
-                message=f"روش {label_fa} برای {bank_name} تایید شد.",
-                level="info",
-                page=page,
-            )
-        return effective, True
+        if wants_in_person:
+            branch = page.locator("#ctl00_ContentPlaceHolder1_ddlBranch")
+            if branch.count() and branch.first.is_visible():
+                return effective, True
+        # Absence of a radio is not evidence that the requested method was applied.
+        return effective, False
 
     if wants_online:
         selected = False
@@ -818,7 +821,7 @@ def _select_bank_mode(bot, page, desired_mode: str, bank_name: str) -> Tuple[str
 
         # Re-verify mode in DOM after postback
         refreshed_controls = _inspect_mode_controls(page)
-        verified = True
+        verified = False
         if refreshed_controls and target_ctrl_id:
             for rctrl in refreshed_controls:
                 if rctrl.get("id") == target_ctrl_id:
@@ -940,7 +943,24 @@ def _extract_confirmed_submission(bot, page) -> Optional[str]:
     return None
 
 
-def process_bank_selection_v2(bot, page, stop_event):
+def extract_confirmed_reservation(page=None, *, html=None):
+    """Require a reservation success message outside dropdowns/instructional warnings."""
+    try:
+        if html is not None:
+            messages = re.findall(r'<(?:span|div|label)\b[^>]*(?:id=["\'][^"\']*(?:labErrMsg|lblMessage|lblSuccess)["\']|role=["\']status["\'])[^>]*>(.*?)</(?:span|div|label)>', html, re.I | re.S)
+            text = '\n'.join(re.sub(r'<[^>]+>', '', message) for message in messages)
+        else:
+            text = page.evaluate("""() => Array.from(document.querySelectorAll(
+                '[id$=labErrMsg], [id$=lblMessage], [id$=lblSuccess], [role=status]'
+            )).filter(e => e.offsetParent !== null).map(e => e.innerText).join('\\n')""")
+        return isinstance(text, str) and bool(re.search(
+            r"(?:درخواست|ثبت نام|ثبت‌نام|رزرو|ذخیره).{0,80}(?:با موفقیت|ثبت گردید|ثبت شد)", text)
+            and re.search(r"رزرو|ذخیره", text))
+    except Exception:
+        return False
+
+
+def process_bank_selection_v2(bot, page, stop_event, *, capacity_sniping=False):
     """
     Step 3 State Machine handler for SelectBnkShb.aspx:
     Distinguishes strictly between:
@@ -955,6 +975,10 @@ def process_bank_selection_v2(bot, page, stop_event):
     if monitor_lock is not None and not monitor_lock.acquire(blocking=False):
         return "waiting"
     try:
+        bot._bank_selection_issue = ""
+        bot._bank_selection_issue_message = ""
+        if stop_event.is_set():
+            return "stopped"
         # 0. Prevent duplicate final submission
         existing_tracking = DBHandler.has_final_submission(bot.nid)
         if existing_tracking:
@@ -968,12 +992,31 @@ def process_bank_selection_v2(bot, page, stop_event):
 
         # Wait for any in-flight ASP.NET postback before reading DOM
         if hasattr(bot, "wait_for_aspnet_postback"):
-            bot.wait_for_aspnet_postback(page, timeout_ms=5000)
+            if bot.wait_for_aspnet_postback(page, timeout_ms=5000) is False:
+                bot._bank_selection_issue = "postback_timeout"
+                return "waiting"
 
         runtime_data = load_runtime_data(bot)
 
         # 1. Load applicant priority banks & settings first so we can log BANK_PREFERENCES_LOADED
         raw_priorities = _extract_raw_priorities(runtime_data, getattr(bot, "user_data", {}))
+        if not raw_priorities:
+            try:
+                from core.applicant_config_service import ApplicantConfigurationService
+                from database import DB_PATH
+                app_cfg = ApplicantConfigurationService(DB_PATH).get_applicant_config(bot.nid)
+                if app_cfg and app_cfg.priority_banks:
+                    raw_priorities = [
+                        {
+                            "name": b.bank_name,
+                            "mode": b.visit_method,
+                            "branch": b.preferred_branch_text,
+                            "allow_reserve": b.reserve_allowed,
+                        }
+                        for b in app_cfg.priority_banks
+                    ]
+            except Exception:
+                pass
         default_mode = str(
             runtime_data.get("bank_mode")
             or runtime_data.get("mode")
@@ -998,8 +1041,12 @@ def process_bank_selection_v2(bot, page, stop_event):
             if runtime_data.get("allow_reserve") is not None
             else getattr(bot, "user_data", {}).get("allow_reserve")
         )
-        allow_reserve_global = bool(bot.settings.get("allow_reserve_bank", False))
-        allow_reserve_effective = bool(applicant_allow_reserve) if applicant_allow_reserve is not None else allow_reserve_global
+        allow_reserve_global = bool(bot.settings.get("allow_reserve_bank", True))
+        allow_reserve_effective = (
+            bool(applicant_allow_reserve)
+            if applicant_allow_reserve is not None
+            else (allow_reserve_global)
+        )
 
         priorities = _normalize_priority_entries(
             raw_priorities,
@@ -1046,7 +1093,8 @@ def process_bank_selection_v2(bot, page, stop_event):
             )
 
         # 2. Ensure province and city are selected first
-        _ensure_state_and_city_selected(bot, page, runtime_data)
+        if _ensure_state_and_city_selected(bot, page, runtime_data) is False:
+            return "manual_action_required"
 
         # 3. Read bank options from #ctl00_ContentPlaceHolder1_ddlBankName
         options = _read_dropdown_options(page, dropdown_id)
@@ -1076,6 +1124,36 @@ def process_bank_selection_v2(bot, page, stop_event):
         )
         bot.mark_progress("banks_read")
         _save_bank_page_if_changed(bot, page, bank_names)
+
+        # Record Live DOM Observation into bank_page_observations
+        try:
+            from core.applicant_config_service import ApplicantConfigurationService
+            from database import DB_PATH
+            obs_prov = ""
+            obs_city = ""
+            try:
+                p_lab = page.locator("#ctl00_ContentPlaceHolder1_labStateName")
+                if p_lab.count() and p_lab.first.is_visible():
+                    obs_prov = p_lab.first.inner_text().strip()
+                c_sel = page.locator("#ctl00_ContentPlaceHolder1_ddlCity")
+                if c_sel.count() and c_sel.first.is_visible():
+                    obs_city = page.evaluate("() => { const el = document.querySelector('#ctl00_ContentPlaceHolder1_ddlCity'); return el && el.selectedIndex >= 0 ? el.options[el.selectedIndex].text : ''; }") or ""
+            except Exception:
+                pass
+
+            raw_opts_dict = [{"text": t, "value": v, "selected": s, "is_reserve": _is_reserve_option(t)} for t, v, s in available]
+            ApplicantConfigurationService(DB_PATH).record_bank_page_observation(
+                applicant_id=getattr(bot, "applicant_id", 0) or 0,
+                session_id=getattr(bot, "session_id", "") or str(getattr(bot, "run_id", "")),
+                site_province=obs_prov,
+                site_city=obs_city,
+                available_banks=[{"name": t, "value": v} for t, v, _ in available],
+                raw_options=raw_opts_dict,
+                capacity_status="RESERVE_ONLY" if all(_is_reserve_option(t) for t, _, _ in available) else "AVAILABLE",
+                verification_status="PENDING",
+            )
+        except Exception:
+            pass
 
         # 4. Clean expired bank cooldowns and build candidate queue in applicant's priority order
         now = time.time()
@@ -1116,10 +1194,21 @@ def process_bank_selection_v2(bot, page, stop_event):
 
         # Non-reserve active options are prioritized before reserve options
         candidate_queue = active_candidates + reserve_candidates
+        priority_order = {entry["canonical"]: i for i, entry in enumerate(priorities)}
+        candidate_queue.sort(key=lambda item: priority_order.get(item[0]["canonical"], len(priorities)))
 
         if not candidate_queue:
             target_names = "، ".join(e["name"] for e in priorities)
             if skipped_reserve_options:
+                bot.emit_event(
+                    "BANK_RESERVE_ONLY",
+                    step="STEP_3_BANK_SELECT",
+                    reason=f"reserve_only_disabled:{skipped_reserve_options[0]}",
+                    result="reserve_skipped",
+                    message=f"بانک اولویت‌دار ({target_names}) فقط به صورت رزرو/ذخیره در فهرست موجود است و گزینه بانک رزرو غیرفعال است.",
+                    level="warning",
+                    page=page,
+                )
                 bot.emit_event(
                     "BANK_SELECTION_FAILED",
                     step="STEP_3_BANK_SELECT",
@@ -1127,6 +1216,16 @@ def process_bank_selection_v2(bot, page, stop_event):
                     result="reserve_skipped",
                     message=f"بانک اولویت‌دار ({target_names}) فقط به صورت رزرو/ذخیره در فهرست موجود است و گزینه بانک رزرو غیرفعال است.",
                     level="warning",
+                    page=page,
+                )
+            else:
+                bot.emit_event(
+                    "BANK_NOT_AVAILABLE",
+                    step="STEP_3_BANK_SELECT",
+                    reason=f"priority_banks={target_names}",
+                    result="not_in_dropdown",
+                    message=f"بانک اولویت‌دار ({target_names}) در فهرست بانک‌های دارای ظرفیت فعلی وجود ندارد.",
+                    level="info",
                     page=page,
                 )
             bot.emit_event(
@@ -1182,7 +1281,8 @@ def process_bank_selection_v2(bot, page, stop_event):
             # 5. Select the bank option in dropdown (and wait for ASP.NET postback)
             DBHandler.update_runtime(bot.nid, status="SELECTING_BANK", current_step="SELECT_BANK", target_bank=bank_name)
             if not cand_already_sel:
-                _select_dropdown_with_postback(bot, page, dropdown_id, target_value)
+                if not _select_dropdown_with_postback(bot, page, dropdown_id, target_value):
+                    return "waiting"
 
             if getattr(bot, "_last_selected_bank_sig", None) != current_bank_sig:
                 bot._last_selected_bank_sig = current_bank_sig
@@ -1209,7 +1309,8 @@ def process_bank_selection_v2(bot, page, stop_event):
                     is_full = True
                     full_msg = err_text
 
-            if is_full:
+            online_sniping = bool(capacity_sniping)  # Managed submissions preserve either requested mode.
+            if is_full and not online_sniping:
                 bot.emit_event(
                     "BANK_CAPACITY_FULL",
                     step="STEP_3_BANK_SELECT",
@@ -1238,16 +1339,6 @@ def process_bank_selection_v2(bot, page, stop_event):
             # Verify that the bank selection actually persisted in live DOM after postback
             verified_bank, actual_val, actual_txt = _verify_dropdown_selection(page, dropdown_id, target_value, bank_name)
             if not verified_bank:
-                _select_dropdown_with_postback(bot, page, dropdown_id, target_value)
-                if bot.consume_recovery_flag("bank_capacity_full"):
-                    bot._bank_cooldowns[p_canon] = time.time() + cooldown_sec
-                    if has_next:
-                        return_to_bank_field(page, dropdown_id)
-                        continue
-                    return "capacity_full"
-                verified_bank, actual_val, actual_txt = _verify_dropdown_selection(page, dropdown_id, target_value, bank_name)
-
-            if not verified_bank:
                 bot.emit_event(
                     "BANK_SELECTION_FAILED",
                     step="STEP_3_BANK_SELECT",
@@ -1271,12 +1362,33 @@ def process_bank_selection_v2(bot, page, stop_event):
                 level="success",
                 page=page,
             )
+            observer = getattr(bot, "bank_state_observer", None)
+            if callable(observer):
+                observer(BankPageState.BANK_SELECTED)
 
             # 6. Mode selection (حضوری vs غیرحضوری) with optional fallback to in-person
-            effective_mode, mode_ok = _select_bank_mode(bot, page, desired_mode, bank_name)
-            if not mode_ok and desired_mode == "online" and fallback_in_person:
+            mode_choice = _normalize_mode_value(desired_mode)
+            wants_online_first = mode_choice in {"online", "only_online", "prefer_online", ""}
+            first_target_mode = "online" if wants_online_first else "in_person"
+
+            effective_mode, mode_ok = _select_bank_mode(bot, page, first_target_mode, bank_name)
+            if mode_ok and effective_mode == "online" and callable(observer):
+                observer(BankPageState.NON_PRESENTIAL_SELECTED)
+
+            # Determine whether switching between online and in-person is permitted:
+            # - only_online / only_in_person: STRICT, NEVER switch
+            # - prefer_online: can switch to in-person
+            # - prefer_in_person: can switch to online
+            # - online: can switch to in-person only if fallback_in_person is True
+            can_switch_to_in_person = (mode_choice == "prefer_online") or (mode_choice in {"online", ""} and fallback_in_person)
+            can_switch_to_online = (mode_choice == "prefer_in_person")
+
+            if not mode_ok and first_target_mode == "online" and can_switch_to_in_person:
                 bot.log(f"🔄 روش غیرحضوری برای بانک {bank_name} در دسترس نیست؛ بر اساس تنظیمات روش حضوری بررسی می‌شود...", "info", page)
                 effective_mode, mode_ok = _select_bank_mode(bot, page, "in_person", bank_name)
+            elif not mode_ok and first_target_mode == "in_person" and can_switch_to_online:
+                bot.log(f"🔄 روش حضوری برای بانک {bank_name} در دسترس نیست؛ بر اساس تنظیمات اولویت به روش غیرحضوری سوئیچ می‌شود...", "info", page)
+                effective_mode, mode_ok = _select_bank_mode(bot, page, "online", bank_name)
 
             mode_full = False
             mode_err_msg = ""
@@ -1289,7 +1401,18 @@ def process_bank_selection_v2(bot, page, stop_event):
                     mode_full = True
                     mode_err_msg = err_text
 
-            if not mode_ok or mode_full:
+            if mode_full and effective_mode == "online" and can_switch_to_in_person and not online_sniping:
+                bot.log(f"🔄 سهمیه غیرحضوری برای بانک «{bank_name}» تکمیل است؛ طبق اولویت متقاضی به روش حضوری سوئیچ می‌شود...", "info", page)
+                in_eff, in_ok = _select_bank_mode(bot, page, "in_person", bank_name)
+                if in_ok:
+                    effective_mode = in_eff
+                    mode_ok = True
+                    mode_full = False
+                    mode_err_msg = ""
+
+            if not mode_ok or (mode_full and not capacity_sniping):
+                if not mode_full or capacity_sniping:
+                    return "manual_action_required"
                 reason_msg = mode_err_msg or f"روش درخواستی ({desired_mode}) برای بانک {bank_name} فعال نیست"
                 bot.emit_event(
                     "BANK_CAPACITY_FULL",
@@ -1300,8 +1423,9 @@ def process_bank_selection_v2(bot, page, stop_event):
                     level="warning",
                     page=page,
                 )
-                bot._bank_cooldowns[p_canon] = time.time() + cooldown_sec
-                if has_next:
+                if not online_sniping:
+                    bot._bank_cooldowns[p_canon] = time.time() + cooldown_sec
+                if has_next and not online_sniping:
                     bot.log(f"🔄 سهمیه بانک «{bank_name}» تکمیل است؛ انتقال خودکار به اولویت بعدی (Waterfall)...", "info", page)
                     return_to_bank_field(page, dropdown_id)
                     continue
@@ -1396,7 +1520,8 @@ def process_bank_selection_v2(bot, page, stop_event):
         bot._verified_step3_signature = f"{target_value}|{effective_mode}|{selected_branch}"
 
         # 8. Final Submit check (auto_final_submit / final_submit)
-        allow_final_submit = bool(bot.settings.get("auto_final_submit", bot.settings.get("final_submit", False)))
+        # The per-applicant controller owns the submission timer and fresh-response latch.
+        allow_final_submit = bool(bot.settings.get("auto_final_submit", bot.settings.get("final_submit", False))) and not capacity_sniping
         if not allow_final_submit:
             if is_reserve_choice:
                 DBHandler.update_status(bot.nid, "رزرو در انتظار تخصیص ظرفیت", f"بانک {bank_name} (رزرو) آماده است؛ منتظر تایید ثبت نهایی توسط کاربر")
@@ -1425,6 +1550,11 @@ def process_bank_selection_v2(bot, page, stop_event):
             return "option_selected_waiting_user"
 
         # 9. Perform Final Submit ONCE and verify official site response
+        if stop_event.is_set():
+            return "stopped"
+        observer = getattr(bot, "bank_state_observer", None)
+        if callable(observer):
+            observer(BankPageState.FINAL_SUBMIT_IN_PROGRESS)
         bot.emit_event(
             "FINAL_SUBMIT_STARTED",
             step="FINAL_SUBMIT",
@@ -1434,7 +1564,9 @@ def process_bank_selection_v2(bot, page, stop_event):
             level="info",
             page=page,
         )
-        page.click("#ctl00_ContentPlaceHolder1_btnSave")
+        if not DBHandler.claim_final_submission(bot.nid):
+            return "submit_rejected"
+        page.click("#ctl00_ContentPlaceHolder1_btnSave", timeout=5000)
         try:
             page.wait_for_timeout(120)
         except Exception:
@@ -1445,6 +1577,7 @@ def process_bank_selection_v2(bot, page, stop_event):
         # Check if dialog or page error rejected the submission (e.g. capacity full on save)
         if bot.consume_recovery_flag("bank_capacity_full"):
             msg = getattr(bot, "_last_dialog_message", "ظرفیت تکمیل است")
+            DBHandler.release_final_submission_claim(bot.nid)
             bot.emit_event(
                 "FINAL_SUBMIT_REJECTED",
                 step="FINAL_SUBMIT",
@@ -1458,6 +1591,7 @@ def process_bank_selection_v2(bot, page, stop_event):
 
         err_kind, err_text = _detect_page_error_or_capacity_message(bot, page)
         if err_kind == "bank_capacity_full":
+            DBHandler.release_final_submission_claim(bot.nid)
             bot.emit_event(
                 "FINAL_SUBMIT_REJECTED",
                 step="FINAL_SUBMIT",
@@ -1469,6 +1603,7 @@ def process_bank_selection_v2(bot, page, stop_event):
             )
             return "capacity_full"
         if err_kind:
+            DBHandler.release_final_submission_claim(bot.nid)
             bot.emit_event(
                 "FINAL_SUBMIT_REJECTED",
                 step="FINAL_SUBMIT",
@@ -1480,7 +1615,15 @@ def process_bank_selection_v2(bot, page, stop_event):
             )
             return "submit_rejected"
 
+        if is_reserve_choice:
+            # The option label alone never confirms that a reservation was accepted.
+            if extract_confirmed_reservation(page):
+                bot.save_checkpoint("STEP_3_BANK_SELECT", page=page, final_submit_status="reserve_confirmed",
+                                    reserve_confirmed=True, last_operation_result="RESERVE_PENDING")
+                return "reserve_confirmed"
         confirmed_code = _extract_confirmed_submission(bot, page)
+        if is_reserve_choice and confirmed_code == "CONFIRMED":
+            confirmed_code = None
         if confirmed_code:
             DBHandler.save_success_data(bot.nid, confirmed_code)
             bot.set_runtime_state("SUCCESS", "FINAL_SUBMIT_CONFIRMED", browser_status="OPEN", target_bank=bank_name)
@@ -1567,6 +1710,8 @@ def select_first_available_branch(page, preferred_branches: Optional[List[str]] 
 
 def process_branch_selection(bot, page, stop_event, preferred_branches: Optional[List[str]] = None, trigger_submit: bool = True):
     try:
+        if stop_event.is_set():
+            return None
         branch_ddl = "#ctl00_ContentPlaceHolder1_ddlBranch"
         wait_for_branch_fully_loaded(page, branch_ddl)
 
@@ -1591,11 +1736,14 @@ def process_branch_selection(bot, page, stop_event, preferred_branches: Optional
             bot.log("شعبه انتخاب شد؛ ثبت نهایی منتظر تأیید کاربر است.", "warning", page)
             return branch_value
 
-        page.click("#ctl00_ContentPlaceHolder1_btnSave")
+        if stop_event.is_set() or not DBHandler.claim_final_submission(bot.nid):
+            return None
+        page.click("#ctl00_ContentPlaceHolder1_btnSave", timeout=5000)
         DBHandler.update_status(bot.nid, "Submitted", "Final submit clicked")
         DBHandler.update_runtime(bot.nid, status="PROCESSING", current_step="FINAL_SUBMIT")
         return branch_value
     except Exception:
+        DBHandler.release_final_submission_claim(bot.nid)
         return None
 
 

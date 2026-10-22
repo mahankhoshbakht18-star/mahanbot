@@ -137,6 +137,9 @@ from routes.jobs import router as jobs_router
 from routes.websocket import router as ws_router
 from routes.saved_pages import router as saved_pages_router
 from routes.diagnostic import router as diagnostic_router
+from routes.capacity import router as capacity_router
+from routes.database_admin import router as database_admin_router
+from routes.system_update import router as system_update_router
 
 app.include_router(auth_router)
 app.include_router(applicants_router)
@@ -146,12 +149,15 @@ app.include_router(jobs_router)
 app.include_router(ws_router)
 app.include_router(saved_pages_router)
 app.include_router(diagnostic_router)
+app.include_router(capacity_router)
+app.include_router(database_admin_router)
+app.include_router(system_update_router)
 
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(
         "server:app",
         host=os.getenv("MAHANBOT_HOST", "127.0.0.1"),
-        port=int(os.getenv("MAHANBOT_PORT", "8001")),
+        port=int(os.getenv("MAHANBOT_PORT", "8000")),
         reload=False
     )

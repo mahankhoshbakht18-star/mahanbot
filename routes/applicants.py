@@ -9,6 +9,7 @@ from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from fastapi.responses import HTMLResponse
 
 from database import DBHandler
+from submission_policy import validate_submission_settings
 from event_logger import EVENT_BROADCASTER, build_event, log_event
 from core.deps import require_api_key
 from core.helpers import (
@@ -24,6 +25,23 @@ from core.models import (
 )
 
 router = APIRouter()
+
+
+@router.patch('/applicants/{nid}/submission-settings')
+def update_submission_settings(nid: str, payload: Dict[str, Any], _: bool = Depends(require_api_key)):
+    nid = _normalize_nid(nid)
+    if not DBHandler.get_applicant(nid):
+        raise HTTPException(status_code=404, detail='Applicant not found')
+    if not payload or set(payload) - {'auto_final_submit', 'final_submit_interval_seconds'}:
+        raise HTTPException(status_code=422, detail='Invalid submission settings')
+    try:
+        validate_submission_settings(payload)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from None
+    if not DBHandler.update_applicant_data(nid, payload):
+        raise HTTPException(status_code=500, detail='Could not save submission settings')
+    _emit_applicants_snapshot()
+    return {'status': 'ok', 'submission_settings': payload}
 
 
 def _emit_applicants_snapshot() -> None:
@@ -173,6 +191,10 @@ async def save_applicant(req: ApplicantModel):
         if not national_id.isdigit() or len(national_id) != 10:
             raise HTTPException(status_code=422, detail="کد ملی باید دقیقاً ۱۰ رقم باشد")
         applicant_data = dict(req.data or {})
+        try:
+            validate_submission_settings(applicant_data)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from None
         spouse_national_id = _normalize_nid(applicant_data.get("spouse_national_id"))
         if spouse_national_id and (not spouse_national_id.isdigit() or len(spouse_national_id) != 10):
             raise HTTPException(status_code=422, detail="کد ملی همسر باید دقیقاً ۱۰ رقم باشد")
@@ -284,3 +306,63 @@ def stop_bank(nid: str, payload: Dict[str, Any], _: bool = Depends(require_api_k
     log_event(nid, None, f"⛔ توقف بانک: {bank_name}", "warning")
     _emit_applicants_snapshot()
     return {"status": "ok", "bank": bank_name}
+
+
+@router.get("/api/geo/provinces")
+def get_geo_provinces():
+    try:
+        from core.db_migration import IRAN_PROVINCES
+        return [{"id": p["id"], "name": p["name"]} for p in IRAN_PROVINCES]
+    except Exception:
+        return []
+
+
+@router.get("/api/geo/cities")
+def get_geo_cities(province: Optional[str] = None, province_id: Optional[int] = None):
+    try:
+        from core.db_migration import IRAN_PROVINCES, SISTAN_BALUCHESTAN_CITIES, LORESTAN_CITIES, TEHRAN_CITIES
+        p_id = province_id
+        if not p_id and province:
+            norm_prov = province.strip()
+            for p in IRAN_PROVINCES:
+                if p["name"] == norm_prov or norm_prov in p.get("aliases", []):
+                    p_id = p["id"]
+                    break
+
+        cities_map = {
+            16: SISTAN_BALUCHESTAN_CITIES,
+            26: LORESTAN_CITIES,
+            8: TEHRAN_CITIES,
+        }
+        if p_id in cities_map:
+            return [{"name": c["name"]} for c in cities_map[p_id]]
+
+        import sqlite3, database
+        conn = sqlite3.connect(database.DB_PATH)
+        cur = conn.cursor()
+        if p_id:
+            rows = cur.execute("SELECT canonical_name FROM cities WHERE province_id=? ORDER BY canonical_name", (p_id,)).fetchall()
+        elif province:
+            rows = cur.execute("""
+                SELECT c.canonical_name FROM cities c 
+                JOIN provinces p ON c.province_id = p.id 
+                WHERE p.canonical_name=? OR p.aliases LIKE ? 
+                ORDER BY c.canonical_name
+            """, (province, f"%{province}%")).fetchall()
+        else:
+            rows = cur.execute("SELECT canonical_name FROM cities ORDER BY canonical_name LIMIT 100").fetchall()
+        conn.close()
+        if rows:
+            return [{"name": r[0]} for r in rows]
+        return []
+    except Exception:
+        return []
+
+
+@router.get("/api/geo/banks")
+def get_geo_banks():
+    try:
+        from core.db_migration import IRAN_BANKS
+        return [{"id": b["id"], "name": b["name"], "code": b["code"]} for b in IRAN_BANKS]
+    except Exception:
+        return []

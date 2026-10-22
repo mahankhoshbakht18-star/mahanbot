@@ -11,8 +11,31 @@ from typing import Dict, Any, List, Optional, Tuple
 
 logger = logging.getLogger("mahanbot.bank_page")
 
+
+def capture_dom_html(page):
+    """Serialize live form properties on a detached clone; never touch the live DOM."""
+    return page.evaluate("""() => {
+        const root = document.documentElement.cloneNode(true);
+        for (const el of document.querySelectorAll('select, input[type=radio], input[type=checkbox]')) {
+            if (!el.id) continue;
+            const copy = root.querySelector('#' + CSS.escape(el.id));
+            if (!copy) continue;
+            if (el.tagName === 'SELECT') Array.from(copy.options).forEach((o, i) =>
+                o.toggleAttribute('selected', !!el.options[i].selected));
+            else copy.toggleAttribute('checked', el.checked);
+        }
+        return root.outerHTML;
+    }""")
+
 # ── Page 3 Essential States ───────────────────────────────────────────
 class BankPageState:
+    BANK_PAGE_DETECTED = "BANK_PAGE_DETECTED"
+    BANK_OPTIONS_LOADING = "BANK_OPTIONS_LOADING"
+    BANK_OPTIONS_READY = "BANK_OPTIONS_READY"
+    PREFERRED_BANK_NOT_FOUND = "PREFERRED_BANK_NOT_FOUND"
+    FINAL_SUBMIT_READY = "FINAL_SUBMIT_READY"
+    FINAL_SUBMIT_IN_PROGRESS = "FINAL_SUBMIT_IN_PROGRESS"
+    PAUSED = "PAUSED"
     BANK_PAGE_READY = "BANK_PAGE_READY"
     BANK_SELECTED = "BANK_SELECTED"
     NON_PRESENTIAL_SELECTED = "NON_PRESENTIAL_SELECTED"
@@ -21,6 +44,11 @@ class BankPageState:
     SESSION_EXPIRED = "SESSION_EXPIRED"
     MANUAL_ACTION_REQUIRED = "MANUAL_ACTION_REQUIRED"
     REGISTRATION_CONFIRMED = "REGISTRATION_CONFIRMED"
+    WAITING_CAPACITY = "WAITING_CAPACITY"
+    PAGE_3_READY = "PAGE_3_READY"
+    SUBMITTING = "SUBMITTING"
+    SUCCESS = "SUCCESS"
+    ERROR = "ERROR"
     UNKNOWN = "UNKNOWN"
 
 
@@ -118,6 +146,12 @@ def classify_capacity_or_error(text: Any) -> Tuple[Optional[str], str]:
     norm = normalize_persian(text)
     if not norm:
         return None, ""
+
+    # Security and authentication errors take precedence over incidental capacity words.
+    if any(m in norm.lower() for m in ("نشست شما", "مهلت زمانی", "session expired", "مجددا وارد", "مجدداً وارد")):
+        return BankPageState.SESSION_EXPIRED, norm
+    if any(m in norm.lower() for m in ("مسدود", "تعداد دفعات", "محدودیت دسترسی", "خطای امنیتی", "rate limit", "too many requests", "request rejected")):
+        return "waf_blocked", norm
 
     # 1) Bank capacity full markers
     capacity_markers = (
@@ -333,6 +367,7 @@ def analyze_bank_page_html(html: str) -> Dict[str, Any]:
     # 7. Evaluate State Machine
     if res["error_message"]:
         kind, _ = classify_capacity_or_error(res["error_message"])
+        res["error_kind"] = kind
         if kind == BankPageState.CAPACITY_FULL:
             res["state"] = BankPageState.CAPACITY_FULL
             return res
@@ -352,3 +387,15 @@ def analyze_bank_page_html(html: str) -> Dict[str, Any]:
         res["state"] = BankPageState.BANK_PAGE_READY
 
     return res
+
+
+for _state, _label in {
+    BankPageState.BANK_PAGE_DETECTED: "صفحه بانک فعال",
+    BankPageState.BANK_OPTIONS_LOADING: "در انتظار بارگذاری بانک‌ها",
+    BankPageState.BANK_OPTIONS_READY: "فهرست بانک‌ها آماده است",
+    BankPageState.PREFERRED_BANK_NOT_FOUND: "بانک اولویت‌دار موجود نیست",
+    BankPageState.FINAL_SUBMIT_READY: "آماده تأیید ثبت نهایی",
+    BankPageState.FINAL_SUBMIT_IN_PROGRESS: "در انتظار نتیجه درخواست",
+    BankPageState.PAUSED: "پایش متوقف؛ نشست حفظ شده",
+}.items():
+    STATE_METADATA[_state] = {"fa": _label, "badge_class": "badge-info", "color": "#60A5FA", "description": _label}

@@ -24,6 +24,8 @@ def load_dotenv(path=None, override: bool = False) -> int:
     env_path = Path(path) if path else Path(
         os.getenv("MAHANBOT_ENV_FILE", DEFAULT_ENV_PATH)
     )
+    if path is None:
+        load_dotenv(BASE_DIR / ".relay.private.env", override=False)
     try:
         text = env_path.read_text(encoding="utf-8-sig")
     except OSError:

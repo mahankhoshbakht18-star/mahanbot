@@ -489,6 +489,8 @@ class RegressionTests(unittest.TestCase):
 
 class MandatoryV180Tests(unittest.TestCase):
     def setUp(self):
+        from live_sessions import LIVE_SESSIONS
+        LIVE_SESSIONS.reset()
         self.temp_dir = tempfile.TemporaryDirectory()
         self.old_db_path = database.DB_PATH
         database.DB_PATH = os.path.join(self.temp_dir.name, "test_v180.db")
@@ -510,6 +512,8 @@ class MandatoryV180Tests(unittest.TestCase):
             conn.commit()
 
     def tearDown(self):
+        from live_sessions import LIVE_SESSIONS
+        LIVE_SESSIONS.reset()
         database.DB_PATH = self.old_db_path
         DBHandler._settings_cache.clear()
         self.temp_dir.cleanup()
@@ -642,7 +646,8 @@ class MandatoryV180Tests(unittest.TestCase):
 
         self.assertEqual(bot.detect_actual_page_stage(page), "STEP_3_BANK_SELECT")
         reloaded = bot._reload_guarded(page, reason="state timeout")
-        self.assertTrue(reloaded)
+        self.assertFalse(reloaded)
+        self.assertEqual(page.reloads, 0)
         self.assertFalse(bot._otp_wait_lock)
         self.assertEqual(bot._otp_guard_until, 0.0)
         self.assertFalse(bot._safe_goto_locked)
@@ -694,7 +699,7 @@ class MandatoryV180Tests(unittest.TestCase):
 
         stop_event = threading.Event()
         result = process_bank_selection_v2(bot, page, stop_event)
-        self.assertEqual(result, "capacity_full")
+        self.assertEqual(result, "manual_action_required")
         self.assertEqual(in_person_radio.clicks, 0)
 
     def test_07_priority_bank_missing_from_list(self):
@@ -823,6 +828,7 @@ class MandatoryV180Tests(unittest.TestCase):
 
         page.on_click_save_hook = on_save
 
+        page.mode_controls = [{"kind": "radio", "id": "rbtnGheireHozori", "name": "mode", "label": "غیرحضوری", "checked": True, "disabled": False}]
         stop_event = threading.Event()
         res1 = process_bank_selection_v2(bot, page, stop_event)
         self.assertEqual(res1, "submitted_confirmed")
@@ -1098,22 +1104,22 @@ class MandatoryV180Tests(unittest.TestCase):
         self.assertIn("BANK_FORM_READY", events2)
 
     def test_19_compact_browser_window_top_right_and_no_maximize(self):
-        """Scenario 19: Browser opens in a compact 540x680 window at top_right of primary work area, clamps on small screens, and never maximizes."""
+        """Scenario 19: Browser opens in a compact 620x730 window at top_right of primary work area, clamps on small screens, and never maximizes."""
         def_prof = browser_launcher.get_default_browser_profile()
         self.assertFalse(def_prof["headless"])
-        self.assertEqual(def_prof["window_width"], 540)
-        self.assertEqual(def_prof["window_height"], 680)
+        self.assertEqual(def_prof["window_width"], 900)
+        self.assertEqual(def_prof["window_height"], 620)
         self.assertEqual(def_prof["window_position"], "top_right")
         self.assertFalse(def_prof["start_maximized"])
 
         geom = browser_launcher.compute_window_geometry(def_prof, work_area=(0, 0, 1920, 1040))
-        self.assertEqual(geom["width"], 540)
-        self.assertEqual(geom["height"], 680)
-        self.assertEqual(geom["x"], 1920 - 540 - 12)
+        self.assertEqual(geom["width"], 900)
+        self.assertEqual(geom["height"], 620)
+        self.assertEqual(geom["x"], 1920 - 900 - 12)
         self.assertEqual(geom["y"], 12)
 
         small_geom = browser_launcher.compute_window_geometry(def_prof, work_area=(0, 0, 800, 600))
-        self.assertEqual(small_geom["width"], 540)
+        self.assertEqual(small_geom["width"], 776)
         self.assertLessEqual(small_geom["height"], 600 - 24)
         self.assertGreaterEqual(small_geom["x"], 0)
         self.assertLessEqual(small_geom["x"] + small_geom["width"], 800)
@@ -1126,7 +1132,7 @@ class MandatoryV180Tests(unittest.TestCase):
             handles = browser_launcher.launch_browser(def_prof)
         launch_kwargs = playwright.chromium.launch.call_args.kwargs
         args = launch_kwargs.get("args", [])
-        self.assertTrue(any(a.startswith("--window-size=540,680") for a in args))
+        self.assertTrue(any(a.startswith("--window-size=900,620") for a in args))
         self.assertTrue(any(a.startswith("--window-position=") for a in args))
         self.assertFalse(any(a.startswith("--start-maximized") for a in args))
         self.assertFalse(any(a.startswith("--start-fullscreen") for a in args))

@@ -29,7 +29,7 @@ class BotCore:
         self.captcha_service = captcha_service or CaptchaService()
         self.user_data = self._load_user_data()
         self.retry_limit = max(1, min(20, int(self.settings.get('retry_count', 5))))
-        self.local_api_base = os.getenv("MAHANBOT_LOCAL_API", f"http://127.0.0.1:{os.getenv('MAHANBOT_PORT', '8001')}").rstrip("/")
+        self.local_api_base = os.getenv("MAHANBOT_LOCAL_API", f"http://127.0.0.1:{os.getenv('MAHANBOT_PORT', '8000')}").rstrip("/")
         self.api_base_url = (os.getenv("MAHANBOT_OTP_API") or self.local_api_base).rstrip("/")
         self.user_dir = str(PROFILE_ROOT / str(nid))
         if not os.path.exists(self.user_dir):
@@ -79,6 +79,7 @@ class BotCore:
     def reset_attempt_state(self, attempt=1):
         """Reset every ephemeral flag before a fresh browser attempt."""
         self._nid_filled = False
+        self._otp_entry_time = 0.0
         self._needs_reload = False
         self._dialog_handling = False
         self._safe_goto_locked = False
@@ -186,7 +187,7 @@ class BotCore:
         try:
             safe_nid = "".join(ch for ch in str(self.nid) if ch.isalnum() or ch in {"-", "_"})
             project_dir = os.path.dirname(os.path.abspath(__file__))
-            preview_dir = os.path.join(project_dir, "static", "live_browser")
+            preview_dir = os.getenv("MAHANBOT_PREVIEW_DIR", os.path.join(project_dir, "static", "live_browser"))
             os.makedirs(preview_dir, exist_ok=True)
             final_path = os.path.join(preview_dir, f"{safe_nid}.jpg")
             temp_path = os.path.join(preview_dir, f".{safe_nid}.{threading.get_ident()}.jpg")
@@ -230,13 +231,12 @@ class BotCore:
         return dict(data)
 
     def save_checkpoint(self, step: str, page=None, **extra):
-        """Save a verifiable process checkpoint if save_page_enabled is active."""
-        if not bool(self.settings.get("save_page_enabled", True)):
-            return {}
+        """Persist recovery metadata independently of optional HTML/PNG snapshots."""
         url = ""
         if page is not None:
             try:
-                url = page.url or ""
+                current_url = page.url
+                url = current_url if isinstance(current_url, str) else ""
             except Exception:
                 url = ""
         payload = {
@@ -264,93 +264,38 @@ class BotCore:
         return clean.isdigit() and (min_len <= len(clean) <= max_len)
 
     def get_otp_code(self, stop_event=None, timeout: int = 45):
-        """Retrieve a fresh OTP from Mahan server, with local manual-entry fallback."""
-        validity_window = float(self.settings.get("otp_validity_seconds", 120))
-        now = time.time()
-        min_allowed_ts = max(float(self._otp_entry_time or 0.0), now - validity_window)
+        from otp_transport import poll_once
+        return poll_once(self, stop_event, timeout)
 
-        # 1) Mahan OTP wait endpoint (the Android app posts here).
-        try:
-            code = self.wait_for_otp(stop_event, timeout=timeout, min_ts=min_allowed_ts)
-            if code and self.validate_otp_code(code):
-                DBHandler.save_otp(self.nid, code)
-                self.log("✅ کد پیامک معتبر از سرور دریافت شد.", "success")
-                return str(code).strip()
-        except Exception:
-            pass
-
-        # 2) Non-blocking remote lookup fallback.
-        try:
-            response = requests.get(f"{self.api_base_url}/get_otp/{self.nid}", timeout=3)
-            if response.status_code == 200:
-                data = response.json()
-                code = data.get("otp")
-                ts_val = float(data.get("ts") or now)
-                if code is not None:
-                    code = str(code).strip()
-                if code and self.validate_otp_code(code) and ts_val >= min_allowed_ts:
-                    DBHandler.save_otp(self.nid, code)
-                    self.log("✅ کد پیامک از API همگام‌سازی شد.", "success")
-                    return code
-        except Exception:
-            pass
-
-        # 3) Local DB fallback for dashboard manual entry.
-        try:
-            record = DBHandler.get_otp_record(self.nid)
-            if record:
-                record_ts = float(record.get("ts") or 0.0)
-                code = str(record.get("otp") or "").strip()
-                if code and self.validate_otp_code(code) and record_ts > float(self._otp_entry_time or 0.0) and (now - record_ts) < validity_window:
-                    return code
-        except Exception:
-            pass
-
+    def wait_for_otp(self, stop_event=None, timeout: int = 45, min_ts: float = None):
+        from otp_transport import poll_once
+        if min_ts is not None and not self._otp_entry_time:
+            self.mark_otp_entry_time(min_ts)
+        deadline = time.monotonic() + max(1, timeout)
+        while time.monotonic() < deadline:
+            code = poll_once(self, stop_event, min(2, timeout))
+            if code:
+                return code
+            if stop_event is not None:
+                if stop_event.wait(0.2):
+                    break
+            else:
+                time.sleep(0.2)
         return None
 
     def mark_otp_entry_time(self, ts: float = None) -> float:
+        import uuid
         self._otp_entry_time = float(ts if ts is not None else time.time())
+        self._otp_request_id = uuid.uuid4().hex
+        DBHandler.update_runtime(self.nid, otp_requested_at=self._otp_entry_time,
+                                 otp_request_id=self._otp_request_id, otp_state="WAITING_FOR_SMS")
+        from relay_transport import queue_wait
+        queue_wait(self)
         return self._otp_entry_time
 
-    def wait_for_otp(self, stop_event=None, timeout: int = 45, min_ts: float = None):
-        if stop_event is not None and stop_event.is_set():
-            return None
-        timeout = max(1, int(timeout))
-        min_ts_value = self._otp_entry_time if min_ts is None else float(min_ts)
-        # 1) Try local FastAPI server first (0 network latency)
-        try:
-            local_timeout = min(timeout, 2) if self.api_base_url != self.local_api_base else timeout
-            response = requests.get(
-                f"{self.local_api_base}/wait_otp/{self.nid}",
-                params={"timeout": local_timeout, "min_ts": min_ts_value},
-                timeout=local_timeout + 2,
-            )
-            if response.status_code == 200:
-                data = response.json()
-                code = data.get("otp")
-                if code and str(code).strip():
-                    return str(code).strip()
-        except Exception:
-            pass
-
-        # 2) If external OTP API is configured and distinct from local API, query it
-        if self.api_base_url and self.api_base_url != self.local_api_base:
-            try:
-                response = requests.get(
-                    f"{self.api_base_url}/wait_otp/{self.nid}",
-                    params={"timeout": timeout, "min_ts": min_ts_value},
-                    timeout=min(timeout + 2, 10),
-                )
-                if response.status_code == 200:
-                    data = response.json()
-                    code = data.get("otp")
-                    if code and str(code).strip():
-                        return str(code).strip()
-            except Exception:
-                pass
-        return None
-
     def clear_otp_backend(self):
+        from relay_transport import finish
+        finish(self)
         try:
             requests.post(f"{self.api_base_url}/otp/clear/{self.nid}", timeout=3)
         except Exception:
@@ -370,11 +315,14 @@ class BotCore:
     def setup_browser(self, stop_event=None):
         launch_started = time.perf_counter()
         profile = dict(self.browser_profile)
+        if "user_data_dir" in profile and profile["user_data_dir"]:
+            # Per-applicant profile ownership; never reuse a dashboard or shared Chrome profile.
+            profile["user_data_dir"] = self.user_dir
         # Apply compact window settings from bot.settings unless explicitly overridden in browser_profile
-        if "window_width" not in profile and self.settings.get("browser_window_width"):
-            profile["window_width"] = int(self.settings["browser_window_width"])
-        if "window_height" not in profile and self.settings.get("browser_window_height"):
-            profile["window_height"] = int(self.settings["browser_window_height"])
+        if "window_width" not in profile:
+            profile["window_width"] = int(self.settings.get("loan_browser_width", self.settings.get("browser_window_width", 620)))
+        if "window_height" not in profile:
+            profile["window_height"] = int(self.settings.get("loan_browser_height", self.settings.get("browser_window_height", 730)))
         if "window_position" not in profile and self.settings.get("browser_window_position"):
             profile["window_position"] = str(self.settings["browser_window_position"])
         if "start_maximized" not in profile and "browser_start_maximized" in self.settings:
@@ -383,6 +331,10 @@ class BotCore:
             profile["always_on_top"] = bool(self.settings["browser_always_on_top"])
         if "remember_position" not in profile and "browser_remember_position" in self.settings:
             profile["remember_position"] = bool(self.settings["browser_remember_position"])
+        if "page_zoom" not in profile:
+            profile["page_zoom"] = float(self.settings.get("browser_page_zoom", 1.25))
+        if "focus_view_enabled" not in profile:
+            profile["focus_view_enabled"] = bool(self.settings.get("focus_view_enabled", True))
         if not self.settings.get("clear_cookies", True) and not profile.get("user_data_dir"):
             profile["user_data_dir"] = self.user_dir
         try:
@@ -420,6 +372,8 @@ class BotCore:
                 session_done.set()
             if state["fired"] or stop_event.is_set():
                 return
+            if getattr(self, "_closing_intentionally", False):
+                return
             state["fired"] = True
             if getattr(self, "reopen_browser_on_close", False):
                 try:
@@ -429,6 +383,12 @@ class BotCore:
                 return
             try:
                 self.log(f"🛑 مرورگر توسط کاربر بسته شد ({reason})؛ توقف بات.", "warning")
+            except Exception:
+                pass
+            try:
+                from database import DBHandler
+                DBHandler.save_checkpoint(self.nid, {"session_active": False, "browser_closed_by_user": True})
+                DBHandler.release_final_submission_claim(self.nid)
             except Exception:
                 pass
             try:
@@ -472,6 +432,7 @@ class BotCore:
     def close_browser_on_stop(self, stop_event, playwright, browser, context, page) -> bool:
         if stop_event is None or not stop_event.is_set():
             return False
+        self._closing_intentionally = True
         try:
             self.log("🛑 Stop detected - closing browser now.", "warning")
         except Exception:
@@ -688,7 +649,18 @@ class BotCore:
         ):
             return "bank_capacity_full"
 
-        # 2) OTP expired / invalid
+        # 2) OTP Sent / Info (announcements that code was sent to phone - must NOT be treated as expired)
+        otp_sent_markers = (
+            "ارسال شد",
+            "ارسال گردید",
+            "پیامک شد",
+            "پیامک گردید",
+            "با موفقیت ارسال",
+        )
+        if any(s in msg_norm for s in otp_sent_markers) and not any(k in msg_norm for k in ("منقضی", "نامعتبر", "اشتباه")):
+            return "otp_sent"
+
+        # 3) OTP expired / invalid (only when explicit error keywords are present)
         otp_phrases = (
             "کد تایید تلفن همراه",
             "کد تأیید تلفن همراه",
@@ -696,10 +668,10 @@ class BotCore:
             "کد تأیید",
             "کد پیامکی",
         )
-        otp_keywords = ("منقضی", "نامعتبر", "اشتباه")
-        if any(p in msg_norm for p in otp_phrases) or (
-            any(k in msg_norm for k in otp_keywords) and "ظرفیت" not in msg_norm and "امنیتی" not in msg_norm
-        ):
+        otp_keywords = ("منقضی", "نامعتبر", "نا معتبر", "اشتباه", "صحیح نمی باشد", "صحیح نمی‌باشد", "پایان یافته", "اعتبار ندارد")
+        if any(k in msg_norm for k in otp_keywords) and (
+            any(p in msg_norm for p in otp_phrases) or "کد" in msg_norm
+        ) and "ظرفیت" not in msg_norm and "امنیتی" not in msg_norm:
             return "otp_expired"
 
         # 3) CAPTCHA invalid
@@ -758,6 +730,8 @@ class BotCore:
             # Record dialog message BEFORE closing it
             normalized_msg = (msg or "").strip()
             action = self._classify_dialog(normalized_msg)
+            if action == "otp_expired" and getattr(getattr(self, "live_owner", None), "bank_page_active", False):
+                action = "stale_otp_ignored"
             self._last_dialog_message = normalized_msg
             self._last_dialog_action = action
             self._last_dialog_ts = time.time()
@@ -793,18 +767,22 @@ class BotCore:
                     )
                 elif action == "otp_expired":
                     self.clear_remote_otp()
+                    self.clear_otp_backend()
+                    self.clear_otp_locks()
                     self.mark_otp_entry_time()
-                    if self.register_otp_failure("dialog_otp_expired"):
-                        self._set_recovery_flag("otp_expired")
-                        self.emit_event(
-                            "OTP_EXPIRED",
-                            step="STEP_2_OTP",
-                            reason=normalized_msg,
-                            result="restart_otp",
-                            message=f"انقضا یا خطای کد پیامک: {normalized_msg}",
-                            level="warning",
-                            page=page,
-                        )
+                    if hasattr(self, "_consumed_otp_digests"):
+                        self._consumed_otp_digests.clear()
+                    self.register_otp_failure("dialog_otp_expired")
+                    self._set_recovery_flag("otp_expired")
+                    self.emit_event(
+                        "OTP_EXPIRED",
+                        step="STEP_2_OTP",
+                        reason=normalized_msg,
+                        result="restart_step1",
+                        message=f"الارم انقضای کد پیامک: {normalized_msg}؛ بازگشت خودکار به مرحله ۱ و شروع مجدد متقاضی جهت صدور کد جدید.",
+                        level="warning",
+                        page=page,
+                    )
                 elif action == "captcha_invalid":
                     self._captcha_retry += 1
                     self._set_recovery_flag("captcha_invalid")
@@ -924,6 +902,9 @@ class BotCore:
         """
         if page is None:
             return "UNKNOWN"
+        from urllib.parse import urlparse
+        if urlparse(str(getattr(page, "url", ""))).scheme in {"file", "data"}:
+            return "OFFLINE_SNAPSHOT"
         try:
             if page.is_closed():
                 return "BROWSER_CLOSED"
@@ -1085,6 +1066,10 @@ class BotCore:
         return count <= max_repeats
 
     def watchdog_check(self, page, stop_event=None, selectors=None):
+        if getattr(getattr(self, "live_owner", None), "bank_page_active", False):
+            self.clear_otp_locks()
+            self.consume_recovery_flag("otp_expired")
+            return False
         """Synchronized Watchdog check that coordinates with Recovery and yields during manual input."""
         if stop_event is not None and stop_event.is_set():
             return False

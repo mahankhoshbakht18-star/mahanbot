@@ -52,6 +52,20 @@ def get_settings():
 @router.post("/settings")
 def update_settings(req: SettingsRequest, _: bool = Depends(require_api_key)):
     payload = req.dict(exclude_unset=True) if hasattr(req, "dict") else req.model_dump(exclude_unset=True)
+    aliases = {
+        "bank_list_check_interval": ("bank_list_refresh_seconds", "bank_refresh_interval"),
+        "bank_capacity_check_interval": ("capacity_check_interval_seconds", "bank_capacity_recheck_seconds"),
+        "loan_browser_width": ("browser_window_width",),
+        "loan_browser_height": ("browser_window_height",),
+        "loan_browser_position": ("browser_window_position",),
+        "loan_browser_maximized": ("browser_start_maximized",),
+        "loan_browser_always_on_top": ("browser_always_on_top",),
+    }
+    for canonical, legacy in aliases.items():
+        supplied = next((key for key in (canonical, *legacy) if key in payload and payload[key] is not None), None)
+        if supplied:
+            for key in (canonical, *legacy):
+                payload[key] = payload[supplied]
     payload["captcha_mode"] = "model"
     if "automation_mode" in payload and payload["automation_mode"] not in {"safe", "normal", "fast"}:
         raise HTTPException(status_code=422, detail="Invalid automation mode")
@@ -60,9 +74,10 @@ def update_settings(req: SettingsRequest, _: bool = Depends(require_api_key)):
         ("captcha_retry_delay", 0.0, 10.0),
         ("bank_refresh_interval", 1.0, 300.0),
         ("bank_list_refresh_seconds", 1.0, 300.0),
-        ("bank_capacity_recheck_seconds", 5.0, 600.0),
+        ("bank_capacity_recheck_seconds", 1.0, 600.0),
         ("retry_delay", 0.0, 30.0),
         ("proxy_health_check_timeout", 1.0, 30.0),
+        ("browser_page_zoom", 0.25, 3.0),
     ):
         if key in payload and payload[key] is not None and not low <= float(payload[key]) <= high:
             raise HTTPException(status_code=422, detail=f"{key} out of range")
@@ -144,9 +159,8 @@ def get_proxy_pool_status():
 # ── Saved pages ───────────────────────────────────────────────────────
 @router.post("/saved-pages/repair")
 def repair_saved_pages_endpoint(_: bool = Depends(require_api_key)):
-    from core.state import BASE_DIR
-    base_dir = os.path.join(BASE_DIR, "saved_pages")
-    return {"status": "ok", **repair_saved_pages(base_dir)}
+    from routes.saved_pages import repair_all_saved_pages_endpoint
+    return repair_all_saved_pages_endpoint(True)
 
 
 # ── Allowed domains ───────────────────────────────────────────────────

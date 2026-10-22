@@ -44,9 +44,9 @@ DEFAULT_CONFIG = {
     "bank_list_refresh_seconds": 5.0,
     "bank_capacity_recheck_seconds": 20.0,
     "capacity_check_interval_seconds": 20.0,
-    "allow_reserve_bank": False,
+    "allow_reserve_bank": True,
     "sniper_mode_enabled": False,
-    "sniper_interval_ms": 800,
+    "sniper_interval_ms": 5000,
     "auto_switch_alternative_bank": True,
     "fallback_to_in_person": False,
     "bank_cooldown_seconds": 30,
@@ -111,18 +111,21 @@ def normalize_config(stored: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     merged["captcha_manual_timeout"] = _bounded(
         merged.get("captcha_manual_timeout"), 300, 10, 3600, int
     )
-    # Synchronize bank_list_refresh_seconds and bank_refresh_interval
+    # Synchronize bank_list_refresh_seconds, bank_list_check_interval, and bank_refresh_interval
     raw_list_refresh = merged.get("bank_list_refresh_seconds")
     if raw_list_refresh is None:
-        raw_list_refresh = merged.get("bank_refresh_interval", 5.0)
+        raw_list_refresh = merged.get("bank_list_check_interval", merged.get("bank_refresh_interval", 5.0))
     list_refresh = _bounded(raw_list_refresh, 5.0, 1.0, 300.0)
     merged["bank_list_refresh_seconds"] = list_refresh
+    merged["bank_list_check_interval"] = list_refresh
     merged["bank_refresh_interval"] = _bounded(
         merged.get("bank_refresh_interval", list_refresh), list_refresh, 1.0, 300.0
     )
-    merged["bank_capacity_recheck_seconds"] = _bounded(
-        merged.get("bank_capacity_recheck_seconds"), 20.0, 5.0, 600.0
-    )
+    capacity_keys = ('bank_capacity_check_interval', 'capacity_check_interval_seconds', 'bank_capacity_recheck_seconds')
+    raw_capacity = next((stored[key] for key in capacity_keys if stored and stored.get(key) is not None), 20.0)
+    capacity_interval = _bounded(raw_capacity, 20.0, 1.0, 600.0)
+    for key in capacity_keys:
+        merged[key] = capacity_interval
     merged["otp_validity_seconds"] = _bounded(
         merged.get("otp_validity_seconds"), 120, 30, 600, int
     )
@@ -148,7 +151,7 @@ def normalize_config(stored: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     merged["pause_for_manual_otp"] = bool(merged.get("pause_for_manual_otp", True))
     merged["allow_reserve_bank"] = bool(merged.get("allow_reserve_bank", False))
     merged["sniper_mode_enabled"] = bool(merged.get("sniper_mode_enabled", False))
-    merged["sniper_interval_ms"] = _bounded(merged.get("sniper_interval_ms"), 800, 200, 10000, int)
+    merged["sniper_interval_ms"] = _bounded(merged.get("sniper_interval_ms"), 5000, 200, 10000, int)
     merged["auto_switch_alternative_bank"] = bool(merged.get("auto_switch_alternative_bank", True))
     merged["fallback_to_in_person"] = bool(merged.get("fallback_to_in_person", False))
     merged["bank_cooldown_seconds"] = _bounded(merged.get("bank_cooldown_seconds"), 30, 5, 600, int)
@@ -312,9 +315,9 @@ class DBHandler:
                         if isinstance(bp_data, dict):
                             vp = bp_data.get("viewport") or {}
                             if vp.get("width") == 1280 and vp.get("height") == 720:
-                                bp_data["viewport"] = {"width": 540, "height": 680}
-                                bp_data["window_width"] = 540
-                                bp_data["window_height"] = 680
+                                bp_data["viewport"] = {"width": 900, "height": 620}
+                                bp_data["window_width"] = 900
+                                bp_data["window_height"] = 620
                                 bp_data["window_position"] = "top_right"
                                 bp_data["start_maximized"] = False
                                 bp_data["headless"] = False
@@ -367,8 +370,31 @@ class DBHandler:
                             "to create the initial administrator."
                         )
                 conn.commit()
+                try:
+                    from core.db_migration import run_database_migration
+                    run_database_migration(DB_PATH)
+                except Exception as me:
+                    print(f"Migration sync error in init_db: {me}")
         except Exception as e:
             print(f"DB Init Error: {e}")
+
+    @staticmethod
+    def get_applicant_config(nid: str):
+        try:
+            from core.applicant_config_service import ApplicantConfigurationService
+            return ApplicantConfigurationService(DB_PATH).get_applicant_config(nid)
+        except Exception:
+            return None
+
+    @staticmethod
+    def record_bank_page_observation(applicant_id: int, session_id: str, site_province: str, site_city: str, available_banks: list, raw_options: list, **kwargs) -> int:
+        try:
+            from core.applicant_config_service import ApplicantConfigurationService
+            return ApplicantConfigurationService(DB_PATH).record_bank_page_observation(
+                applicant_id, session_id, site_province, site_city, available_banks, raw_options, **kwargs
+            )
+        except Exception:
+            return -1
 
     @staticmethod
     def get_config() -> Dict[str, Any]:
@@ -621,14 +647,17 @@ class DBHandler:
         return DBHandler.set_otp(nid, code, ts=otp_ts, status=status)
 
     @staticmethod
-    def set_otp(nid: str, code: str, ts: Optional[float] = None, status: str = "received") -> bool:
+    def set_otp(nid: str, code: str, ts: Optional[float] = None, status: str = "received", request_id: Optional[str] = None) -> bool:
         try:
             with DBHandler._connect() as conn:
+                conn.execute('BEGIN IMMEDIATE')
                 data = DBHandler._load_applicant_data(conn, nid)
                 if data is None:
                     return False
                 data["otp_code"] = str(code).strip()
                 data["otp_status"] = status
+                if request_id is not None:
+                    data["otp_request_id"] = str(request_id)
                 timestamp_seconds = float(ts) if ts is not None else DBHandler._current_timestamp_seconds_ms()
                 data["otp_ts"] = timestamp_seconds
                 data["otp_ts_ms"] = int(timestamp_seconds * 1000)
@@ -655,6 +684,7 @@ class DBHandler:
                     "otp": str(code).strip(),
                     "ts": data.get("otp_ts"),
                     "ts_ms": data.get("otp_ts_ms"),
+                    "request_id": data.get("otp_request_id"),
                     "status": data.get("otp_status"),
                 }
         except Exception:
@@ -671,6 +701,7 @@ class DBHandler:
     def clear_otp(nid: str) -> None:
         try:
             with DBHandler._connect() as conn:
+                conn.execute('BEGIN IMMEDIATE')
                 data = DBHandler._load_applicant_data(conn, nid)
                 if data is None:
                     return
@@ -678,6 +709,7 @@ class DBHandler:
                 data.pop("otp_status", None)
                 data.pop("otp_ts", None)
                 data.pop("otp_ts_ms", None)
+                data.pop("otp_request_id", None)
                 conn.execute(
                     "UPDATE applicants SET data=? WHERE national_id=?",
                     (json.dumps(data, ensure_ascii=False), nid),
@@ -688,15 +720,14 @@ class DBHandler:
 
     @staticmethod
     def update_applicant_data(nid: str, updates: Dict[str, Any]) -> bool:
-        user = DBHandler.get_applicant(nid)
-        if not user:
-            return False
         try:
-            d = json.loads(user["data"]) if user["data"] else {}
-            d.update(updates)
             with DBHandler._connect() as conn:
-                c = conn.cursor()
-                c.execute("UPDATE applicants SET data=? WHERE national_id=?", (json.dumps(d, ensure_ascii=False), nid))
+                conn.execute('BEGIN IMMEDIATE')
+                d = DBHandler._load_applicant_data(conn, nid)
+                if d is None:
+                    return False
+                d.update(updates)
+                conn.execute("UPDATE applicants SET data=? WHERE national_id=?", (json.dumps(d, ensure_ascii=False), nid))
                 conn.commit()
             return True
         except Exception:
@@ -811,6 +842,7 @@ class DBHandler:
 
         try:
             with DBHandler._connect() as conn:
+                conn.execute("BEGIN IMMEDIATE")
                 conn.execute(
                     """CREATE TABLE IF NOT EXISTS checkpoints (
                         nid TEXT PRIMARY KEY,
@@ -818,6 +850,14 @@ class DBHandler:
                         updated_at REAL NOT NULL
                     )"""
                 )
+                row = conn.execute("SELECT payload FROM checkpoints WHERE nid=?", (nid,)).fetchone()
+                current_payload = json.loads(row[0]) if row and row[0] else {}
+                if current_payload.get("final_submit_status") and not sanitized.get("final_submit_status"):
+                    merged["final_submit_status"] = current_payload["final_submit_status"]
+                if current_payload.get("final_submit_started_at") and not sanitized.get("final_submit_started_at"):
+                    merged["final_submit_started_at"] = current_payload["final_submit_started_at"]
+                if current_payload.get("final_submit_attempts") and not sanitized.get("final_submit_attempts"):
+                    merged["final_submit_attempts"] = current_payload["final_submit_attempts"]
                 conn.execute(
                     """INSERT INTO checkpoints(nid, payload, updated_at) VALUES(?,?,?)
                        ON CONFLICT(nid) DO UPDATE SET payload=excluded.payload, updated_at=excluded.updated_at""",
@@ -852,6 +892,65 @@ class DBHandler:
                 conn.commit()
         except Exception:
             pass
+
+    @staticmethod
+    def record_final_submission_attempt(nid: str) -> None:
+        """Keep audit counters without locking an applicant until registration succeeds."""
+        with DBHandler._connect() as conn:
+            conn.execute('BEGIN IMMEDIATE')
+            row = conn.execute('SELECT payload FROM checkpoints WHERE nid=?', (nid,)).fetchone()
+            data = json.loads(row[0]) if row and row[0] else {}
+            data.update(final_submit_attempts=int(data.get('final_submit_attempts') or 0) + 1,
+                        last_submit_started_at=time.time(), last_submit_outcome='in_flight')
+            conn.execute("INSERT INTO checkpoints(nid,payload,updated_at) VALUES(?,?,?) ON CONFLICT(nid) DO UPDATE SET payload=excluded.payload,updated_at=excluded.updated_at",
+                         (nid, json.dumps(data, ensure_ascii=False), time.time()))
+            conn.commit()
+
+    @staticmethod
+    def claim_final_submission(nid: str) -> bool:
+        """Durable single-flight latch, written BEFORE a final-submit click (including timeouts)."""
+        with DBHandler._connect() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            conn.execute(
+                """CREATE TABLE IF NOT EXISTS checkpoints (
+                    nid TEXT PRIMARY KEY,
+                    payload TEXT NOT NULL DEFAULT '{}',
+                    updated_at REAL NOT NULL
+                )"""
+            )
+            row = conn.execute("SELECT payload FROM checkpoints WHERE nid=?", (nid,)).fetchone()
+            payload = json.loads(row[0]) if row and row[0] else {}
+            if payload.get("final_submit_status") or payload.get("tracking_code"):
+                return False
+            payload.update(
+                final_submit_status="pending",
+                final_submit_attempts=int(payload.get("final_submit_attempts") or 0) + 1,
+                final_submit_started_at=time.time(),
+            )
+            conn.execute(
+                """INSERT INTO checkpoints(nid,payload,updated_at) VALUES(?,?,?)
+                   ON CONFLICT(nid) DO UPDATE SET payload=excluded.payload,updated_at=excluded.updated_at""",
+                (nid, json.dumps(payload, ensure_ascii=False), time.time()),
+            )
+            conn.commit()
+            return True
+
+    @staticmethod
+    def release_final_submission_claim(nid: str) -> None:
+        """Clear a pending final-submit latch so retries are permitted."""
+        with DBHandler._connect() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            row = conn.execute("SELECT payload FROM checkpoints WHERE nid=?", (nid,)).fetchone()
+            if row and row[0]:
+                payload = json.loads(row[0])
+                if payload.get("final_submit_status") == "pending":
+                    payload.pop("final_submit_status", None)
+                    payload.pop("final_submit_started_at", None)
+                    conn.execute(
+                        "UPDATE checkpoints SET payload=?, updated_at=? WHERE nid=?",
+                        (json.dumps(payload, ensure_ascii=False), time.time(), nid),
+                    )
+            conn.commit()
 
     @staticmethod
     def has_final_submission(nid: str) -> Optional[str]:
@@ -941,12 +1040,14 @@ class DBHandler:
         user = DBHandler.get_applicant(nid)
         if user:
             try:
-                d = json.loads(user["data"]) if user["data"] else {}
-                d["tracking_code"] = clean_code
-                d["final_submitted"] = True
-                d["final_submitted_at"] = time.time()
-
                 with DBHandler._connect() as conn:
+                    conn.execute('BEGIN IMMEDIATE')
+                    d = DBHandler._load_applicant_data(conn, nid)
+                    if d is None:
+                        return False
+                    d["tracking_code"] = clean_code
+                    d["final_submitted"] = True
+                    d["final_submitted_at"] = time.time()
                     c = conn.cursor()
                     c.execute(
                         "UPDATE applicants "

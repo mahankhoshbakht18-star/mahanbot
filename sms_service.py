@@ -165,13 +165,23 @@ def find_active_otp_waiter() -> Optional[Dict[str, Any]]:
     for app in applicants:
         st = str(app.get("status") or "").strip().lower()
         nid = str(app.get("national_id") or "").strip()
-        runtime = DBHandler.get_runtime_state(nid) if hasattr(DBHandler, "get_runtime_state") else {}
+        runtime = DBHandler.get_runtime(nid)
         step = runtime.get("current_step") or ""
+
+        # Skip applicants who have already advanced to bank selection or later
+        bank_steps = {
+            "BANK_SELECTION", "BANK_SELECT", "STEP_3_BANK_SELECT",
+            "CAPACITY_FULL", "FINAL_SUBMIT_READY", "FINAL_SUBMIT_WAIT",
+            "RESERVE_PENDING", "BANK_OPTIONS_READY", "FINAL_SUBMIT",
+            "MANUAL_ACTION_REQUIRED", "DONE", "STOPPED",
+        }
+        if step in bank_steps:
+            continue
 
         # Candidates waiting on SMS
         if (
             "waiting sms" in st
-            or "پیامک" in st
+            or ("پیامک" in st and step not in bank_steps)
             or step in {"WAITING_SMS", "OTP_FORM", "STEP_2_OTP", "OTP_MANUAL_REQUIRED"}
             or (st == "running" and step == "WAITING_SMS")
         ):
@@ -181,7 +191,7 @@ def find_active_otp_waiter() -> Optional[Dict[str, Any]]:
                 "updated_at": float(runtime.get("updated_at") or 0.0),
             })
 
-    if not waiting_candidates:
+    if len(waiting_candidates) != 1:
         return None
 
     # Pick the most recently active waiting candidate
@@ -194,6 +204,7 @@ def route_incoming_sms(
     from_number: Optional[str] = None,
     explicit_nid: Optional[str] = None,
     explicit_code: Optional[str] = None,
+    request_id: Optional[str] = None,
 ) -> Tuple[bool, Dict[str, Any]]:
     """
     Main entry point for incoming SMS.
@@ -201,13 +212,13 @@ def route_incoming_sms(
     Returns: (success: bool, info: dict)
     """
     parsed = parse_sms_text(text)
-    code = explicit_code or parsed.get("code")
+    code = normalize_digits(explicit_code or parsed.get("code") or "").strip()
     nid = explicit_nid or parsed.get("nid")
     phone = from_number or parsed.get("phone")
 
-    if not code:
-        logger.warning("No 6-digit verification code found in incoming SMS: %s", text[:80])
-        return False, {"error": "no_code_found", "parsed": parsed}
+    if not re.fullmatch(r"[0-9]{4,8}", code):
+        logger.warning("No valid verification code found in incoming SMS")
+        return False, {"error": "no_code_found"}
 
     matched_by = "none"
     matched_app = None
@@ -219,6 +230,8 @@ def route_incoming_sms(
         if matched_app:
             nid = norm_nid
             matched_by = "nid"
+        else:
+            return False, {"error": "explicit_applicant_not_found"}
 
     # 2. Match by sender phone number in applicant records
     if not matched_app and phone:
@@ -231,7 +244,7 @@ def route_incoming_sms(
         for app in DBHandler.get_all_applicants():
             app_data = app.get("data") or {}
             app_mobile = str(app_data.get("mobile") or app_data.get("phone") or "").strip()
-            if app_mobile and (app_mobile == norm_phone or norm_phone in app_mobile or app_mobile in norm_phone):
+            if app_mobile and app_mobile == norm_phone:
                 matched_app = app
                 nid = app.get("national_id")
                 matched_by = "phone"
@@ -246,16 +259,14 @@ def route_incoming_sms(
             matched_by = "active_waiter"
 
     if not matched_app or not nid:
-        logger.warning(
-            "Could not match incoming SMS to any applicant (code=%s, phone=%s, parsed_nid=%s)",
-            code, phone, parsed.get("nid")
-        )
+        logger.warning("Incoming SMS could not be matched uniquely to an applicant")
         return False, {
             "error": "applicant_not_matched",
-            "code": code,
-            "parsed": parsed,
             "hint": "No applicant is currently in OTP waiting status and phone/NID did not match.",
         }
+
+    if request_id and request_id != DBHandler.get_runtime(nid).get("otp_request_id"):
+        return False, {"error": "request_mismatch"}
 
     # Record the received OTP via the standard OTP receiver
     from routes.otp import _handle_receive_sms, _emit_applicants_snapshot
@@ -263,10 +274,8 @@ def route_incoming_sms(
 
     if success:
         _emit_applicants_snapshot()
-        logger.info(
-            "SMS OTP %s routed successfully to NID %s (matched_by=%s)",
-            code, nid, matched_by
-        )
+        logger.info("SMS OTP routed successfully (matched_by=%s)", matched_by)
+        matched_app = dict(matched_app)
         return True, {
             "nid": nid,
             "code": code,

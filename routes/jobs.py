@@ -10,6 +10,7 @@ from core.deps import require_api_key
 import core.state as _state
 from core.models import JobStartRequest
 from core.helpers import _serialize_applicants
+from database import DBHandler
 
 from browser_launcher import normalize_browser_profile
 from event_logger import EVENT_BROADCASTER, build_event
@@ -39,6 +40,15 @@ def start_job(req: JobStartRequest, _: bool = Depends(require_api_key)):
     if req.browser_profile_override:
         payload["browser_profile_override"] = normalize_browser_profile(req.browser_profile_override)
 
+    cp = DBHandler.get_checkpoint(req.nid)
+    if cp.get("final_submit_status") == "pending" and (
+        cp.get("bank_state") == "CAPACITY_FULL"
+        or cp.get("last_operation_result") in ("CAPACITY_FULL", "BANK_CAPACITY_FULL")
+        or "تکمیل" in str(cp.get("last_error_reason", ""))
+        or cp.get("browser_closed_by_user")
+    ):
+        DBHandler.release_final_submission_claim(req.nid)
+
     job = _state.JOB_QUEUE.enqueue(bot_name, req.nid, payload)
     if job is None:
         existing = _state.JOB_QUEUE.find_active(bot_name, req.nid)
@@ -51,6 +61,18 @@ def start_job(req: JobStartRequest, _: bool = Depends(require_api_key)):
 def restart_job(req: JobStartRequest, _: bool = Depends(require_api_key)):
     if not _state.JOB_QUEUE:
         raise HTTPException(status_code=500, detail="Job queue not ready")
+    cp = DBHandler.get_checkpoint(req.nid)
+    final_status = cp.get("final_submit_status")
+    if final_status == "pending" and (
+        cp.get("bank_state") == "CAPACITY_FULL"
+        or cp.get("last_operation_result") in ("CAPACITY_FULL", "BANK_CAPACITY_FULL")
+        or "تکمیل" in str(cp.get("last_error_reason", ""))
+        or cp.get("browser_closed_by_user")
+    ):
+        DBHandler.release_final_submission_claim(req.nid)
+        final_status = None
+    if final_status:
+        raise HTTPException(status_code=409, detail="Previous submission requires reconciliation before restart")
     existing = _state.JOB_QUEUE.find_active(req.bot_name.lower(), req.nid)
     if existing:
         _state.JOB_QUEUE.cancel(existing.id)
@@ -59,7 +81,7 @@ def restart_job(req: JobStartRequest, _: bool = Depends(require_api_key)):
             time.sleep(0.05)
         if existing.status in _state.JOB_QUEUE.ACTIVE_STATUSES:
             raise HTTPException(status_code=409, detail="Previous job is still stopping")
-    payload: Dict[str, Any] = {}
+    payload: Dict[str, Any] = {"force": True}
     if req.loan_type:
         payload["loan_type"] = req.loan_type
     job = _state.JOB_QUEUE.enqueue(req.bot_name.lower(), req.nid, payload)

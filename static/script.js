@@ -10,6 +10,37 @@ const warnedMessageKeys = new Set();
 let dashboardInterval = null;
 
 let editingUserId = null;
+let submissionDefaults = { enabled: false, interval: 20 };
+
+function setSubmissionDefaults(config) {
+    submissionDefaults = {
+        enabled: Boolean(config.auto_final_submit ?? config.final_submit ?? false),
+        interval: Number(config.bank_capacity_check_interval ?? config.bank_capacity_recheck_seconds ?? 20)
+    };
+    syncApplicantSubmissionControls();
+}
+
+function syncApplicantSubmissionControls() {
+    const inherit = document.getElementById('inpInheritFinalSubmit');
+    const checkbox = document.getElementById('inpAutoFinalSubmit');
+    const interval = document.getElementById('inpFinalSubmitInterval');
+    if (!inherit || !checkbox) return;
+    checkbox.disabled = inherit.checked;
+    if (inherit.checked) checkbox.checked = submissionDefaults.enabled;
+    if (interval) interval.placeholder = `خالی: عمومی (${submissionDefaults.interval} ثانیه)`;
+}
+
+async function updateApplicantSubmission(nid, patch) {
+    try {
+        await apiCall(`/applicants/${encodeURIComponent(nid)}/submission-settings`, 'PATCH', patch);
+        const user = allUsersData.find(user => String(user.national_id) === String(nid));
+        if (user) user.data = { ...parseUserData(user.data), ...patch };
+        if (currentViewId === 'bank-select') renderBankSelectList(allUsersData);
+    } catch (error) {
+        alert(error.message || 'ذخیره تنظیم ثبت نهایی ناموفق بود.');
+        if (currentViewId === 'bank-select') renderBankSelectList(allUsersData);
+    }
+}
 
 let allUsersData = [];
 
@@ -145,6 +176,7 @@ async function logoutApp() { await fetch('/logout', {method:'POST'}); location.r
 async function loadBrowserDisplayMode() {
     try {
         const settings = await (await fetch(`${httpBase}/settings`)).json();
+        setSubmissionDefaults(settings);
         applyBrowserDisplayMode(settings.browser_display_mode || 'external');
     } catch (_) {
         applyBrowserDisplayMode('external');
@@ -366,7 +398,10 @@ function switchView(viewId, navEl) {
 
     if(viewId === 'list') fetchApplicants('list');
 
-    if(viewId === 'bank-select') fetchApplicants('bank-select');
+    if(viewId === 'bank-select') {
+        fetchApplicants('bank-select');
+        loadCapacityStatus();
+    }
 
     if(viewId === 'saved-pages') {
         loadSavedPages();
@@ -752,7 +787,10 @@ function renderDashboard(users) {
 
     if(runningCount===0) tbody.innerHTML = `<tr><td colspan="3" class="text-muted small py-3">${getMessage('labels.inactive', '')}</td></tr>`;
 
-    window.currentActiveBotNid = runningNid || window.currentActiveBotNid || null;
+    renderOtpRecipients(users);
+    const chosen = users.find(user => String(user.national_id) === manualOtpTargetNid);
+    if (chosen) activeUser = chosen;
+    window.currentActiveBotNid = activeUser ? String(activeUser.national_id) : null;
     renderActiveApplicantCard(activeUser);
     updateProcessStepper(activeUser);
 
@@ -857,77 +895,104 @@ function renderActiveApplicantCard(user) {
 
 
 
-async function sendOtp(code) {
-
-    const nid = window.currentActiveBotNid;
-
-    if (!nid) {
-        document.getElementById('otpStatus').textContent = 'ابتدا یک بات را اجرا کنید.';
-        return;
-    }
-
-    document.getElementById('otpStatus').innerHTML = '...';
-
-    await apiCall(`/receive_sms`, 'POST', {nid: nid, code: code});
-
-    document.getElementById('otpStatus').innerHTML = `<span class="text-success">${getMessage('alerts.otp_sent', ' ')}</span>`;
-
-    document.getElementById('otpInput').value = "";
-
+function isOtpWaiting(user) {
+    const runtime = user.runtime || {};
+    const step = String(runtime.current_step || '').toUpperCase();
+    if (/(BANK|CAPACITY|FINAL|RESERVE|DONE|STOPPED|MANUAL_ACTION_REQUIRED)/.test(step)) return false;
+    return /^(STEP_2_OTP|OTP_FORM|WAITING_SMS|OTP_REQUIRED|OTP_MANUAL_REQUIRED|MANUAL_OTP_REQUIRED)$/.test(step)
+        || /waiting (sms|otp)|منتظر پیامک/i.test(String(user.status || ''));
 }
 
+let manualOtpTargetNid = null;
+let manualOtpSending = false;
 
+function normalizePersianDigits(value) {
+    return value.replace(/[۰-۹]/g, digit => String('۰۱۲۳۴۵۶۷۸۹'.indexOf(digit)))
+        .replace(/[٠-٩]/g, digit => String('٠١٢٣٤٥٦٧٨٩'.indexOf(digit)));
+}
 
+function renderOtpRecipients(users) {
+    const select = document.getElementById('manualOtpRecipient');
+    if (!select) return;
+    const waiters = users.filter(isOtpWaiting);
+    const previous = manualOtpTargetNid;
+    if (!waiters.some(user => String(user.national_id) === manualOtpTargetNid)) {
+        manualOtpTargetNid = waiters.length === 1 ? String(waiters[0].national_id) : null;
+    }
+    select.replaceChildren(new Option('متقاضی منتظر پیامک را انتخاب کنید', ''));
+    waiters.forEach(user => select.add(new Option(`${user.full_name} (${formatNid(user.national_id)})`, String(user.national_id))));
+    select.value = manualOtpTargetNid || '';
+    if (previous !== manualOtpTargetNid) {
+        const mInput = document.getElementById('manualOtpInput');
+        if (mInput) mInput.value = '';
+        const oInput = document.getElementById('otpInput');
+        if (oInput) oInput.value = '';
+        const mStatus = document.getElementById('manualOtpStatus');
+        if (mStatus) mStatus.textContent = '';
+    }
+    const send = document.getElementById('manualOtpSend');
+    if (send) send.disabled = !manualOtpTargetNid || manualOtpSending;
+    select.disabled = manualOtpSending;
+    const mInput = document.getElementById('manualOtpInput');
+    if (mInput) mInput.disabled = manualOtpSending;
+    const oInput = document.getElementById('otpInput');
+    if (oInput) oInput.disabled = manualOtpSending;
+}
+
+function selectOtpRecipient(nid) {
+    manualOtpTargetNid = nid || null;
+    const mInput = document.getElementById('manualOtpInput');
+    if (mInput) mInput.value = '';
+    const oInput = document.getElementById('otpInput');
+    if (oInput) oInput.value = '';
+    const user = allUsersData.find(user => String(user.national_id) === manualOtpTargetNid);
+    if (user) {
+        window.currentActiveBotNid = manualOtpTargetNid;
+        renderActiveApplicantCard(user);
+        updateProcessStepper(user);
+    }
+    renderOtpRecipients(allUsersData);
+}
+
+async function submitManualOtp(code, inputId, statusId) {
+    const input = document.getElementById(inputId) || document.getElementById('manualOtpInput');
+    const status = document.getElementById(statusId) || document.getElementById('manualOtpStatus');
+    // Bind the recipient before awaiting HTTP; later snapshots cannot redirect it.
+    const nid = manualOtpTargetNid;
+    const recipient = allUsersData.find(user => String(user.national_id) === nid && isOtpWaiting(user));
+    if (!nid || !recipient) {
+        if (status) status.textContent = 'گیرنده کد را از متقاضیان منتظر پیامک انتخاب کنید.';
+        return;
+    }
+    const clean = normalizePersianDigits(String(code || '')).trim();
+    if (!/^[0-9]{4,8}$/.test(clean) || manualOtpSending) return;
+    manualOtpSending = true;
+    renderOtpRecipients(allUsersData);
+    if (status) status.textContent = 'در حال ارسال...';
+    try {
+        await apiCall('/manual_otp', 'POST', {nid, code: clean});
+        if (status) status.textContent = `کد برای ${recipient.full_name} ارسال شد.`;
+        if (manualOtpTargetNid === nid && input) input.value = '';
+    } catch (error) {
+        if (status) status.textContent = error.message || 'ارسال کد ناموفق بود؛ دوباره بررسی کنید.';
+    } finally {
+        manualOtpSending = false;
+        renderOtpRecipients(allUsersData);
+    }
+}
+
+async function sendOtp(code) {
+    return submitManualOtp(code, 'manualOtpInput', 'manualOtpStatus');
+}
 
 async function sendOtpManualFallback(code) {
-
-    const nid = window.currentActiveBotNid;
-
-    if (!nid) return;
-
-    const cleanCode = (code || '').trim();
-
-    if (!cleanCode) return;
-
-    document.getElementById('otpStatus').innerHTML = '...';
-
-    await apiCall(`/manual_otp`, 'POST', {nid: nid, code: cleanCode});
-
-    document.getElementById('otpStatus').innerHTML = `<span class="text-warning">کد دستی ارسال شد.</span>`;
-
-    document.getElementById('otpInput').value = '';
-
+    return sendOtp(code);
 }
-
 
 async function sendManualOtp() {
-
-    const nid = window.currentActiveBotNid;
-
-    const input = document.getElementById('manualOtpInput');
-
-    const statusEl = document.getElementById('manualOtpStatus');
-
-    if (!input) return;
-    if (!nid) {
-        if (statusEl) statusEl.textContent = 'کاربر فعال پیدا نشد؛ ابتدا بات را اجرا کنید.';
-        return;
-    }
-
-    const code = input.value.trim();
-
-    if (!code) return;
-
-    if (statusEl) statusEl.textContent = 'در حال ارسال...';
-
-    await apiCall(`/manual_otp`, 'POST', {nid: nid, code: code});
-
-    if (statusEl) statusEl.textContent = 'ارسال دستی انجام شد.';
-
-    input.value = '';
-
+    const inputEl = document.getElementById('manualOtpInput');
+    return submitManualOtp(inputEl ? inputEl.value : '', 'manualOtpInput', 'manualOtpStatus');
 }
-
 
 
 async function fetchApplicants(mode) {
@@ -1064,31 +1129,457 @@ function renderMainList(data) {
 
 
 
+let capacityMonitorsData = {};
+
+async function loadCapacityStatus() {
+    try {
+        const res = await apiCall('/api/capacity/status', 'GET');
+        if (res && res.status === 'ok') {
+            const map = {};
+            (res.monitors || []).forEach(m => {
+                map[m.nid] = m;
+            });
+            capacityMonitorsData = map;
+
+            const sum = res.summary || {};
+            const cfg = res.config || {};
+            if (typeof cfg.auto_final_submit === 'boolean') setSubmissionDefaults(cfg);
+            
+            const totalEl = document.getElementById('capStatTotal');
+            if (totalEl) totalEl.innerText = (allUsersData && allUsersData.length) || sum.total_monitors || 0;
+            
+            const waitEl = document.getElementById('capStatWaiting');
+            if (waitEl) waitEl.innerText = sum.waiting_capacity_count || 0;
+            
+            const subEl = document.getElementById('capStatSubmitting');
+            if (subEl) subEl.innerText = sum.active_count || 0;
+            
+            const succEl = document.getElementById('capStatSuccess');
+            if (succEl && allUsersData) {
+                const succCount = allUsersData.filter(u => {
+                    const d = parseUserData(u.data);
+                    return d.tracking_code || (u.runtime && u.runtime.tracking_code);
+                }).length;
+                succEl.innerText = succCount;
+            }
+
+            const intervalInput = document.getElementById('capIntervalInput');
+            if (intervalInput && cfg.bank_capacity_check_interval) {
+                intervalInput.value = cfg.bank_capacity_check_interval;
+            }
+            const concInput = document.getElementById('capConcurrencyInput');
+            if (concInput && cfg.max_concurrency) {
+                concInput.value = cfg.max_concurrency;
+            }
+
+            if (currentViewId === 'bank-select') {
+                renderBankSelectList(allUsersData);
+            }
+        }
+    } catch (e) {
+        console.warn('Failed to load capacity status:', e);
+    }
+}
+
+async function startAllCapacity() {
+    if (!confirm('پایش و استعلام ظرفیت برای تمامی متقاضیان فعال آغاز شود؟')) return;
+    try {
+        const res = await apiCall('/api/capacity/start-all', 'POST');
+        alert(`فرمان شروع صادر شد: ${res.started_count || 0} متقاضی آغاز شد، ${res.skipped_count || 0} در حال اجرا یا قبلاً ثبت‌شده.`);
+        await loadCapacityStatus();
+        fetchDashboardData();
+    checkDbHealth();
+    } catch (e) {
+        alert(e.message || 'خطا در شروع همگانی پایش');
+    }
+}
+
+async function stopAllCapacity() {
+    if (!confirm('تمامی عملیات‌های پایش و شکار ظرفیت متوقف شوند؟')) return;
+    try {
+        const res = await apiCall('/api/capacity/stop-all', 'POST');
+        alert(`تمامی پایش‌ها متوقف شدند (${res.cancelled_count || 0} مورد لغو شد).`);
+        await loadCapacityStatus();
+        fetchDashboardData();
+    } catch (e) {
+        alert(e.message || 'خطا در توقف همگانی پایش');
+    }
+}
+
+async function updateCapacityInterval() {
+    const input = document.getElementById('capIntervalInput');
+    const val = parseFloat(input?.value || 5);
+    if (!Number.isFinite(val) || val < 1 || val > 600) {
+        alert('فاصله تلاش باید عددی بین ۱ تا ۶۰۰ ثانیه باشد.');
+        return;
+    }
+    try {
+        await apiCall('/api/capacity/interval', 'POST', { interval_seconds: val });
+        alert(`فاصله پایش با موفقیت روی ${val} ثانیه تنظیم شد.`);
+        loadCapacityStatus();
+    } catch (e) {
+        alert(e.message || 'خطا در ثبت فاصله');
+    }
+}
+
+async function updateCapacityConcurrency() {
+    const input = document.getElementById('capConcurrencyInput');
+    const val = parseInt(input?.value || 4, 10);
+    if (isNaN(val) || val < 1 || val > 32) {
+        alert('حداکثر متقاضی همزمان باید بین ۱ تا ۳۲ باشد.');
+        return;
+    }
+    try {
+        await apiCall('/api/capacity/concurrency', 'POST', { max_concurrency: val });
+        alert(`سقف همزمانی با موفقیت روی ${val} کارگر تنظیم شد.`);
+        loadCapacityStatus();
+    } catch (e) {
+        alert(e.message || 'خطا در ثبت سقف همزمانی');
+    }
+}
+
+async function pauseApplicant(nid) {
+    try {
+        await apiCall(`/api/capacity/pause/${nid}`, 'POST');
+        await loadCapacityStatus();
+    } catch (e) {
+        alert(e.message || 'خطا در توقف موقت متقاضی');
+    }
+}
+
+async function resumeApplicant(nid) {
+    try {
+        await apiCall(`/api/capacity/resume/${nid}`, 'POST');
+        await loadCapacityStatus();
+    } catch (e) {
+        alert(e.message || 'خطا در ادامه پایش متقاضی');
+    }
+}
+
+function getCapacityStateBadge(state) {
+    if (!state) return 'badge badge-status-neutral';
+    const s = String(state).toUpperCase();
+    switch (s) {
+        case 'WAITING_CAPACITY':
+            return 'badge badge-status-warning';
+        case 'SUBMITTING':
+            return 'badge badge-status-info';
+        case 'SUCCESS':
+            return 'badge badge-status-success';
+        case 'BANK_SELECTED':
+        case 'NON_PRESENTIAL_SELECTED':
+        case 'PAGE_3_READY':
+            return 'badge badge-status-running';
+        case 'SESSION_EXPIRED':
+            return 'badge badge-status-danger';
+        case 'PAUSED':
+            return 'badge badge-status-neutral';
+        case 'ERROR':
+            return 'badge badge-status-danger';
+        default:
+            return 'badge badge-status-info';
+    }
+}
+
+function translateCapacityState(state) {
+    if (!state) return '-';
+    switch (state) {
+        case 'WAITING_CAPACITY': return 'در انتظار سهمیه';
+        case 'SUBMITTING': return 'در حال ارسال نهایی';
+        case 'SUCCESS': return 'ثبت موفقیت‌آمیز';
+        case 'BANK_SELECTED': return 'بانک انتخاب شد';
+        case 'NON_PRESENTIAL_SELECTED': return 'غیرحضوری انتخاب شد';
+        case 'PAGE_3_READY': return 'صفحه ۳ آماده';
+        case 'SESSION_EXPIRED': return 'نشست منقضی';
+        case 'PAUSED': return 'متوقف موقت';
+        case 'ERROR': return 'خطای موقت / پس‌نشست';
+        default: return state;
+    }
+}
+
+function formatWaitingDuration(seconds) {
+    if (!seconds || seconds <= 0) return '-';
+    const s = Math.round(seconds);
+    if (s < 60) return `${s} ثانیه`;
+    const m = Math.floor(s / 60);
+    const rem = s % 60;
+    return `${m}د و ${rem}ث`;
+}
+
+function editApplicantByNid(nid) {
+    const idx = (allUsersData || []).findIndex(u => u.national_id === nid);
+    if (idx !== -1) {
+        editUser(idx);
+    }
+}
+
+function setBankSelectDisplayMode(mode) {
+    const btnCards = document.getElementById('btnModeCards');
+    const btnTable = document.getElementById('btnModeTable');
+    const secActive = document.getElementById('sectionActiveSnipers');
+    const secStandby = document.getElementById('sectionStandbyApplicants');
+    const secTable = document.getElementById('sectionBankTableWrapper');
+    if (mode === 'cards') {
+        btnCards?.classList.add('btn-primary', 'active');
+        btnCards?.classList.remove('btn-outline-secondary');
+        btnTable?.classList.remove('btn-primary', 'active');
+        btnTable?.classList.add('btn-outline-secondary');
+        if (secActive) secActive.style.display = 'block';
+        if (secStandby) secStandby.style.display = 'block';
+    } else {
+        btnTable?.classList.add('btn-primary', 'active');
+        btnTable?.classList.remove('btn-outline-secondary');
+        btnCards?.classList.remove('btn-primary', 'active');
+        btnCards?.classList.add('btn-outline-secondary');
+        if (secActive) secActive.style.display = 'none';
+        if (secStandby) secStandby.style.display = 'none';
+    }
+}
+
+async function pauseAllCapacity() {
+    if (!confirm('آیا مایل به مکث تمام پایش‌های فعال هستید؟')) return;
+    try {
+        const activeUsers = (allUsersData || []).filter(u => {
+            const mon = capacityMonitorsData[u.national_id] || {};
+            return mon.session_active || mon.state === 'WAITING_CAPACITY' || u.runtime?.current_step === 'CAPACITY_FULL';
+        });
+        for (const u of activeUsers) {
+            await apiCall(`/api/capacity/pause/${u.national_id}`, 'POST').catch(() => {});
+        }
+        await loadCapacityStatus();
+        showToast('پایش‌های فعال متوقف (مکث) شدند.', 'info');
+    } catch (e) {
+        alert(e.message || 'خطا در مکث همگانی');
+    }
+}
+
+async function resumeAllCapacity() {
+    try {
+        const pausedUsers = (allUsersData || []).filter(u => {
+            const mon = capacityMonitorsData[u.national_id] || {};
+            return mon.paused || mon.state === 'PAUSED';
+        });
+        for (const u of pausedUsers) {
+            await apiCall(`/api/capacity/resume/${u.national_id}`, 'POST').catch(() => {});
+        }
+        await loadCapacityStatus();
+        showToast('پایش متقاضیان با موفقیت ادامه یافت.', 'success');
+    } catch (e) {
+        alert(e.message || 'خطا در ادامه همگانی');
+    }
+}
+
 function renderBankSelectList(data) {
+    if (document.activeElement?.matches('[data-final-interval-nid]')) return;
     const tbody = document.getElementById('bankSelectListBody');
-    if(!tbody) return;
-    tbody.innerHTML = '';
-    data.forEach(user => {
+    const snipersContainer = document.getElementById('activeSnipersContainer');
+    const standbyContainer = document.getElementById('standbyApplicantsContainer');
+    const snipersCountEl = document.getElementById('activeSnipersCount');
+    const standbyCountEl = document.getElementById('standbyApplicantsCount');
+
+    if (tbody) tbody.innerHTML = '';
+    let snipersHtml = '';
+    let standbyHtml = '';
+    let snipersCount = 0;
+    let standbyCount = 0;
+
+    (data || []).forEach((user, idx) => {
+        const nid = user.national_id;
         const runtime = user.runtime || {};
-        const banks = Array.isArray(runtime.banks_available) ? runtime.banks_available : [];
-        const nextSeconds = runtime.next_refresh ? Math.max(0, Math.ceil(runtime.next_refresh - Date.now() / 1000)) : null;
-        const lastNext = `${runtimeTime(runtime.last_refresh)} / ${nextSeconds === null ? '-' : nextSeconds + 's'}`;
-        const errorText = runtime.last_error ? escapeHtml(runtime.last_error) : '-';
-        tbody.innerHTML += `
-            <tr>
-                <td>${escapeHtml(user.full_name)}</td>
-                <td><span class="badge ${getStatusBadge(runtime.status || user.status)}">${escapeHtml(runtime.status || translateStatus(user.status))}</span></td>
-                <td>${escapeHtml(runtime.current_step || '-')}</td>
-                <td>${escapeHtml(runtime.browser_status || '-')}</td>
-                <td>${escapeHtml(runtime.target_bank || '-')}</td>
-                <td title="${escapeHtml(banks.join('، '))}">${banks.length}${runtime.new_banks?.length ? ` <span class="badge bg-success">+${runtime.new_banks.length}</span>` : ''}</td>
-                <td>${lastNext}</td>
-                <td>${runtimeTime(runtime.last_activity_at)}</td>
-                <td>${Number(runtime.retry_count || 0)} / <span title="${errorText}">${errorText}</span></td>
-                <td class="d-flex gap-1"><button class="btn btn-sm btn-primary" onclick="startBankSelect('${user.national_id}')">شروع</button><button class="btn btn-sm btn-warning" onclick="restartBankSelect('${user.national_id}')">راه‌اندازی مجدد</button><button class="btn btn-sm btn-danger" onclick="stopBot('${user.national_id}')">توقف</button></td>
-            </tr>
-        `;
+        const udata = parseUserData(user.data);
+        const finalEnabled = typeof udata.auto_final_submit === 'boolean' ? udata.auto_final_submit : submissionDefaults.enabled;
+        const customInterval = udata.final_submit_interval_seconds ?? '';
+        const mon = capacityMonitorsData[nid] || {};
+
+        const city = mon.city || udata.city || '-';
+        const province = mon.state_province || udata.state || '-';
+        const bank = mon.selected_bank || runtime.target_bank || udata.primary_bank || (udata.priority_banks && udata.priority_banks[0]) || '-';
+        const mode = mon.selected_mode || runtime.selected_mode || udata.bank_mode || 'online';
+        const isOnline = mode === 'online';
+        const modeText = isOnline 
+            ? '<span class="badge badge-status-running"><i class="fa-solid fa-laptop me-1"></i>غیرحضوری</span>' 
+            : '<span class="badge badge-status-neutral"><i class="fa-solid fa-building me-1"></i>حضوری</span>';
+
+        const capState = mon.state || runtime.capacity_monitor_state || (runtime.status === 'BANK_CAPACITY_FULL' ? 'WAITING_CAPACITY' : (runtime.status || user.status));
+        const badgeCls = getCapacityStateBadge(capState);
+        const stateText = translateCapacityState(capState);
+
+        const duration = mon.waiting_duration_seconds || runtime.capacity_waiting_duration || 0;
+        const checks = mon.checks_count || runtime.capacity_checks_count || 0;
+        const interval = mon.interval_seconds || runtime.capacity_interval || 5.0;
+
+        const lastMsg = mon.last_system_message || runtime.capacity_last_message || runtime.last_error || 'در انتظار پاسخ سامانه...';
+        const sessionActive = mon.session_active !== undefined ? mon.session_active : (runtime.browser_status === 'OPEN');
+        const sessionBadge = sessionActive 
+            ? '<span class="badge badge-status-success"><i class="fa-solid fa-circle-check me-1"></i>زنده و معتبر</span>'
+            : (capState === 'SESSION_EXPIRED' ? '<span class="badge badge-status-danger"><i class="fa-solid fa-circle-xmark me-1"></i>منقضی‌شده</span>' : '<span class="badge badge-status-neutral">آماده</span>');
+
+        const trackCode = mon.tracking_code || runtime.tracking_code || udata.tracking_code || '';
+        const isPaused = mon.paused || (capState === 'PAUSED');
+
+        // Populate standard table row (preserves all regression test hooks)
+        if (tbody) {
+            tbody.innerHTML += `
+                <tr>
+                    <td>${idx + 1}</td>
+                    <td>
+                        <strong>${escapeHtml(user.full_name)}</strong>
+                        <div class="font-monospace small text-muted">${formatNid(nid)}</div>
+                        <label class="d-block small mt-2"><input type="checkbox" data-final-submit-nid="${nid}" ${finalEnabled ? 'checked' : ''}
+                            onchange="updateApplicantSubmission('${nid}', {auto_final_submit: this.checked})"> ثبت نهایی خودکار</label>
+                        <button class="btn btn-sm btn-link p-0" onclick="updateApplicantSubmission('${nid}', {auto_final_submit: null})">طبق تنظیم عمومی</button>
+                        <label class="d-block small">فاصله تلاش (ثانیه)
+                            <input type="number" min="1" max="600" step="0.1" class="form-control form-control-sm" data-final-interval-nid="${nid}"
+                                value="${customInterval}" placeholder="عمومی: ${submissionDefaults.interval}"
+                                onchange="updateApplicantSubmission('${nid}', {final_submit_interval_seconds: this.value === '' ? null : Number(this.value)})">
+                        </label>
+                        <div class="bank-row-actions mt-1 d-flex gap-1 flex-wrap">
+                            <button class="btn btn-sm btn-primary" onclick="startBankSelect('${nid}')">شروع</button>
+                            <button class="btn btn-sm btn-warning" onclick="restartBankSelect('${nid}')">راه‌اندازی مجدد</button>
+                            <button class="btn btn-sm btn-danger" onclick="stopBot('${nid}')">توقف</button>
+                        </div>
+                    </td>
+                    <td>
+                        <div>${escapeHtml(province)}</div>
+                        <small class="text-muted">${escapeHtml(city)}</small>
+                    </td>
+                    <td>
+                        <strong>${escapeHtml(bank)}</strong>
+                    </td>
+                    <td>${modeText}</td>
+                    <td>
+                        <span class="${badgeCls}">${stateText}</span>
+                    </td>
+                    <td class="font-monospace">${formatWaitingDuration(duration)}</td>
+                    <td class="font-monospace text-center">
+                        <span class="badge badge-status-info">${checks}</span>
+                    </td>
+                    <td class="font-monospace small text-center">${interval}s</td>
+                    <td>
+                        <span class="small" title="${escapeHtml(lastMsg)}" style="display:inline-block; max-width:180px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">
+                            ${escapeHtml(lastMsg)}
+                        </span>
+                    </td>
+                    <td>${sessionBadge}</td>
+                    <td>
+                        ${trackCode ? `<span class="badge bg-success font-monospace mb-1 d-block"><i class="fa-solid fa-check me-1"></i>${trackCode}</span>` : '<span class="badge badge-status-neutral mb-1 d-block">-</span>'}
+                        <div class="d-flex gap-1 flex-wrap">
+                            ${isPaused 
+                                ? `<button class="btn btn-sm btn-outline-success" onclick="resumeApplicant('${nid}')" title="ادامه"><i class="fa-solid fa-play me-1"></i>ادامه</button>`
+                                : `<button class="btn btn-sm btn-outline-secondary" onclick="pauseApplicant('${nid}')" title="مکث"><i class="fa-solid fa-pause me-1"></i>مکث</button>`
+                            }
+                        </div>
+                    </td>
+                </tr>
+            `;
+        }
+
+        // Determine if user is in Active Tier (Tier 1) vs Standby Tier (Tier 2)
+        const isActiveSniper = sessionActive || capState === 'WAITING_CAPACITY' || capState === 'SUBMITTING' || runtime.current_step === 'CAPACITY_FULL' || isPaused;
+
+        if (isActiveSniper) {
+            snipersCount++;
+            snipersHtml += `
+                <div class="sniper-card ${isPaused ? 'is-paused' : 'is-active-monitoring'}">
+                    <div class="sniper-card-header">
+                        <div class="sniper-applicant-info">
+                            <strong>${escapeHtml(user.full_name)}</strong>
+                            <span class="nid-pill"><i class="fa-regular fa-id-card me-1"></i>${formatNid(nid)}</span>
+                        </div>
+                        <div class="d-flex align-items-center gap-2">
+                            <span class="${badgeCls} px-2 py-1">${stateText}</span>
+                            ${!isPaused ? '<span class="radar-pulse" title="پایش بلادرنگ فعال است"></span>' : '<span class="badge bg-warning text-dark"><i class="fa-solid fa-pause"></i></span>'}
+                        </div>
+                    </div>
+                    <div class="sniper-card-body">
+                        <div class="sniper-target-row">
+                            <span class="sniper-bank-name">
+                                <i class="fa-solid fa-building-columns"></i>
+                                ${escapeHtml(bank)}
+                            </span>
+                            ${modeText}
+                        </div>
+                        <div class="sniper-metrics-grid">
+                            <div class="sniper-metric-item">
+                                <small>موقعیت متقاضی</small>
+                                <strong>${escapeHtml(province)} / ${escapeHtml(city)}</strong>
+                            </div>
+                            <div class="sniper-metric-item">
+                                <small>مدت و تعداد استعلام</small>
+                                <strong>${formatWaitingDuration(duration)} (${checks} بار)</strong>
+                            </div>
+                        </div>
+                        <div class="sniper-system-msg" title="${escapeHtml(lastMsg)}">
+                            <i class="fa-solid fa-circle-info ms-1 text-primary"></i>
+                            ${escapeHtml(lastMsg)}
+                        </div>
+                        <div class="d-flex align-items-center justify-content-between pt-1">
+                            <label class="small text-muted mb-0 d-flex align-items-center gap-1 cursor-pointer">
+                                <input type="checkbox" data-card-final-submit-nid="${nid}" ${finalEnabled ? 'checked' : ''}
+                                    onchange="updateApplicantSubmission('${nid}', {auto_final_submit: this.checked})">
+                                <span>ثبت نهایی فوری سهمیه</span>
+                            </label>
+                            <span class="small font-monospace text-muted">فاصله: ${interval}s</span>
+                        </div>
+                    </div>
+                    <div class="sniper-card-actions">
+                        ${isPaused 
+                            ? `<button class="btn-sniper-action btn-sniper-resume" onclick="resumeApplicant('${nid}')" title="ادامه پایش"><i class="fa-solid fa-play"></i><span>ادامه پایش</span></button>`
+                            : `<button class="btn-sniper-action btn-sniper-pause" onclick="pauseApplicant('${nid}')" title="مکث موقت پایش"><i class="fa-solid fa-pause"></i><span>مکث پایش</span></button>`
+                        }
+                        <button class="btn-sniper-action btn-sniper-start" onclick="startBankSelect('${nid}')" title="استعلام فوری بدون انتظار"><i class="fa-solid fa-rotate-right"></i><span>استعلام مجدد</span></button>
+                        <button class="btn-sniper-action btn-sniper-stop" onclick="stopBot('${nid}')" title="توقف و بستن نشست مرورگر"><i class="fa-solid fa-stop"></i><span>توقف کامل</span></button>
+                        <button class="btn-sniper-action btn-sniper-console" onclick="switchView('dashboard')" title="مشاهده کنسول و لاگ‌های زنده"><i class="fa-solid fa-terminal"></i><span>کنسول</span></button>
+                        <button class="btn-sniper-action btn-sniper-settings" onclick="editApplicantByNid('${nid}')" title="ویرایش اطلاعات و اولویت‌های متقاضی"><i class="fa-solid fa-gear"></i><span>تنظیمات</span></button>
+                    </div>
+                </div>
+            `;
+        } else {
+            standbyCount++;
+            standbyHtml += `
+                <div class="standby-card">
+                    <div class="standby-card-top">
+                        <div class="standby-card-info">
+                            <strong>${escapeHtml(user.full_name)}</strong>
+                            <small class="font-monospace text-muted">${formatNid(nid)}</small>
+                            <div class="small mt-1 text-light">
+                                <i class="fa-solid fa-location-dot text-muted me-1"></i>${escapeHtml(province)} / ${escapeHtml(city)}
+                            </div>
+                        </div>
+                        <div class="text-end">
+                            <span class="badge badge-status-neutral mb-1 d-block">${escapeHtml(bank)}</span>
+                            ${modeText}
+                        </div>
+                    </div>
+                    <div class="standby-card-bottom">
+                        <button class="btn btn-sm btn-primary flex-fill" onclick="startBankSelect('${nid}')">
+                            <i class="fa-solid fa-play ms-1"></i> شروع پایش صفحه ۳
+                        </button>
+                        <button class="btn btn-sm btn-outline-secondary" onclick="editApplicantByNid('${nid}')" title="ویرایش مشخصات و اولویت‌ها">
+                            <i class="fa-solid fa-sliders"></i>
+                        </button>
+                    </div>
+                </div>
+            `;
+        }
     });
+
+    if (snipersContainer) {
+        snipersContainer.innerHTML = snipersHtml || `
+            <div class="text-muted small p-3 text-center w-100 border rounded" style="background:#0D203D; border-color:#1E3A5F !important;">
+                در حال حاضر هیچ متقاضی فعالی در مرحله پایش بلادرنگ صفحه سوم قرار ندارد. با کلیک روی «شروع پایش صفحه ۳» از فهرست زیر، پایش را آغاز کنید.
+            </div>
+        `;
+    }
+    if (standbyContainer) {
+        standbyContainer.innerHTML = standbyHtml || `
+            <div class="text-muted small p-3 text-center w-100 border rounded" style="background:#0D203D; border-color:#1E3A5F !important;">
+                همه متقاضیان هم‌اکنون در سطح پایش فعال قرار دارند یا متقاضی جدیدی ثبت نشده است.
+            </div>
+        `;
+    }
+    if (snipersCountEl) snipersCountEl.innerText = `${snipersCount} فعال`;
+    if (standbyCountEl) standbyCountEl.innerText = `${standbyCount} متقاضی`;
 }
 
 
@@ -1228,9 +1719,19 @@ function editUser(idx) {
         document.getElementById('inpAllowReserve').checked = Boolean(d.allow_reserve);
     }
 
+    document.getElementById('inpInheritFinalSubmit').checked = typeof d.auto_final_submit !== 'boolean';
+    document.getElementById('inpAutoFinalSubmit').checked = d.auto_final_submit === true;
+    document.getElementById('inpFinalSubmitInterval').value = d.final_submit_interval_seconds ?? '';
+    syncApplicantSubmissionControls();
     document.getElementById('inpState').value = d.state || '';
-
-    document.getElementById('inpCity').value = d.city || '';
+    if (d.state) {
+        onProvinceSelected(d.state, d.city || '');
+    } else {
+        const cEl = document.getElementById('inpCity');
+        if (cEl) {
+            cEl.innerHTML = '<option value="">-- ابتدا استان را انتخاب کنید --</option>' + (d.city ? `<option value="${escapeHtml(d.city)}" selected>${escapeHtml(d.city)}</option>` : '');
+        }
+    }
 
     document.getElementById('inpMilitary').value = d.military_status || '1';
 
@@ -1279,7 +1780,8 @@ function resetAddForm() {
     editingUserId = null;
 
     document.getElementById('addForm').reset();
-    if (document.getElementById('inpAllowReserve')) document.getElementById('inpAllowReserve').checked = false;
+    syncApplicantSubmissionControls();
+    if (document.getElementById('inpAllowReserve')) document.getElementById('inpAllowReserve').checked = true;
 
     document.getElementById('formTitle').innerText = "  ";
 
@@ -1328,6 +1830,8 @@ async function submitNewApplicant() {
         child_birth_d: document.getElementById('cd_d') ? document.getElementById('cd_d').value : '',
         child_birth_m: document.getElementById('cd_m') ? document.getElementById('cd_m').value : '',
         child_birth_y: document.getElementById('cd_y') ? document.getElementById('cd_y').value : '',
+        auto_final_submit: document.getElementById('inpInheritFinalSubmit').checked ? null : document.getElementById('inpAutoFinalSubmit').checked,
+        final_submit_interval_seconds: document.getElementById('inpFinalSubmitInterval').value === '' ? null : Number(document.getElementById('inpFinalSubmitInterval').value),
         bank_mode: document.getElementById('inpBankMode') ? document.getElementById('inpBankMode').value : '',
         allow_reserve: document.getElementById('inpAllowReserve') ? document.getElementById('inpAllowReserve').checked : false,
         priority_branches: document.getElementById('inpPriorityBranches') && document.getElementById('inpBankMode')?.value !== 'online'
@@ -1425,7 +1929,7 @@ async function loadSettings() {
         if (document.getElementById('set_repair_page')) document.getElementById('set_repair_page').checked = s.repair_page_enabled !== false;
         if (document.getElementById('set_pause_manual_captcha')) document.getElementById('set_pause_manual_captcha').checked = s.pause_for_manual_captcha !== false;
         if (document.getElementById('set_pause_manual_otp')) document.getElementById('set_pause_manual_otp').checked = s.pause_for_manual_otp !== false;
-        if (document.getElementById('set_allow_reserve_bank')) document.getElementById('set_allow_reserve_bank').checked = s.allow_reserve_bank === true;
+        if (document.getElementById('set_allow_reserve_bank')) document.getElementById('set_allow_reserve_bank').checked = s.allow_reserve_bank !== false;
         if (document.getElementById('set_diagnostic_logging')) document.getElementById('set_diagnostic_logging').checked = s.diagnostic_logging_enabled !== false;
         document.getElementById('set_bank_monitor').checked = s.bank_monitor_enabled !== false;
         document.getElementById('set_save_page').checked = s.save_page_enabled !== false;
@@ -1437,6 +1941,8 @@ async function loadSettings() {
         document.getElementById('set_headless').checked = s.headless || false;
         document.getElementById('set_browser_display_mode').value = s.browser_display_mode || 'external';
         if (document.getElementById('set_default_bank_mode')) document.getElementById('set_default_bank_mode').value = s.default_bank_mode || 'online';
+        if (document.getElementById('set_browser_page_zoom')) document.getElementById('set_browser_page_zoom').value = String(s.browser_page_zoom || '1.25');
+        if (document.getElementById('set_focus_view_enabled')) document.getElementById('set_focus_view_enabled').checked = s.focus_view_enabled !== false;
         applyBrowserDisplayMode(s.browser_display_mode || 'external');
 
         
@@ -1445,6 +1951,7 @@ async function loadSettings() {
 
         document.getElementById('set_captcha_mode').value = s.captcha_mode || 'model'; 
 
+        setSubmissionDefaults(s);
         document.getElementById('set_final_submit').checked = Boolean(s.auto_final_submit ?? s.final_submit ?? false);
 
         
@@ -1464,7 +1971,7 @@ async function loadSettings() {
             document.getElementById('set_sniper_mode').checked = s.sniper_mode_enabled === true;
         }
         if (document.getElementById('set_sniper_interval')) {
-            document.getElementById('set_sniper_interval').value = s.sniper_interval_ms ?? 800;
+            document.getElementById('set_sniper_interval').value = Math.max(5, Number(s.sniper_interval_ms ?? 5000) / 1000);
         }
         if (document.getElementById('set_auto_switch_bank')) {
             document.getElementById('set_auto_switch_bank').checked = s.auto_switch_alternative_bank !== false;
@@ -1719,9 +2226,12 @@ async function saveSettings() {
         gsm_modem_baudrate: document.getElementById('gsmBaudSelect') ? parseInt(document.getElementById('gsmBaudSelect').value, 10) : 115200,
 
         sniper_mode_enabled: document.getElementById('set_sniper_mode') ? document.getElementById('set_sniper_mode').checked : false,
-        sniper_interval_ms: document.getElementById('set_sniper_interval') ? parseInt(document.getElementById('set_sniper_interval').value, 10) : 800,
+        sniper_interval_ms: Math.max(5, Number(document.getElementById('set_sniper_interval')?.value || 5)) * 1000,
         auto_switch_alternative_bank: document.getElementById('set_auto_switch_bank') ? document.getElementById('set_auto_switch_bank').checked : true,
         bank_cooldown_seconds: document.getElementById('set_bank_cooldown') ? parseInt(document.getElementById('set_bank_cooldown').value, 10) : 30,
+        browser_page_zoom: document.getElementById('set_browser_page_zoom') ? parseFloat(document.getElementById('set_browser_page_zoom').value) : 1.25,
+        focus_view_enabled: document.getElementById('set_focus_view_enabled') ? document.getElementById('set_focus_view_enabled').checked : true,
+        fallback_to_in_person: document.getElementById('set_fallback_in_person') ? document.getElementById('set_fallback_in_person').checked : false,
         max_concurrency: document.getElementById('set_max_concurrency') ? parseInt(document.getElementById('set_max_concurrency').value, 10) : 4,
         anti_detection_enabled: document.getElementById('set_anti_detection') ? document.getElementById('set_anti_detection').checked : true,
         proxy_rotation_strategy: document.getElementById('set_proxy_strategy') ? document.getElementById('set_proxy_strategy').value : 'round_robin'
@@ -1731,6 +2241,7 @@ async function saveSettings() {
     
 
     await apiCall('/settings', 'POST', payload);
+    setSubmissionDefaults(payload);
 
     applyBrowserDisplayMode(payload.browser_display_mode);
 
@@ -2121,13 +2632,13 @@ function toggleBranchFieldByMode() {
     const mode = document.getElementById('inpBankMode')?.value || '';
     const branchInput = document.getElementById('inpPriorityBranches');
     if (!branchInput) return;
-    if (mode === 'online') {
+    if (mode === 'only_online' || mode === 'online') {
         branchInput.value = '';
         branchInput.disabled = true;
-        branchInput.placeholder = 'در روش غیرحضوری انتخاب شعبه غیرفعال است';
+        branchInput.placeholder = 'در روش فقط غیرحضوری نیازی به تعیین شعبه نیست';
     } else {
         branchInput.disabled = false;
-        branchInput.placeholder = 'مثال: کد شعبه یا نام شعبه ۱، شعبه ۲';
+        branchInput.placeholder = 'اختیاری: کد یا نام شعبه (در صورت خالی بودن، اولین شعبه انتخاب می‌شود)';
     }
 }
 
@@ -2160,7 +2671,15 @@ async function uploadApplicantsExcel() {
     }
 }
 
-function getStatusBadge(s) { if(!s) return 'bg-light text-muted'; s=s.toLowerCase(); if(s.includes('succ')) return 'bg-success'; if(s.includes('stop')) return 'bg-danger'; if(s.includes('wait')) return 'bg-warning text-dark'; if(s.includes('run')) return 'bg-primary'; return 'bg-secondary'; }
+function getStatusBadge(s) {
+    if (!s) return 'badge-status-neutral';
+    const lower = String(s).toLowerCase();
+    if (lower.includes('succ') || lower.includes('موفق') || lower.includes('تکمیل شد') || lower.includes('رهگیری')) return 'badge-status-success';
+    if (lower.includes('stop') || lower.includes('توقف') || lower.includes('خطا') || lower.includes('error') || lower.includes('رد') || lower.includes('منقضی')) return 'badge-status-danger';
+    if (lower.includes('wait') || lower.includes('انتظار') || lower.includes('sms') || lower.includes('پیامک') || lower.includes('otp') || lower.includes('شروع مجدد') || lower.includes('سهمیه')) return 'badge-status-warning';
+    if (lower.includes('run') || lower.includes('اجرا') || lower.includes('ثبت') || lower.includes('ورود') || lower.includes('پایش') || lower.includes('انتخاب') || lower.includes('select') || lower.includes('register')) return 'badge-status-running';
+    return 'badge-status-info';
+}
 
 async function startBankSelect(nid) {
     if (pendingStarts.has(nid)) return;
@@ -2490,6 +3009,8 @@ function handleSocketEvent(payload) {
 
 
 
+}
+
 function trackJobForNid(payload) {
 
     const nid = payload.nid;
@@ -2546,7 +3067,10 @@ function refreshCurrentView() {
 
     if (currentViewId === 'list') renderMainList(allUsersData);
 
-    if (currentViewId === 'bank-select') renderBankSelectList(allUsersData);
+    if (currentViewId === 'bank-select') {
+        renderBankSelectList(allUsersData);
+        loadCapacityStatus();
+    }
 
     if (currentViewId === 'saved-pages') renderSavedPagesTable(filteredSavedPages);
 
@@ -2612,7 +3136,7 @@ function renderLogs(clearInitial = false) {
 
         const timeText = event.ts ? new Date(event.ts * 1000).toLocaleTimeString('fa-IR') : '';
 
-        const nidLabel = event.nid ? `<span style="color:#00e5ff">${maskSensitive(event.nid)}</span>` : '<span style="color:#00e5ff">system</span>';
+        const nidLabel = event.nid ? `<span style="color:#0d9488;font-weight:700">${maskSensitive(event.nid)}</span>` : '<span style="color:#0d9488;font-weight:700">system</span>';
 
         const jobLabel = event.job_id ? `<span style="color:#9ccc65">#${event.job_id.slice(0, 8)}</span>` : '';
 
@@ -2873,12 +3397,6 @@ async function downloadDiagnosticZip() {
     }
 }
 
-    }
-
-}
-
-
-
 function markDashboardStopped(nid) {
 
     const row = document.querySelector(`#activeBotsBody tr[data-nid="${nid}"]`);
@@ -2913,23 +3431,23 @@ function getLevelColor(level) {
 
     const palette = {
 
-        success: '#4caf50',
+        success: '#059669',
 
-        warning: '#ffb300',
+        warning: '#d97706',
 
-        error: '#ef5350',
+        error: '#e11d48',
 
-        info: '#64b5f6',
+        info: '#0d9488',
 
-        stopped: '#f44336',
+        stopped: '#e11d48',
 
-        stopping: '#ffa726',
+        stopping: '#d97706',
 
-        registering: '#42a5f5',
+        registering: '#0284c7',
 
-        selecting: '#7e57c2',
+        selecting: '#0d9488',
 
-        'waiting sms': '#ff9800'
+        'waiting sms': '#d97706'
 
     };
 
@@ -3157,12 +3675,34 @@ function triggerCelebrationConfetti() {
     confettiAnimationId = requestAnimationFrame(renderConfetti);
 }
 
+function switchDashboardScheme(schemeKey) {
+    if (!schemeKey) schemeKey = 'scheme-c';
+    document.documentElement.dataset.theme = schemeKey;
+    document.querySelectorAll('.scheme-pill').forEach(pill => pill.classList.remove('active'));
+    const targetPill = document.getElementById(`pill-${schemeKey}`);
+    if (targetPill) targetPill.classList.add('active');
+    const sel = document.getElementById('themeColorSelect');
+    if (sel && sel.value !== schemeKey) sel.value = schemeKey;
+    try { localStorage.setItem('mahan_theme', schemeKey); } catch (e) {}
+    showToast(`طرح بصری «${getSchemeDisplayName(schemeKey)}» فعال شد.`, 'success');
+}
+
+function getSchemeDisplayName(schemeKey) {
+    const map = {
+        'scheme-c': 'طرح C (پیشنهادی) — ماهان سلطنتی',
+        'scheme-a': 'طرح A — فیروزه‌ای مرواریدی و طلایی',
+        'scheme-b': 'طرح B — رز لوکس و فیروزه‌ای',
+        'default': 'طرح C (پیشنهادی) — ماهان سلطنتی'
+    };
+    return map[schemeKey] || schemeKey;
+}
+
 function applyThemePreset(preset) {
-    if (preset === 'default') {
-        delete document.documentElement.dataset.theme;
-    } else {
-        document.documentElement.dataset.theme = preset;
-    }
+    if (!preset || preset === 'default') preset = 'scheme-c';
+    document.documentElement.dataset.theme = preset;
+    document.querySelectorAll('.scheme-pill').forEach(pill => pill.classList.remove('active'));
+    const targetPill = document.getElementById(`pill-${preset}`);
+    if (targetPill) targetPill.classList.add('active');
     const sel = document.getElementById('themeColorSelect');
     if (sel && sel.value !== preset) sel.value = preset;
     try { localStorage.setItem('mahan_theme', preset); } catch (e) {}
@@ -3189,7 +3729,7 @@ function applyFontSize(size) {
 
 function loadAppearanceSettings() {
     try {
-        const theme = localStorage.getItem('mahan_theme') || 'default';
+        const theme = localStorage.getItem('mahan_theme') || 'scheme-c';
         applyThemePreset(theme);
         const reduced = localStorage.getItem('mahan_reduced_motion') === 'true';
         toggleReducedMotion(reduced);
@@ -3226,6 +3766,7 @@ let allSavedPages = [];
 let filteredSavedPages = [];
 let capacityCountdownTimer = null;
 let capacitySecondsLeft = 20;
+let capacityCheckInterval = 20;
 let currentHealthFolder = '';
 
 async function loadSavedPages() {
@@ -3236,6 +3777,10 @@ async function loadSavedPages() {
     try {
         const res = await apiCall('/saved-pages', 'GET');
         if (res && res.status === 'ok') {
+            capacityCheckInterval = Math.max(5, Number(res.capacity_check_interval) || 20);
+            const checkLabel = document.getElementById('capacityCheckLabel');
+            if (checkLabel) checkLabel.textContent = res.check_method === 'native_submit_retry' ? 'شکار سهمیه: فاصله ارسال درخواست غیرحضوری' : 'بازخوانی وضعیت نشست';
+            capacitySecondsLeft = Math.min(capacitySecondsLeft, capacityCheckInterval);
             allSavedPages = res.saved_pages || [];
             filteredSavedPages = [...allSavedPages];
 
@@ -3305,8 +3850,11 @@ function renderSavedPagesTable(pages) {
 
         const viewBtn = p.latest_html ? `<button class="btn btn-sm btn-outline-primary me-1" title="مشاهده اسنپ‌شات" onclick="viewSavedPage('${escapeHtml(p.folder)}', '${escapeHtml(p.latest_html || '')}', '${escapeHtml(p.latest_png || '')}')"><i class="fa-solid fa-eye"></i></button>` : '';
         const healthBtn = `<button class="btn btn-sm btn-outline-info me-1" title="بررسی سلامت" onclick="healthCheckSavedPage('${escapeHtml(p.folder)}')"><i class="fa-solid fa-heart-pulse"></i></button>`;
-        const repairBtn = `<button class="btn btn-sm btn-outline-warning me-1" title="ترمیم مانیفست" onclick="repairSavedPageSingle('${escapeHtml(p.folder)}')"><i class="fa-solid fa-screwdriver-wrench"></i></button>`;
+        const repairBtn = `<button class="btn btn-sm btn-outline-warning me-1" title="تعمیر Checkpoint و مانیفست" onclick="repairSavedPageSingle('${escapeHtml(p.folder)}')"><i class="fa-solid fa-screwdriver-wrench"></i></button>`;
         const resumeBtn = p.can_resume && p.nid ? `<button class="btn btn-sm btn-success" title="ادامه عملیات بات" onclick="resumeSavedPage('${escapeHtml(p.nid)}')"><i class="fa-solid fa-play"></i></button>` : `<button class="btn btn-sm btn-light text-muted" disabled title="غیرقابل ادامه"><i class="fa-solid fa-play"></i></button>`;
+        const reauthBtn = p.nid && p.requires_reauthentication ? `<button class="btn btn-sm btn-outline-danger" title="ورود مجدد و بازیابی تنظیمات" onclick="reauthenticateSavedPage('${escapeHtml(p.nid)}')"><i class="fa-solid fa-right-to-bracket"></i></button>` : '';
+        const pauseBtn = p.live_session?.live ? `<button class="btn btn-sm btn-outline-secondary" title="توقف پایش و حفظ نشست" onclick="pauseSavedPage('${escapeHtml(p.nid)}')"><i class="fa-solid fa-pause"></i></button>` : '';
+        const logBtn = p.nid ? `<button class="btn btn-sm btn-outline-info" title="مشاهده لاگ" onclick="showSavedPageLogs('${escapeHtml(p.nid)}')"><i class="fa-solid fa-list"></i></button>` : '';
 
         return `<tr>
             <td>
@@ -3331,6 +3879,9 @@ function renderSavedPagesTable(pages) {
                 ${healthBtn}
                 ${repairBtn}
                 ${resumeBtn}
+                ${pauseBtn}
+                ${reauthBtn}
+                ${logBtn}
             </td>
         </tr>`;
     }).join('');
@@ -3540,14 +4091,40 @@ async function resumeSavedPage(nid) {
     }
 }
 
+async function pauseSavedPage(nid) {
+    try {
+        const res = await apiCall(`/saved-pages/pause/${encodeURIComponent(nid)}`, 'POST');
+        showToast(res.message, 'info');
+        await loadSavedPages();
+    } catch (e) { showToast(e.message || 'خطا در توقف پایش', 'error'); }
+}
+
+async function reauthenticateSavedPage(nid) {
+    if (!confirm('ورود مجدد ممکن است به پیامک و کپچای جدید نیاز داشته باشد. تنظیمات متقاضی حفظ می‌شوند. ادامه می‌دهید؟')) return;
+    try {
+        const res = await apiCall(`/saved-pages/reauthenticate/${encodeURIComponent(nid)}`, 'POST');
+        showToast(res.message, 'info');
+        await loadSavedPages();
+    } catch (e) { showToast(e.message || 'خطا در ورود مجدد', 'error'); }
+}
+
+async function showSavedPageLogs(nid) {
+    try {
+        const res = await apiCall(`/saved-pages/logs/${encodeURIComponent(nid)}`, 'GET');
+        const lines = (res.events || []).map(e => `${e.timestamp || ''} ${e.event_code || e.type || ''}: ${e.message || ''}`);
+        const win = window.open('about:blank', '_blank');
+        if (win) { const pre = win.document.createElement('pre'); pre.textContent = lines.join('\n') || 'هنوز لاگی ثبت نشده است'; win.document.body.appendChild(pre); }
+    } catch (e) { showToast(e.message || 'خطا در دریافت لاگ', 'error'); }
+}
+
 function startCapacityCountdown() {
     stopCapacityCountdown();
-    capacitySecondsLeft = 20;
+    capacitySecondsLeft = capacityCheckInterval;
     updateCapacityCountdownDisplay();
     capacityCountdownTimer = setInterval(() => {
         capacitySecondsLeft--;
         if (capacitySecondsLeft <= 0) {
-            capacitySecondsLeft = 20;
+            capacitySecondsLeft = capacityCheckInterval;
             if (currentViewId === 'saved-pages') {
                 loadSavedPages();
             }
@@ -3734,3 +4311,283 @@ async function sendSimulatedSms() {
 }
 
 
+
+
+/* ══════════════════════════════════════════════════════════════════════
+   DATABASE & APPLICANT CONFIGURATION HEALTH TOOLS
+   ══════════════════════════════════════════════════════════════════════ */
+async function checkDbHealth() {
+    try {
+        const badge = document.getElementById('dbHealthBadge');
+        if (badge) { badge.className = 'badge bg-secondary px-3 py-2'; badge.textContent = 'در حال بررسی...'; }
+        const res = await apiCall('/api/database/health', 'GET');
+        const h = res.health || {};
+        const isHealthy = h.is_healthy && (h.inconsistencies_count === 0);
+        if (badge) {
+            badge.className = isHealthy ? 'badge bg-success px-3 py-2' : 'badge bg-warning text-dark px-3 py-2';
+            badge.textContent = isHealthy ? 'دیتابیس کاملاً سالم و یکپارچه' : `${h.inconsistencies_count} مورد نیازمند بررسی`;
+        }
+        const counts = h.table_counts || {};
+        if (document.getElementById('dbMetricApplicants')) document.getElementById('dbMetricApplicants').textContent = counts.applicants ?? 0;
+        if (document.getElementById('dbMetricLocations')) document.getElementById('dbMetricLocations').textContent = counts.applicant_locations ?? 0;
+        if (document.getElementById('dbMetricPreferences')) document.getElementById('dbMetricPreferences').textContent = counts.applicant_bank_preferences ?? 0;
+        if (document.getElementById('dbMetricInconsistencies')) document.getElementById('dbMetricInconsistencies').textContent = h.inconsistencies_count ?? 0;
+
+        const box = document.getElementById('dbInconsistenciesBox');
+        const list = document.getElementById('dbInconsistenciesList');
+        if (box && list) {
+            const incs = h.inconsistencies || [];
+            if (incs.length > 0) {
+                box.style.display = 'block';
+                list.innerHTML = incs.map(it => `
+                    <div class="d-flex justify-content-between align-items-center border-bottom py-1">
+                        <div>
+                            <strong>${escapeHtml(it.full_name || '')} (${escapeHtml(it.national_id || '')}):</strong>
+                            <span class="ms-1">${escapeHtml(it.details || '')}</span>
+                        </div>
+                        <span class="badge bg-light text-dark border">${escapeHtml(it.suggested_action || '')}</span>
+                    </div>
+                `).join('');
+            } else {
+                box.style.display = 'none';
+                list.innerHTML = '';
+            }
+        }
+    } catch (e) {
+        console.error('Error checking DB health:', e);
+    }
+}
+
+async function backupDbNow() {
+    try {
+        const res = await apiCall('/api/database/backup', 'POST');
+        showToast(res.message || 'پشتیبان با موفقیت ایجاد شد', 'success');
+    } catch (e) {
+        showToast(e.message || 'خطا در تهیه پشتیبان', 'error');
+    }
+}
+
+async function repairDbNow() {
+    if (!confirm('آیا مایلید عملیات یکپارچه‌سازی و تعمیر خودکار متقاضیان و دیتابیس اجرا شود؟ پیش از تغییر، فایل پشتیبان خودکار ایجاد خواهد شد.')) return;
+    try {
+        const res = await apiCall('/api/database/repair', 'POST', { dry_run: false });
+        showToast(res.message || 'تعمیر با موفقیت انجام شد', 'success');
+        await checkDbHealth();
+    } catch (e) {
+        showToast(e.message || 'خطا در اجرای تعمیر', 'error');
+    }
+}
+
+
+// ===============================================================
+// MAHANBOT 2.0 HELPER FUNCTIONS: GEO, COPY, STAGE 3, EDITION
+// ===============================================================
+
+async function onProvinceSelected(provinceName, targetCityVal = null) {
+    const citySelect = document.getElementById('inpCity');
+    if (!citySelect) return;
+    
+    if (!provinceName) {
+        citySelect.innerHTML = '<option value="">-- ابتدا استان را انتخاب کنید --</option>';
+        return;
+    }
+    
+    citySelect.innerHTML = '<option value="">در حال دریافت لیست شهرهای ' + escapeHtml(provinceName) + '...</option>';
+    try {
+        const res = await fetch(`/api/geo/cities?province=${encodeURIComponent(provinceName)}`);
+        if (!res.ok) throw new Error('خطا در بارگذاری شهرها');
+        const cities = await res.json();
+        
+        let html = '<option value="">-- انتخاب شهر محل سکونت --</option>';
+        let cityMatched = false;
+        
+        cities.forEach(c => {
+            const cName = typeof c === 'string' ? c : c.name;
+            const isSelected = targetCityVal && (cName === targetCityVal || cName.trim() === targetCityVal.trim());
+            if (isSelected) cityMatched = true;
+            html += `<option value="${escapeHtml(cName)}" ${isSelected ? 'selected' : ''}>${escapeHtml(cName)}</option>`;
+        });
+        
+        // Preserve unlisted/custom city if previously saved
+        if (targetCityVal && !cityMatched) {
+            html += `<option value="${escapeHtml(targetCityVal)}" selected>${escapeHtml(targetCityVal)} (تنظیم‌شده)</option>`;
+        }
+        
+        citySelect.innerHTML = html;
+        if (targetCityVal) citySelect.value = targetCityVal;
+    } catch (e) {
+        console.warn('onProvinceSelected error:', e);
+        citySelect.innerHTML = '<option value="">-- خطای اتصال به سرور --</option>';
+        if (targetCityVal) {
+            citySelect.innerHTML += `<option value="${escapeHtml(targetCityVal)}" selected>${escapeHtml(targetCityVal)}</option>`;
+        }
+    }
+}
+
+function copyToClipboard(text, btnEl) {
+    if (!text) return;
+    const doFeedback = () => {
+        if (typeof showToast === 'function') {
+            showToast('در کلیپ‌بورد کپی شد ✓', 'success');
+        }
+        if (btnEl) {
+            const originalHtml = btnEl.innerHTML;
+            btnEl.innerHTML = '<i class="fa-solid fa-check me-1"></i>کپی شد';
+            btnEl.classList.add('btn-success');
+            setTimeout(() => {
+                btnEl.innerHTML = originalHtml;
+                btnEl.classList.remove('btn-success');
+            }, 2000);
+        }
+    };
+
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(text).then(doFeedback).catch(() => {
+            fallbackCopyText(text);
+            doFeedback();
+        });
+    } else {
+        fallbackCopyText(text);
+        doFeedback();
+    }
+}
+
+function fallbackCopyText(text) {
+    const textarea = document.createElement('textarea');
+    textarea.value = text;
+    textarea.style.position = 'fixed';
+    textarea.style.opacity = '0';
+    document.body.appendChild(textarea);
+    textarea.select();
+    try {
+        document.execCommand('copy');
+    } catch (e) {
+        console.error('Fallback copy failed', e);
+    }
+    document.body.removeChild(textarea);
+}
+
+function updateStage3BankStatusTable(data) {
+    const tbody = document.getElementById('stage3BankStatusBody');
+    if (!tbody) return;
+    const applicants = data || allUsersData || [];
+    
+    // Filter applicants that are either in stage 3, monitoring capacity, or have priority bank configured
+    const stage3Applicants = applicants.filter(u => {
+        const mon = (typeof capacityMonitorsData !== 'undefined' && capacityMonitorsData[u.national_id]) || {};
+        const runtime = u.runtime || {};
+        const st = String(u.status || runtime.status || '').toUpperCase();
+        const stage = Number(u.stage || runtime.stage || 0);
+        return stage === 3 || mon.state || st.includes('CAPACITY') || st.includes('BANK') || st.includes('SELECT') || runtime.browser_status === 'OPEN';
+    });
+
+    const displayList = stage3Applicants.length > 0 ? stage3Applicants : applicants.slice(0, 5);
+
+    if (displayList.length === 0) {
+        tbody.innerHTML = `<tr><td colspan="8" class="text-center text-muted py-3">در حال حاضر پرونده‌ای در مرحله سوم (انتخاب بانک) قرار ندارد.</td></tr>`;
+        return;
+    }
+
+    tbody.innerHTML = displayList.map(user => {
+        const nid = user.national_id;
+        const runtime = user.runtime || {};
+        const udata = (typeof parseUserData === 'function') ? parseUserData(user.data) : (user.data || {});
+        const mon = (typeof capacityMonitorsData !== 'undefined' && capacityMonitorsData[nid]) || {};
+
+        const city = mon.city || udata.city || user.city || '-';
+        const province = mon.state_province || udata.state || user.state || '-';
+        const priorityBank = (udata.priority_banks && udata.priority_banks[0]) || udata.primary_bank || user.primary_bank || '-';
+        const selectedBank = mon.selected_bank || runtime.target_bank || udata.selected_bank || '-';
+        const mode = mon.selected_mode || runtime.selected_mode || udata.bank_mode || 'online';
+        const modeText = mode === 'online' 
+            ? '<span class="badge badge-status-running"><i class="fa-solid fa-laptop me-1"></i>غیرحضوری</span>' 
+            : '<span class="badge badge-status-neutral"><i class="fa-solid fa-building me-1"></i>حضوری</span>';
+        const branch = udata.branch_code || (udata.priority_branches && udata.priority_branches[0]) || '-';
+
+        const capState = mon.state || runtime.capacity_monitor_state || (runtime.status === 'BANK_CAPACITY_FULL' ? 'WAITING_CAPACITY' : (runtime.status || user.status || 'READY'));
+        const badgeCls = (typeof getCapacityStateBadge === 'function') ? getCapacityStateBadge(capState) : 'badge bg-secondary';
+        const stateText = (typeof translateCapacityState === 'function') ? translateCapacityState(capState) : capState;
+        const lastChecked = mon.last_checked_at || runtime.last_checked_at || 'چند لحظه پیش';
+
+        return `
+            <tr>
+                <td>
+                    <strong>${escapeHtml(user.full_name || '')}</strong>
+                    <div class="font-monospace small text-muted">${(typeof formatNid === 'function') ? formatNid(nid) : nid}</div>
+                </td>
+                <td>
+                    <div>${escapeHtml(province)}</div>
+                    <small class="text-muted">${escapeHtml(city)}</small>
+                </td>
+                <td><span class="badge badge-status-info">${escapeHtml(priorityBank)}</span></td>
+                <td><strong>${escapeHtml(selectedBank)}</strong></td>
+                <td>${modeText}</td>
+                <td><small class="text-muted">${escapeHtml(branch)}</small></td>
+                <td><span class="${badgeCls}">${stateText}</span></td>
+                <td class="small text-muted">${escapeHtml(lastChecked)}</td>
+            </tr>
+        `;
+    }).join('');
+}
+
+// Hook updateStage3BankStatusTable into regular render cycles
+const _origRenderBankSelectList = typeof renderBankSelectList === 'function' ? renderBankSelectList : null;
+if (_origRenderBankSelectList) {
+    renderBankSelectList = function(data) {
+        _origRenderBankSelectList(data);
+        try { updateStage3BankStatusTable(data); } catch(e) {}
+    };
+}
+
+const _origRenderStatusList = typeof renderStatusList === 'function' ? renderStatusList : null;
+if (_origRenderStatusList) {
+    renderStatusList = function(data) {
+        _origRenderStatusList(data);
+        try { updateStage3BankStatusTable(data); } catch(e) {}
+    };
+}
+
+// Edition management (ADMIN vs CLIENT)
+function updateAppEditionUI(user) {
+    const badge = document.getElementById('userEditionBadge');
+    const title = document.getElementById('editionTitle');
+    const isAdmin = Boolean(user && user.is_admin);
+    
+    if (badge && title) {
+        if (isAdmin) {
+            title.textContent = 'MAHANBOT ADMIN';
+            badge.style.background = 'linear-gradient(135deg, #00BFB3, #009F98)';
+            badge.title = 'نسخه مدیریت کامل سامانه';
+        } else {
+            title.textContent = 'MAHANBOT CLIENT';
+            badge.style.background = 'linear-gradient(135deg, #E5A900, #F4BD32)';
+            badge.style.color = '#263746';
+            badge.title = 'نسخه کاربری و ثبت‌نام متقاضی';
+        }
+    }
+    
+    document.body.classList.toggle('client-edition', !isAdmin);
+    document.body.classList.toggle('admin-edition', isAdmin);
+    
+    // Hide or disable admin-only elements in client mode
+    document.querySelectorAll('.admin-only').forEach(el => {
+        el.style.display = isAdmin ? '' : 'none';
+    });
+}
+
+// Enhance loadSubscriptionManager with edition check
+const _origLoadSubscriptionManager = typeof loadSubscriptionManager === 'function' ? loadSubscriptionManager : null;
+if (_origLoadSubscriptionManager) {
+    loadSubscriptionManager = async function() {
+        try {
+            const meResponse = await fetch('/auth/me');
+            if (meResponse.status === 401) { location.replace('/login'); return; }
+            const me = await meResponse.json();
+            updateAppEditionUI(me);
+            if (!me.is_admin) return;
+            return await _origLoadSubscriptionManager();
+        } catch(e) {
+            console.warn('loadSubscriptionManager wrapped error:', e);
+        }
+    };
+}

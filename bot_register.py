@@ -148,10 +148,18 @@ class RegistrationBot(BotCore):
                             DBHandler.update_status(self.nid, "Stopped", "OTP retry limit reached")
                             stop_event.set()
                             break
+                        self.clear_otp_locks()
+                        self.clear_otp_backend()
+                        self.clear_remote_otp()
+                        self._last_dialog_action = None
+                        if hasattr(self, "_consumed_otp_digests"):
+                            self._consumed_otp_digests.clear()
+                        self.log("🔄 کد تایید منقضی شد؛ بازگشت به صفحه اول ثبت‌نام جهت صدور کد جدید...", "warning", page)
+                        DBHandler.update_status(self.nid, "کد منقضی - شروع مجدد", "کد تایید منقضی شد؛ بازگشت به مرحله ۱")
                         try:
-                            page.reload()
+                            self._safe_goto(page, getattr(self, "target_url", "https://ve.cbi.ir/TasRequest.aspx"))
                         except Exception:
-                            pass
+                            page.reload()
                         continue
 
                     if self.consume_recovery_flag("captcha_invalid"):

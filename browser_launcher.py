@@ -1,3 +1,40 @@
+def apply_page_zoom(page, zoom_level: float = 1.0) -> None:
+    if page is None:
+        return
+    try:
+        if zoom_level is None:
+            zoom_level = 1.0
+        setattr(page, "_mahan_page_zoom", zoom_level)
+        if abs(float(zoom_level) - 1.0) < 0.01:
+            # 100% natural zoom - clean up any CSS zoom style so content is 100% crisp and readable
+            page.evaluate("""() => {
+                try {
+                    const st = document.getElementById('__mahan_zoom_style__');
+                    if (st) st.remove();
+                    if (document.body) document.body.style.zoom = '';
+                    if (document.documentElement) document.documentElement.style.zoom = '';
+                } catch(e) {}
+            }""")
+            return
+        zoom_pct = f"{int(round(float(zoom_level) * 100))}%"
+        page.evaluate(f"""() => {{
+            try {{
+                const styleId = '__mahan_zoom_style__';
+                let st = document.getElementById(styleId);
+                if (!st) {{
+                    st = document.createElement('style');
+                    st.id = styleId;
+                    (document.head || document.documentElement).appendChild(st);
+                }}
+                st.textContent = 'html, body {{ zoom: {zoom_pct} !important; }}';
+                if (document.body) document.body.style.zoom = '{zoom_pct}';
+                if (document.documentElement) document.documentElement.style.zoom = '{zoom_pct}';
+            }} catch(e) {{}}
+        }}""")
+    except Exception:
+        pass
+
+
 # browser_launcher.py
 import ctypes
 import json
@@ -21,8 +58,8 @@ from network_diagnostics import check_rejection, SiteRejectedError
 ALLOWED_BROWSERS = {"chromium", "chrome", "edge", "firefox", "webkit"}
 ALLOWED_WINDOW_POSITIONS = {"top_right", "top_left", "bottom_right", "bottom_left", "center", "custom"}
 DEFAULT_TIMEOUT_MS = 30000
-DEFAULT_WINDOW_WIDTH = 540
-DEFAULT_WINDOW_HEIGHT = 680
+DEFAULT_WINDOW_WIDTH = 900
+DEFAULT_WINDOW_HEIGHT = 620
 DEFAULT_WINDOW_POSITION = "top_right"
 DEFAULT_VIEWPORT = {"width": DEFAULT_WINDOW_WIDTH, "height": DEFAULT_WINDOW_HEIGHT}
 PROFILE_ROOT = Path(os.getenv("MAHANBOT_PROFILE_ROOT", Path(__file__).resolve().parent / "chrome_profiles")).resolve()
@@ -108,10 +145,10 @@ def compute_window_geometry(
     except (TypeError, ValueError):
         req_h = DEFAULT_WINDOW_HEIGHT
 
-    max_usable_w = max(360, w_width - (margin * 2))
-    max_usable_h = max(320, w_height - (margin * 2))
-    width = max(360, min(req_w, max_usable_w))
-    height = max(320, min(req_h, max_usable_h))
+    max_usable_w = max(1, w_width - (margin * 2))
+    max_usable_h = max(1, w_height - (margin * 2))
+    width = min(max(360, req_w), max_usable_w)
+    height = min(max(320, req_h), max_usable_h)
 
     pos = str(data.get("window_position") or DEFAULT_WINDOW_POSITION).strip().lower()
     if pos not in ALLOWED_WINDOW_POSITIONS:
@@ -146,16 +183,8 @@ def compute_window_geometry(
         y = w_top + (w_height - height) // 2
     else:
         # Default: top_right corner of primary monitor
-        if remember and custom_x is not None and custom_y is not None:
-            try:
-                x = int(custom_x)
-                y = int(custom_y)
-            except (TypeError, ValueError):
-                x = w_left + w_width - width - margin
-                y = w_top + margin
-        else:
-            x = w_left + w_width - width - margin
-            y = w_top + margin
+        x = w_left + w_width - width - margin
+        y = w_top + margin
 
     # Strictly clamp coordinates inside the primary monitor work area so it never goes under Taskbar or off-screen
     min_x = w_left
@@ -191,6 +220,7 @@ def get_default_browser_profile() -> Dict[str, Any]:
         "start_maximized": False,
         "always_on_top": False,
         "remember_position": True,
+        "page_zoom": 1.0,
         "user_data_dir": None,
         "proxy": None,
         "timeout_ms": DEFAULT_TIMEOUT_MS,
@@ -244,6 +274,12 @@ def normalize_browser_profile(profile: Optional[Dict[str, Any]]) -> Dict[str, An
 
     data["headless"] = bool(data.get("headless", False))
     data["start_maximized"] = bool(data.get("start_maximized", False))
+    try:
+        raw_zoom = data.get("page_zoom", 1.0)
+        page_zoom = float(raw_zoom) if raw_zoom is not None else 1.0
+    except (TypeError, ValueError):
+        page_zoom = 1.0
+    data["page_zoom"] = max(0.25, min(2.0, page_zoom))
     data["always_on_top"] = bool(data.get("always_on_top", False))
     data["remember_position"] = bool(data.get("remember_position", True))
 
@@ -355,6 +391,9 @@ def _sanitize_chromium_preferences_window_placement(user_data_dir: Optional[str]
                 "work_area_right": geom["work_left"] + geom["work_width"],
                 "work_area_top": geom["work_top"],
             }
+            partition_sec = prefs.setdefault("partition", {})
+            if isinstance(partition_sec, dict):
+                partition_sec["default_zoom_level"] = -2.2239
             prefs_path.write_text(json.dumps(prefs, ensure_ascii=False), encoding="utf-8")
     except Exception:
         pass
@@ -396,52 +435,6 @@ def _apply_compact_window_bounds(page, context, geom: Dict[str, int], profile: D
                 },
             )
         cdp.detach()
-    except Exception:
-        pass
-
-
-def _apply_win32_window_bounds(geom: Dict[str, int], profile: Dict[str, Any]) -> None:
-    """
-    On Windows, locate browser window and ensure it is restored (SW_RESTORE) from maximized state
-    and positioned accurately at geom['x'], geom['y'], geom['width'], geom['height']
-    without stealing input focus (SWP_NOACTIVATE).
-    """
-    if profile.get("headless") or profile.get("start_maximized") or sys.platform != "win32":
-        return
-    try:
-        import ctypes
-        from ctypes import wintypes
-        user32 = ctypes.windll.user32
-
-        SW_RESTORE = 9
-        SWP_NOACTIVATE = 0x0010
-        SWP_SHOWWINDOW = 0x0040
-        SWP_NOZORDER = 0x0004
-
-        def enum_windows_proc(hwnd, lParam):
-            if not user32.IsWindowVisible(hwnd):
-                return True
-            length = user32.GetWindowTextLengthW(hwnd)
-            if length > 0:
-                buff = ctypes.create_unicode_buffer(length + 1)
-                user32.GetWindowTextW(hwnd, buff, length + 1)
-                title = buff.value
-                if any(k in title for k in ("سامانه", "تسهیلات", "cbi.ir", "Chrome", "Edge", "SelectBnkShb", "Register")):
-                    user32.ShowWindow(hwnd, SW_RESTORE)
-                    user32.SetWindowPos(
-                        hwnd,
-                        0,
-                        int(geom["x"]),
-                        int(geom["y"]),
-                        int(geom["width"]),
-                        int(geom["height"]),
-                        SWP_NOACTIVATE | SWP_SHOWWINDOW | SWP_NOZORDER,
-                    )
-            return True
-
-        WNDENUMPROC = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
-        cb = WNDENUMPROC(enum_windows_proc)
-        user32.EnumWindows(cb, 0)
     except Exception:
         pass
 
@@ -526,6 +519,10 @@ def safe_goto(page, url: str, *, allowed_domains: Optional[Iterable[str]] = None
         goto = getattr(page, "_original_goto", page.goto)
         response = goto(normalized, **kwargs)
         page.wait_for_load_state("domcontentloaded")
+        current_zoom = getattr(page, "_mahan_page_zoom", None)
+        if current_zoom is None:
+            current_zoom = 1.0
+        apply_page_zoom(page, current_zoom)
         check_rejection(page)
         return response
     except SiteRejectedError:
@@ -638,6 +635,102 @@ def launch_browser(profile: Dict[str, Any]) -> Tuple[Any, Any, Any, Any]:
             browser = browser_type.launch(**launch_options)
             context = browser.new_context(viewport=effective_viewport)
 
+        zoom_level = normalized.get("page_zoom", 1.0)
+        if zoom_level and zoom_level != 1.0:
+            zoom_pct = f"{int(round(zoom_level * 100))}%"
+            try:
+                context.add_init_script(f"""
+                (() => {{
+                    const applyZoom = () => {{
+                        try {{
+                            const styleId = '__mahan_zoom_style__';
+                            let st = document.getElementById(styleId);
+                            if (!st) {{
+                                st = document.createElement('style');
+                                st.id = styleId;
+                                st.textContent = 'html, body {{ zoom: {zoom_pct} !important; }}';
+                                (document.head || document.documentElement).appendChild(st);
+                            }}
+                            if (document.body) {{
+                                document.body.style.zoom = '{zoom_pct}';
+                            }}
+                            if (document.documentElement) {{
+                                document.documentElement.style.zoom = '{zoom_pct}';
+                            }}
+                        }} catch (e) {{}}
+                    }};
+                    if (document.readyState === 'loading') {{
+                        document.addEventListener('DOMContentLoaded', applyZoom);
+                    }} else {{
+                        applyZoom();
+                    }}
+                    window.addEventListener('load', applyZoom);
+                }})();
+                """)
+            except Exception:
+                pass
+
+        if normalized.get("focus_view_enabled", True):
+            try:
+                context.add_init_script("""
+                (() => {
+                    const applyFocusView = () => {
+                        try {
+                            const styleId = '__mahan_focus_view_style__';
+                            let st = document.getElementById(styleId);
+                            if (!st) {
+                                st = document.createElement('style');
+                                st.id = styleId;
+                                st.textContent = `
+                                    body {
+                                        overflow-x: hidden !important;
+                                        font-family: Tahoma, 'Segoe UI', Arial, sans-serif !important;
+                                    }
+                                    #ctl00_ContentPlaceHolder1_UpdatePanel2 {
+                                        max-width: 100% !important;
+                                        margin: 0 auto !important;
+                                        padding: 8px !important;
+                                        box-sizing: border-box !important;
+                                    }
+                                    #ctl00_ContentPlaceHolder1_UpdatePanel2 table {
+                                        width: 100% !important;
+                                        max-width: 100% !important;
+                                    }
+                                    #ctl00_ContentPlaceHolder1_UpdatePanel2 select,
+                                    #ctl00_ContentPlaceHolder1_UpdatePanel2 input[type="text"] {
+                                        font-size: 13px !important;
+                                        font-weight: 500 !important;
+                                        padding: 4px 6px !important;
+                                        border: 1px solid #7c9cbc !important;
+                                        border-radius: 4px !important;
+                                        max-width: 100% !important;
+                                        box-sizing: border-box !important;
+                                    }
+                                    #ctl00_ContentPlaceHolder1_btnSave {
+                                        font-size: 14px !important;
+                                        font-weight: bold !important;
+                                        padding: 6px 20px !important;
+                                        background-color: #198754 !important;
+                                        color: #ffffff !important;
+                                        border-radius: 4px !important;
+                                        cursor: pointer !important;
+                                    }
+                                `;
+                                (document.head || document.documentElement).appendChild(st);
+                            }
+                        } catch (e) {}
+                    };
+                    if (document.readyState === 'loading') {
+                        document.addEventListener('DOMContentLoaded', applyFocusView);
+                    } else {
+                        applyFocusView();
+                    }
+                    window.addEventListener('load', applyFocusView);
+                })();
+                """)
+            except Exception:
+                pass
+
         if normalized.get("anti_detection_enabled", True):
             from browser_fingerprint import apply_stealth_shield
             apply_stealth_shield(context)
@@ -646,7 +739,6 @@ def launch_browser(profile: Dict[str, Any]) -> Tuple[Any, Any, Any, Any]:
         page.set_default_timeout(normalized["timeout_ms"])
         page.set_default_navigation_timeout(normalized["timeout_ms"])
         _apply_compact_window_bounds(page, context, geom, normalized)
-        _apply_win32_window_bounds(geom, normalized)
         return playwright, browser, context, page
     except BrowserLaunchError:
         raise

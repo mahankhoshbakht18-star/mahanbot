@@ -1,0 +1,18 @@
+[Unit]
+Description=MahanBot 2.0 Web Application & Engine Service
+After=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/var/www/mahanbot
+Environment="PYTHONUNBUFFERED=1"
+Environment="MAHANBOT_HOST=0.0.0.0"
+Environment="MAHANBOT_PORT=8000"
+Environment="MAHANBOT_OTP_API=http://127.0.0.1:8010"
+ExecStart=/var/www/mahanbot/.venv/bin/python server.py
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target

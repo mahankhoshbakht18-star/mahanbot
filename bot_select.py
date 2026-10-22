@@ -112,7 +112,7 @@ class BankSelectionBot(BotCore):
         self._safe_goto_locked = False
         self._otp_wait_lock = False
         self._otp_guard_until = 0.0
-        self.reopen_browser_on_close = True
+        self.reopen_browser_on_close = False
         self._bank_monitor_lock = threading.Lock()
         self._last_state_sweep_sig = None
 
@@ -145,7 +145,7 @@ class BankSelectionBot(BotCore):
             return "NONE"
 
         cp = DBHandler.get_checkpoint(self.nid)
-        if not cp or not cp.get("can_resume", True):
+        if not cp:
             return "NONE"
 
         actual_stage = self.detect_actual_page_stage(page)
@@ -196,6 +196,16 @@ class BankSelectionBot(BotCore):
         return actual_stage
 
     def run(self, stop_event, loan_type="rbtnNaghdi"):
+        from live_sessions import LIVE_SESSIONS
+        owner = LIVE_SESSIONS.acquire(self.nid, stop_event)
+        self.live_owner = owner
+        try:
+            return self._run_owned(stop_event, loan_type)
+        finally:
+            LIVE_SESSIONS.release(owner)
+            DBHandler.save_checkpoint(self.nid, {"session_active": False})
+
+    def _run_owned(self, stop_event, loan_type="rbtnNaghdi"):
         attempt = 0
         self._active_stop_event = stop_event
         self._run_started_at = time.time()
@@ -214,6 +224,22 @@ class BankSelectionBot(BotCore):
                 message=f"ثبت نهایی قبلاً انجام شده است ({self._mask(existing_tracking)})؛ از اجرای تکراری جلوگیری شد.",
                 level="success",
             )
+            return
+
+        cp = DBHandler.get_checkpoint(self.nid)
+        final_status = cp.get("final_submit_status")
+        # If previous result was capacity full or browser was closed by user, release pending latch
+        if final_status == "pending" and (
+            cp.get("bank_state") == "CAPACITY_FULL"
+            or cp.get("last_operation_result") in ("CAPACITY_FULL", "BANK_CAPACITY_FULL")
+            or "تکمیل" in str(cp.get("last_error_reason", ""))
+            or cp.get("browser_closed_by_user")
+        ):
+            DBHandler.release_final_submission_claim(self.nid)
+            final_status = None
+        if final_status:
+            self.set_runtime_state("WAITING_USER_INPUT", "PREVIOUS_SUBMISSION_UNRESOLVED", browser_status="CLOSED")
+            self.log("ابتدا نتیجه درخواست یا رزرو قبلی بررسی شود؛ از شروع ثبت‌نام و پیامک جدید جلوگیری شد.", "warning")
             return
 
         adapter = LoanTypeAdapter(loan_type=loan_type, user_data=getattr(self, "user_data", {}))
@@ -236,12 +262,11 @@ class BankSelectionBot(BotCore):
             page = None
             try:
                 playwright, browser, context, page = self.setup_browser(stop_event)
+                self.live_owner.bind(context, page)
                 if stop_event.is_set():
                     return
 
                 otp_attempted = False
-                capacity_recheck_count = 0
-                list_refresh_count = 0
 
                 self.log(f"🚀 شروع عملیات ({adapter.kind} - دور {attempt})...", "info", page)
                 automation_mode = str(self.settings.get("automation_mode", "normal")).lower()
@@ -314,7 +339,7 @@ class BankSelectionBot(BotCore):
                         if new_state in panel_label_map:
                             DBHandler.update_status(self.nid, panel_label_map[new_state], f"Stage: {new_state}")
                         if new_state == "OTP_FORM":
-                            entry_time = self.mark_otp_entry_time(max(state_since, page_loaded_ts))
+                            entry_time = self._otp_entry_time or self.mark_otp_entry_time(page_loaded_ts)
                             otp_ttl = float(self.settings.get("otp_validity_seconds", 120))
                             self._otp_guard_until = time.time() + otp_ttl
                             self._otp_wait_lock = True
@@ -435,6 +460,15 @@ class BankSelectionBot(BotCore):
                         self.log("مرورگر بسته/متوقف شد؛ بازکردن فوری مرورگر جدید...", "warning")
                         break
 
+                    # Transfer ownership before recovery can consume stale OTP/session flags.
+                    if self.detect_actual_page_stage(page) == "STEP_3_BANK_SELECT":
+                        from bank_session_controller import BankSelectionSessionController
+                        result = BankSelectionSessionController(self, self.live_owner).run()
+                        if result == "reauthenticate":
+                            attempt = 0
+                            break
+                        return
+
                     check_rejection(page)
 
                     # 1. Firewall challenge gate
@@ -499,9 +533,29 @@ class BankSelectionBot(BotCore):
 
                     if self.consume_recovery_flag("otp_expired"):
                         otp_attempted = False
-                        entry_time = self.mark_otp_entry_time()
-                        set_state("OTP_FORM")
-                        DBHandler.update_status(self.nid, "منتظر پیامک", "OTP expired; waiting for a fresh server code")
+                        self.clear_otp_locks()
+                        self.clear_otp_backend()
+                        self.clear_remote_otp()
+                        self._last_dialog_action = None
+                        if hasattr(self, "_consumed_otp_digests"):
+                            self._consumed_otp_digests.clear()
+                        self.log("🔄 دریافت الارم انقضای کد تایید؛ بازگشت خودکار به مرحله ۱ جهت اخذ کد تازه (اعتبار ۱۲۰ ثانیه)...", "warning", page)
+                        DBHandler.update_status(self.nid, "کد منقضی - شروع مجدد", "کد تایید منقضی شد؛ در حال ورود به مرحله ۱ جهت دریافت کد جدید")
+                        self.save_checkpoint(
+                            "STEP_1_ENTRY_FORM",
+                            page=page,
+                            session_active=True,
+                            expected_next_step="STEP_1_ENTRY_FORM",
+                            last_error_reason="otp_expired_restart",
+                        )
+                        self._safe_goto_guarded(
+                            page,
+                            adapter.target_select_url,
+                            timeout=int(self.settings.get("navigation_timeout_ms", 15000)),
+                            wait_until="domcontentloaded",
+                            log_callback=self.log,
+                        )
+                        set_state("ENTRY_FORM")
                         continue
 
                     if self.consume_recovery_flag("captcha_invalid"):
@@ -600,203 +654,7 @@ class BankSelectionBot(BotCore):
                         return
 
                     if actual_stage == "STEP_3_BANK_SELECT":
-                        # Ensure OTP wait lock is strictly cleared on Step 3!
-                        self.clear_otp_locks()
-                        if state != "BANK_CAPACITY_FULL":
-                            set_state("BANK_SELECT")
-                        cur_status = DBHandler.get_status(self.nid)
-                        if cur_status == "منتظر پیامک" or not cur_status:
-                            DBHandler.update_status(self.nid, "انتخاب بانک", "Stage: BANK_SELECT")
-                            self.set_runtime_state("MONITORING", "BANK_SELECTION", browser_status="OPEN")
-                        if stop_event.is_set():
-                            break
-                        if self._firewall_gate(page, stop_event):
-                            continue
-
-                        result = self._process_bank_selection_v2(page, stop_event)
-
-                        if result in {"submitted_confirmed", "already_submitted"}:
-                            set_state("DONE")
-                            return
-
-                        elif result == "option_selected_waiting_user":
-                            # Bank & branch/mode are selected and verified. Wait quietly without re-running selection in a loop
-                            # unless the user clicks Save manually, enables auto_final_submit, or the selection in DOM is reset.
-                            while not stop_event.is_set():
-                                self.suspend_watchdog(60)
-                                self.mark_progress("waiting_user_final_submit")
-                                if sleep_with_stop(stop_event, 1.0, step=0.2):
-                                    break
-                                cur_stage = self.detect_actual_page_stage(page)
-                                if cur_stage != "STEP_3_BANK_SELECT":
-                                    break
-                                # Check if user enabled auto_final_submit dynamically
-                                latest_cfg = DBHandler.get_config()
-                                if bool(latest_cfg.get("auto_final_submit", latest_cfg.get("final_submit", False))):
-                                    self.settings["auto_final_submit"] = True
-                                    self.settings["final_submit"] = True
-                                    break
-                                # Check if bank dropdown was reset to 0 on the page
-                                try:
-                                    cur_val = page.locator("#ctl00_ContentPlaceHolder1_ddlBankName").first.input_value()
-                                    if cur_val in ("", "0"):
-                                        break
-                                except Exception:
-                                    pass
-                            continue
-
-                        elif result == "capacity_full":
-                            set_state("BANK_CAPACITY_FULL")
-                            capacity_recheck_count += 1
-
-                            sniper_on = bool(self.settings.get("sniper_mode_enabled", False))
-                            if sniper_on:
-                                sniper_ms = max(200, int(self.settings.get("sniper_interval_ms", 800)))
-                                wait_sec = round(sniper_ms / 1000.0, 2)
-                                self.log(
-                                    f"🎯 [شکار سهمیه Sniper] بررسی فوق‌سریع ظرفیت‌ها ({sniper_ms}ms)...",
-                                    "info",
-                                    page,
-                                )
-                            else:
-                                base_recheck = max(5.0, float(self.settings.get("capacity_check_interval_seconds", self.settings.get("bank_capacity_recheck_seconds", 20.0))))
-                                # Apply gentle backoff if repeated capacity full (capped at 120s)
-                                backoff_factor = min(3.0, 1.0 + (capacity_recheck_count - 1) * 0.25)
-                                wait_sec = min(120.0, round(base_recheck * backoff_factor, 1))
-
-                            is_monitor_on = bool(self.settings.get("capacity_check_enabled", self.settings.get("bank_monitor_enabled", True)))
-                            if not is_monitor_on:
-                                self.log("⏸️ ظرفیت بانک تکمیل است و پایش خودکار غیرفعال است؛ منتظر اقدام کاربر.", "warning", page)
-                                self.suspend_watchdog(300)
-                                if sleep_with_stop(stop_event, 5.0, step=0.2):
-                                    break
-                                continue
-
-                            DBHandler.update_runtime(
-                                self.nid,
-                                status="BANK_CAPACITY_FULL",
-                                current_step="BANK_CAPACITY_FULL",
-                                next_refresh=time.time() + wait_sec,
-                                retry_count=capacity_recheck_count,
-                            )
-                            self.suspend_watchdog(wait_sec + 15.0)
-                            if not sniper_on:
-                                self.log(
-                                    f"⏳ ظرفیت ثبت‌نام بانک تکمیل است؛ حفظ صفحه فعلی و بررسی مجدد تا {wait_sec} ثانیه دیگر (بدون تغییر روش غیرحضوری)...",
-                                    "warning",
-                                    page,
-                                )
-                            if sleep_with_stop(stop_event, wait_sec, step=0.05 if sniper_on else 0.2):
-                                break
-
-                            # Clean expired bank cooldowns
-                            now_t = time.time()
-                            if hasattr(self, "_bank_cooldowns"):
-                                self._bank_cooldowns = {k: v for k, v in self._bank_cooldowns.items() if v > now_t}
-
-                            # Re-trigger dropdown check via city postback without returning to Step 1
-                            try:
-                                return_to_bank_field(page, "#ctl00_ContentPlaceHolder1_ddlBankName")
-                                city_loc = page.locator("#ctl00_ContentPlaceHolder1_ddlCity")
-                                if city_loc.count() > 0 and city_loc.first.is_visible():
-                                    cur_city = city_loc.first.input_value()
-                                    if cur_city and cur_city != "0":
-                                        page.evaluate(
-                                            "() => { if (typeof __doPostBack === 'function') __doPostBack('ctl00$ContentPlaceHolder1$ddlCity', ''); }"
-                                        )
-                                self.wait_for_aspnet_postback(page, timeout_ms=5000)
-                            except Exception:
-                                pass
-                            continue
-
-                        elif result == "no_match":
-                            list_refresh_count += 1
-                            if not bool(self.settings.get("bank_monitor_enabled", True)):
-                                self.set_runtime_state("STOPPED", "BANK_OPTION_NOT_FOUND", browser_status="OPEN")
-                                self.log("بانک هدف در فهرست موجود نیست و پایش خودکار غیرفعال است.", "warning", page)
-                                return
-
-                            sniper_on = bool(self.settings.get("sniper_mode_enabled", False))
-                            if sniper_on:
-                                sniper_ms = max(200, int(self.settings.get("sniper_interval_ms", 800)))
-                                refresh_interval = round(sniper_ms / 1000.0, 2)
-                                self.log(
-                                    f"🎯 [شکار سهمیه Sniper] پایش و رفرش لحظه‌ای ({sniper_ms}ms)...",
-                                    "info",
-                                    page,
-                                )
-                            else:
-                                base_refresh = max(1.0, float(self.settings.get("bank_list_refresh_seconds", self.settings.get("bank_refresh_interval", 5.0))))
-                                # Gentle backoff after every 10 consecutive refreshes to respect server rate limits
-                                backoff = min(4.0, 1.0 + (list_refresh_count // 10) * 0.5)
-                                refresh_interval = round(base_refresh * backoff, 1)
-
-                            DBHandler.update_runtime(
-                                self.nid,
-                                status="MONITORING",
-                                current_step="MONITOR_BANKS",
-                                next_refresh=time.time() + refresh_interval,
-                                retry_count=list_refresh_count,
-                            )
-                            self.suspend_watchdog(refresh_interval + 15.0)
-                            if sleep_with_stop(stop_event, refresh_interval, step=0.05 if sniper_on else 0.1):
-                                break
-
-                            # Clean expired bank cooldowns
-                            now_t = time.time()
-                            if hasattr(self, "_bank_cooldowns"):
-                                self._bank_cooldowns = {k: v for k, v in self._bank_cooldowns.items() if v > now_t}
-                            # Refresh bank list via official city dropdown postback first (avoids losing session or returning to Step 1)
-                            refreshed_via_postback = False
-                            try:
-                                city_loc = page.locator("#ctl00_ContentPlaceHolder1_ddlCity")
-                                if city_loc.count() > 0 and city_loc.first.is_visible():
-                                    cur_city = city_loc.first.input_value()
-                                    if cur_city and cur_city != "0":
-                                        page.evaluate(
-                                            "() => { if (typeof __doPostBack === 'function') __doPostBack('ctl00$ContentPlaceHolder1$ddlCity', ''); }"
-                                        )
-                                        self.wait_for_aspnet_postback(page, timeout_ms=8000)
-                                        refreshed_via_postback = True
-                                        self.mark_progress("bank_list_postback_refresh")
-                            except Exception:
-                                refreshed_via_postback = False
-
-                            if not refreshed_via_postback:
-                                try:
-                                    # Fallback: re-trigger city or province postback; DO NOT reload the full page as it destroys ASP.NET wizard session
-                                    page.evaluate(
-                                        """() => {
-                                            if (typeof __doPostBack === 'function') {
-                                                const city = document.querySelector("#ctl00_ContentPlaceHolder1_ddlCity");
-                                                if (city && city.name) {
-                                                    __doPostBack(city.name, '');
-                                                    return;
-                                                }
-                                                const state = document.querySelector("#ctl00_ContentPlaceHolder1_ddlState");
-                                                if (state && state.name) {
-                                                    __doPostBack(state.name, '');
-                                                }
-                                            }
-                                        }"""
-                                    )
-                                    self.wait_for_aspnet_postback(page, timeout_ms=5000)
-                                    self.mark_progress("bank_postback_refresh_fallback")
-                                except Exception:
-                                    pass
-                            continue
-
-                        elif result == "waiting":
-                            refresh_interval = max(1.0, float(self.settings.get("bank_list_refresh_seconds", 5.0)))
-                            if sleep_with_stop(stop_event, refresh_interval, step=0.1):
-                                break
-                            continue
-
-                        elif result == "submit_rejected":
-                            self.suspend_watchdog(120)
-                            if sleep_with_stop(stop_event, 5.0, step=0.2):
-                                break
-                            continue
+                        continue  # The owner controller takes over at the top of the loop.
 
                     elif actual_stage == "STEP_2_OTP" or self._otp_input_visible(page):
                         set_state("OTP_FORM")
@@ -815,14 +673,29 @@ class BankSelectionBot(BotCore):
                         elif result == "otp_expired":
                             otp_attempted = False
                             self.clear_otp_locks()
-                            # Re-verify if still on OTP page or needs official re-send
-                            if resend_enabled(page):
-                                try:
-                                    page.locator("#ctl00_ContentPlaceHolder1_btnSendConfirmCode, input[name$='btnSendConfirmCode']").first.click()
-                                    self.log("📲 درخواست ارسال مجدد کد پیامک از مسیر رسمی سامانه ثبت شد.", "info", page)
-                                except Exception:
-                                    pass
-                        continue
+                            self.clear_otp_backend()
+                            self.clear_remote_otp()
+                            self._last_dialog_action = None
+                            if hasattr(self, "_consumed_otp_digests"):
+                                self._consumed_otp_digests.clear()
+                            self.log("🔄 کد تایید منقضی شد؛ بازگشت به مرحله ۱ و شروع مجدد متقاضی جهت دریافت کد جدید (مهلت ۱۲۰ ثانیه)...", "warning", page)
+                            DBHandler.update_status(self.nid, "کد منقضی - شروع مجدد", "کد تایید منقضی شد؛ بازگشت به مرحله ۱ و شروع مجدد")
+                            self.save_checkpoint(
+                                "STEP_1_ENTRY_FORM",
+                                page=page,
+                                session_active=True,
+                                expected_next_step="STEP_1_ENTRY_FORM",
+                                last_error_reason="otp_expired_restart",
+                            )
+                            self._safe_goto_guarded(
+                                page,
+                                adapter.target_select_url,
+                                timeout=int(self.settings.get("navigation_timeout_ms", 15000)),
+                                wait_until="domcontentloaded",
+                                log_callback=self.log,
+                            )
+                            set_state("ENTRY_FORM")
+                            continue
 
                     elif actual_stage == "STEP_1_ENTRY_FORM":
                         set_state("ENTRY_FORM")
@@ -1027,6 +900,9 @@ class BankSelectionBot(BotCore):
         actual_stage = self.detect_actual_page_stage(page)
         if actual_stage == "STEP_3_BANK_SELECT":
             self.clear_otp_locks()
+            return False
+        if getattr(getattr(self, "live_owner", None), "bank_page_active", False):
+            return False
 
         otp_visible = self._otp_input_visible(page)
         otp_guard_active = (time.time() < self._otp_guard_until) and otp_visible
@@ -1047,6 +923,9 @@ class BankSelectionBot(BotCore):
         actual_stage = self.detect_actual_page_stage(page)
         if actual_stage == "STEP_3_BANK_SELECT":
             self.clear_otp_locks()
+            return False
+        if getattr(getattr(self, "live_owner", None), "bank_page_active", False):
+            return False
 
         otp_visible = self._otp_input_visible(page)
         otp_guard_active = (time.time() < self._otp_guard_until) and otp_visible
@@ -1089,6 +968,8 @@ class BankSelectionBot(BotCore):
         Waits for the CAPTCHA image to appear and finish loading (`naturalWidth > 0`) before passing to the model.
         """
         from bot_select_captcha import wait_for_captcha_image_ready
+        if not self._otp_entry_time:
+            self.mark_otp_entry_time()
         input_sel = "input[name$='tbCaptcha1']"
         btn_sel = "input[name$='btnSendConfirmCode']"
         max_attempts = max(1, int(self.settings.get("captcha_max_retries", 5)))
@@ -1123,23 +1004,30 @@ class BankSelectionBot(BotCore):
                 self._refresh_captcha_or_reload(page, input_sel=input_sel, allow_reload=False)
                 continue
 
-            try:
-                page.wait_for_selector("input[name$='tbMobileConfCode']", timeout=1200, state="visible")
-                return True
-            except Exception:
-                pass
+            # Wait for ASP.NET postback / AJAX update to complete
+            self.wait_for_aspnet_postback(page, timeout_ms=4000)
 
-            try:
-                page.wait_for_selector("#ctl00_ContentPlaceHolder1_ddlBankName", timeout=800, state="visible")
+            # Check if page transitioned to OTP (Step 2) or Bank Selection (Step 3)
+            transitioned = False
+            for _ in range(15):  # poll every 200ms up to 3.0s
+                if stop_event.is_set():
+                    return False
+                if self._otp_input_visible(page) or self.detect_actual_page_stage(page) in {"STEP_2_OTP", "STEP_3_BANK_SELECT"}:
+                    transitioned = True
+                    break
+                if self.consume_recovery_flag("captcha_invalid") or self._detect_captcha_failure(page):
+                    break
+                time.sleep(0.2)
+
+            if transitioned:
                 self.clear_otp_locks()
                 return True
-            except Exception:
-                pass
 
-            if self._detect_captcha_failure(page):
+            if self._detect_captcha_failure(page) or self.consume_recovery_flag("captcha_invalid"):
                 self._refresh_captcha_or_reload(page, input_sel=input_sel, allow_reload=False)
                 continue
 
+            time.sleep(0.4)
             self._refresh_captcha_or_reload(page, input_sel=input_sel, allow_reload=False)
 
         # Manual CAPTCHA handoff after bounded retries

@@ -13,6 +13,7 @@ class ApplicantModel(BaseModel):
 
 
 class SMSRequest(BaseModel):
+    request_id: Optional[str] = None
     nid: Optional[str] = None
     code: Optional[str] = None
     text: Optional[str] = None
@@ -47,9 +48,19 @@ class BrowserProfileRequest(BaseModel):
     user_data_dir: Optional[str] = None
     proxy: Optional[str] = None
     timeout_ms: Optional[int] = None
+    page_zoom: Optional[float] = None
+    focus_view_enabled: Optional[bool] = None
 
 
 class SettingsRequest(BaseModel):
+    bank_capacity_check_interval: Optional[float] = None
+    bank_list_check_interval: Optional[float] = None
+    loan_browser_width: Optional[int] = None
+    loan_browser_height: Optional[int] = None
+    loan_browser_position: Optional[str] = None
+    loan_browser_maximized: Optional[bool] = None
+    loan_browser_always_on_top: Optional[bool] = None
+    otp_receive_timeout: Optional[int] = None
     captcha_delay: Optional[float] = None
     retry_count: Optional[int] = None
     headless: Optional[bool] = None
@@ -111,6 +122,8 @@ class SettingsRequest(BaseModel):
     proxy_rotation_strategy: Optional[str] = None
     anti_detection_enabled: Optional[bool] = None
     proxy_health_check_timeout: Optional[float] = None
+    browser_page_zoom: Optional[float] = None
+    focus_view_enabled: Optional[bool] = None
 
 
 

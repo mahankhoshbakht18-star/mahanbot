@@ -173,16 +173,8 @@ class TestSmsGsmEndpoints(unittest.TestCase):
         self.assertIn("port", data)
 
     def test_sms_webhook_no_active_waiter(self):
-        # Webhook should respond cleanly with status even when no applicant is currently waiting
-        res = self.client.post(
-            "/api/sms/webhook",
-            json={"text": "کد تایید شما: 654321"}
-        )
-        self.assertEqual(res.status_code, 200)
-        data = res.json()
-        # Either success: false (no waiter) or success: true if a mock waiter exists
-        self.assertIn("status", data)
-
-
-if __name__ == "__main__":
-    unittest.main()
+        # An unrouteable SMS is rejected explicitly so Android can surface delivery failure.
+        with patch("sms_service.find_active_otp_waiter", return_value=None):
+            res = self.client.post("/api/sms/webhook", json={"text": "کد تایید شما: 654321"})
+        self.assertEqual(res.status_code, 422)
+        self.assertEqual(res.json()["detail"]["error"], "applicant_not_matched")

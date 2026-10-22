@@ -1,12 +1,12 @@
 <!doctype html>
-<html lang="fa" dir="rtl">
+<html lang="fa" dir="rtl" data-theme="scheme-c">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>MAHANBOT | دستیار هوشمند مدیریت تسهیلات ازدواج و فرزندآوری</title>
   <link rel="stylesheet" href="/static/vendor/bootstrap.rtl.min.css">
   <link rel="stylesheet" href="/static/vendor/all.min.css">
-  <link rel="stylesheet" href="/static/style.css?v=20261016-2">
+  <link rel="stylesheet" href="/static/style.css?v=20261021-1">
   <link rel="stylesheet" href="/static/browser-preview.css">
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Vazirmatn:wght@400;500;600;700;800;900&display=swap" media="print" onload="this.media='all'">
 </head>
@@ -16,51 +16,44 @@
 
   <aside class="sidebar">
     <div class="brand-block">
-      <!-- Luxury Brand Logo SVG: Intertwined Golden Wedding Rings, Radiant Beating Heart & Bond Ribbon -->
+      <!-- MAHANBOT 2.0 Brand Logo SVG: Turquoise & Gold Rings with Radiant Heart -->
       <svg class="brand-logo-svg" viewBox="0 0 72 72" fill="none" xmlns="http://www.w3.org/2000/svg">
         <defs>
           <linearGradient id="goldGrad1" x1="12" y1="12" x2="44" y2="44" gradientUnits="userSpaceOnUse">
-            <stop offset="0%" stop-color="#FDE68A" />
-            <stop offset="40%" stop-color="#F59E0B" />
-            <stop offset="100%" stop-color="#D97706" />
+            <stop offset="0%" stop-color="#F4BD32" />
+            <stop offset="60%" stop-color="#E5A900" />
+            <stop offset="100%" stop-color="#B88500" />
           </linearGradient>
-          <linearGradient id="goldGrad2" x1="28" y1="12" x2="60" y2="44" gradientUnits="userSpaceOnUse">
-            <stop offset="0%" stop-color="#FEF08A" />
-            <stop offset="40%" stop-color="#FBBF24" />
-            <stop offset="100%" stop-color="#B45309" />
+          <linearGradient id="turquoiseGrad" x1="28" y1="12" x2="60" y2="44" gradientUnits="userSpaceOnUse">
+            <stop offset="0%" stop-color="#39E0D3" />
+            <stop offset="60%" stop-color="#00BFB3" />
+            <stop offset="100%" stop-color="#009F98" />
           </linearGradient>
           <linearGradient id="heartGrad" x1="22" y1="20" x2="50" y2="48" gradientUnits="userSpaceOnUse">
-            <stop offset="0%" stop-color="#F472B6" />
-            <stop offset="50%" stop-color="#EC4899" />
-            <stop offset="100%" stop-color="#8B5CF6" />
+            <stop offset="0%" stop-color="#00BFB3" />
+            <stop offset="60%" stop-color="#009F98" />
+            <stop offset="100%" stop-color="#E5A900" />
           </linearGradient>
           <filter id="ringGlow" x="-20%" y="-20%" width="140%" height="140%">
             <feGaussianBlur stdDeviation="2" result="blur" />
             <feComposite in="SourceGraphic" in2="blur" operator="over" />
           </filter>
         </defs>
-        <!-- Background Soft Circle -->
-        <circle cx="36" cy="36" r="33" fill="#FFFFFF" fill-opacity="0.9" />
-        <circle cx="36" cy="36" r="33" stroke="url(#goldGrad1)" stroke-width="1.5" stroke-opacity="0.4" />
-        <!-- Left Wedding Ring -->
+        <circle cx="36" cy="36" r="33" fill="#FFFFFF" fill-opacity="0.95" />
+        <circle cx="36" cy="36" r="33" stroke="url(#turquoiseGrad)" stroke-width="1.8" stroke-opacity="0.5" />
         <circle cx="28" cy="34" r="15" stroke="url(#goldGrad1)" stroke-width="3.8" filter="url(#ringGlow)" />
-        <circle cx="28" cy="34" r="15" stroke="#FFFFFF" stroke-width="1" stroke-opacity="0.7" />
-        <!-- Right Wedding Ring (Intertwined) -->
-        <circle cx="44" cy="34" r="15" stroke="url(#goldGrad2)" stroke-width="3.8" filter="url(#ringGlow)" />
-        <circle cx="44" cy="34" r="15" stroke="#FFFFFF" stroke-width="1" stroke-opacity="0.7" />
-        <!-- Sparkling Diamond on Left Ring -->
-        <polygon points="28,16 31,19 28,22 25,19" fill="#60A5FA" />
+        <circle cx="28" cy="34" r="15" stroke="#FFFFFF" stroke-width="1" stroke-opacity="0.8" />
+        <circle cx="44" cy="34" r="15" stroke="url(#turquoiseGrad)" stroke-width="3.8" filter="url(#ringGlow)" />
+        <circle cx="44" cy="34" r="15" stroke="#FFFFFF" stroke-width="1" stroke-opacity="0.8" />
+        <polygon points="28,16 31,19 28,22 25,19" fill="#F4BD32" />
         <circle cx="28" cy="19" r="1.5" fill="#FFFFFF" />
-        <!-- Sparkling Star on Right Ring -->
-        <polygon points="44,16 47,19 44,22 41,19" fill="#34D399" />
-        <!-- Center Harmonious Heart -->
+        <polygon points="44,16 47,19 44,22 41,19" fill="#39E0D3" />
         <path d="M36,46 C36,46 25,38 25,29 C25,24 28.5,21.5 32,23 C34,23.8 35.5,25.5 36,27 C36.5,25.5 38,23.8 40,23 C43.5,21.5 47,24 47,29 C47,38 36,46 36,46 Z" fill="url(#heartGrad)" />
-        <!-- Stylized "M" Ribbon Emblem at Base -->
         <path d="M26,56 L31,50 L36,54 L41,50 L46,56" stroke="url(#goldGrad1)" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" />
       </svg>
       <div class="brand-text">
-        <h2>MAHANBOT</h2>
-        <small>دستیار هوشمند تسهیلات ازدواج و فرزندآوری</small>
+        <h2>MAHANBOT 2.0</h2>
+        <small>سامانه هوشمند تسهیلات ازدواج و فرزندآوری</small>
       </div>
     </div>
 
@@ -70,15 +63,15 @@
     </div>
 
     <nav class="sidebar-nav">
-      <div onclick="switchView('dashboard',this)"><button class="nav-link active"><i class="fa-solid fa-chart-pie"></i><span>داشبورد عملیات</span></button></div>
-      <div onclick="switchView('add',this)"><button class="nav-link"><i class="fa-solid fa-user-plus"></i><span>ثبت متقاضی</span></button></div>
-      <div onclick="switchView('list',this)"><button class="nav-link"><i class="fa-solid fa-address-card"></i><span>ثبت‌نام اولیه</span></button></div>
-      <div onclick="switchView('bank-select',this)"><button class="nav-link"><i class="fa-solid fa-building-columns"></i><span>انتخاب بانک</span></button></div>
-      <div onclick="switchView('saved-pages',this)"><button class="nav-link"><i class="fa-solid fa-file-shield"></i><span>صفحات ذخیره‌شده</span></button></div>
-      <div onclick="switchView('status',this)"><button class="nav-link"><i class="fa-solid fa-magnifying-glass-chart"></i><span>مشاهده وضعیت</span></button></div>
-      <div onclick="switchView('recover',this)"><button class="nav-link"><i class="fa-solid fa-rotate-left"></i><span>بازیابی درخواست</span></button></div>
-      <div onclick="switchView('delete-req',this)"><button class="fa-trash-nav nav-link"><i class="fa-solid fa-trash-can"></i><span>حذف درخواست</span></button></div>
-      <div onclick="switchView('settings',this)"><button class="nav-link"><i class="fa-solid fa-sliders"></i><span>تنظیمات و ظاهر</span></button></div>
+      <div onclick="switchView('dashboard',this)"><button class="nav-link active" data-tooltip="داشبورد عملیات: مشاهده وضعیت آنلاین بات‌ها، آمار کلی و مانیتور زنده"><i class="fa-solid fa-chart-pie"></i><span>داشبورد</span></button></div>
+      <div onclick="switchView('list',this)"><button class="nav-link" data-tooltip="مدیریت متقاضیان: فهرست پرونده‌ها، جستجو، فیلتر و ویرایش مشخصات"><i class="fa-solid fa-users"></i><span>متقاضیان</span></button></div>
+      <div onclick="switchView('add',this)"><button class="nav-link" data-tooltip="ثبت‌نام اولیه: تشکیل پرونده وام ازدواج یا فرزندآوری و بارگذاری اکسل"><i class="fa-solid fa-user-plus"></i><span>ثبت‌نام اولیه</span></button></div>
+      <div onclick="switchView('bank-select',this)"><button class="nav-link" data-tooltip="پایش ظرفیت: شکار هوشمند سهمیه بانکی و کنترل چرخه ثبت"><i class="fa-solid fa-crosshairs"></i><span>پایش ظرفیت</span></button></div>
+      <div onclick="switchView('saved-pages',this)"><button class="nav-link" data-tooltip="صفحات ذخیره‌شده: بررسی و بازیابی نشست‌های مرحله ۳ بدون پیامک مجدد"><i class="fa-solid fa-file-shield"></i><span>صفحات ذخیره‌شده</span></button></div>
+      <div onclick="switchView('delete-req',this)"><button class="fa-trash-nav nav-link" data-tooltip="حذف درخواست: مسیر رسمی لغو ثبت‌نام در سامانه بانک مرکزی با تأیید دو مرحله‌ای"><i class="fa-solid fa-trash-can"></i><span>حذف درخواست</span></button></div>
+      <div onclick="switchView('status',this)"><button class="nav-link" data-tooltip="گزارش‌ها: مشاهده رویدادها، تاریخچه پیگیری و لاگ‌های زنده"><i class="fa-solid fa-clipboard-list"></i><span>گزارش‌ها</span></button></div>
+      <div onclick="switchView('settings',this)"><button class="nav-link" data-tooltip="تنظیمات سامانه: پارامترهای اتوماسیون، فواصل پایش، مرورگر و وب‌هوک"><i class="fa-solid fa-sliders"></i><span>تنظیمات</span></button></div>
+      <div onclick="switchView('support',this)"><button class="nav-link" data-tooltip="پشتیبانی: کانال تلگرام، ارتباط با ادمین، راهنما و اپلیکیشن اندروید"><i class="fa-solid fa-headset"></i><span>پشتیبانی</span></button></div>
     </nav>
 
     <div class="sidebar-footer">
@@ -86,7 +79,7 @@
         <i class="fa-regular fa-clock"></i>
         <span id="clock">--:--:--</span>
       </div>
-      <small>MAHANBOT نسخه ۱.۸.۰ پایدار</small>
+      <small>MAHANBOT نسخه ۲.۰ تجاری پایدار</small>
     </div>
   </aside>
 
@@ -97,6 +90,14 @@
         <h1>مدیریت ثبت‌نام تسهیلات ازدواج و فرزندآوری</h1>
       </div>
       <div class="topbar-actions">
+        <button class="btn btn-outline-primary action-pill" onclick="switchView('support'); setTimeout(() => { document.getElementById('updateCenterCard')?.scrollIntoView({behavior:'smooth'}); checkForUpdates(); }, 300);" data-tooltip="مرکز به‌روزرسانی هوشمند نسخه ۲.۰">
+          <i class="fa-solid fa-cloud-arrow-down"></i>
+          <span id="topbarVersionText">نسخه ۲.۰.۱</span>
+        </button>
+        <div id="userEditionBadge" class="edition-pill badge" style="background:linear-gradient(135deg, #00BFB3, #009F98);color:#fff;padding:8px 14px;border-radius:20px;font-size:0.8rem;font-weight:700;display:inline-flex;align-items:center;gap:6px;box-shadow:0 2px 8px rgba(0,191,179,0.25);" title="نسخه مدیریت کامل سامانه">
+          <i class="fa-solid fa-shield-halved"></i>
+          <span id="editionTitle">MAHANBOT ADMIN</span>
+        </div>
         <button class="btn btn-outline-primary action-pill" onclick="toggleSensitiveMasking()">
           <i id="maskToggleIcon" class="fa-solid fa-eye-slash"></i>
           <span id="maskToggleText">پنهان‌سازی اطلاعات</span>
@@ -118,11 +119,11 @@
           <p>وضعیت بات‌ها، کدهای پیامک، ظرفیت لحظه‌ای بانک‌ها و پیشرفت مراحل با بالاترین دقت و هماهنگی به‌روزرسانی می‌شود.</p>
         </div>
         <div class="d-flex align-items-center gap-2">
-          <button class="btn btn-outline-light action-pill" onclick="downloadDiagnosticZip()" title="دانلود گزارش تشخیصی، اسکرین‌شات‌ها و لاگ‌ها به فرمت ZIP">
+          <button class="btn btn-outline-primary action-pill" onclick="downloadDiagnosticZip()" title="دانلود گزارش تشخیصی، اسکرین‌شات‌ها و لاگ‌ها به فرمت ZIP">
             <i class="fa-solid fa-file-zipper"></i>
             <span>بسته عیب‌یابی (ZIP)</span>
           </button>
-          <button class="btn btn-light action-pill" onclick="fetchDashboardData()">
+          <button class="btn btn-primary action-pill" onclick="fetchDashboardData()">
             <i class="fa-solid fa-arrows-rotate"></i>
             <span>به‌روزرسانی</span>
           </button>
@@ -229,18 +230,18 @@
         </div>
       </div>
 
-      <!-- Quick Action Buttons -->
+      <!-- Quick Action Buttons (Deep Ocean Dark Luxury) -->
       <div class="quick-actions" style="display:flex;gap:12px;margin:8px 0 20px;flex-wrap:wrap">
-        <button class="btn btn-sm action-pill" style="background:linear-gradient(135deg,#ede9fe,#fce7f3);color:#7c3aed;border:none;" onclick="switchView('add')">
+        <button class="btn btn-sm action-pill" style="background:rgba(0,191,179,0.18);color:#00E5D4;border:1px solid rgba(0,191,179,0.5);font-weight:700;" onclick="switchView('add')">
           <i class="fa-solid fa-user-plus ms-1"></i> ثبت سریع متقاضی
         </button>
-        <button class="btn btn-sm action-pill" style="background:linear-gradient(135deg,#dcfce7,#dbeafe);color:#059669;border:none;" onclick="switchView('list')">
+        <button class="btn btn-sm action-pill" style="background:rgba(16,185,129,0.18);color:#34D399;border:1px solid rgba(16,185,129,0.5);font-weight:700;" onclick="switchView('list')">
           <i class="fa-solid fa-play ms-1"></i> شروع عملیات ثبت‌نام
         </button>
-        <button class="btn btn-sm action-pill" style="background:linear-gradient(135deg,#ffedd5,#fef3c7);color:#d97706;border:none;" onclick="switchView('bank-select')">
-          <i class="fa-solid fa-building-columns ms-1"></i> مدیریت انتخاب بانک
+        <button class="btn btn-sm action-pill" style="background:rgba(245,158,11,0.18);color:#FBBF24;border:1px solid rgba(245,158,11,0.5);font-weight:700;" onclick="switchView('bank-select')">
+          <i class="fa-solid fa-crosshairs ms-1"></i> مدیریت شکار ظرفیت بانک
         </button>
-        <button class="btn btn-sm action-pill" style="background:linear-gradient(135deg,#f1f5f9,#e2e8f0);color:#475569;border:none;" onclick="switchView('settings')">
+        <button class="btn btn-sm action-pill" style="background:rgba(236,72,153,0.18);color:#F472B6;border:1px solid rgba(236,72,153,0.5);font-weight:700;" onclick="switchView('settings')">
           <i class="fa-solid fa-gear ms-1"></i> تنظیمات سامانه
         </button>
       </div>
@@ -261,9 +262,14 @@
               <h4><i class="fa-solid fa-key ms-1"></i> ارسال دستی کد پیامک (OTP)</h4>
               <p>در صورت نیاز به ورود دستی، کد دریافتی را اینجا وارد نمایید.</p>
             </div>
+            <label for="manualOtpRecipient" class="d-block mb-2">گیرنده کد پیامک</label>
+            <select id="manualOtpRecipient" class="form-select mb-2" onchange="selectOtpRecipient(this.value)">
+              <option value="">متقاضی منتظر پیامک را انتخاب کنید</option>
+            </select>
             <div class="otp-row">
               <input id="manualOtpInput" class="otp-input" inputmode="numeric" maxlength="8" placeholder="••••••">
-              <button onclick="sendManualOtp()" class="btn btn-primary px-4">ارسال کد</button>
+              <input type="hidden" id="otpInput">
+              <button id="manualOtpSend" onclick="sendManualOtp()" class="btn btn-primary px-4">ارسال کد</button>
             </div>
             <small id="manualOtpStatus" class="d-block mt-2 font-monospace"></small>
           </div>
@@ -292,14 +298,7 @@
               <tbody id="activeBotsBody"></tbody>
             </table>
           </div>
-          <div class="quick-otp">
-            <label for="otpInput"><i class="fa-solid fa-paper-plane ms-1"></i> تحویل سریع کد به اولین بات منتظر</label>
-            <div class="input-group">
-              <input id="otpInput" class="form-control" maxlength="8" inputmode="numeric" placeholder="کد پیامک">
-              <button class="btn btn-outline-primary" onclick="sendOtp(document.getElementById('otpInput').value)">تحویل</button>
-            </div>
-            <small id="otpStatus" class="d-block mt-2 font-monospace"></small>
-          </div>
+          
         </article>
       </div>
 
@@ -357,6 +356,41 @@
         </div>
         <div id="terminalBox" class="terminal-box">
           <div class="terminal-empty">در انتظار دریافت اولین رویداد از هسته بات…</div>
+        </div>
+      </article>
+
+      <!-- Stage 3 Live Bank Status Observation Panel -->
+      <article class="panel mb-4" id="stage3BankStatusCard">
+        <div class="panel-heading d-flex justify-content-between align-items-center flex-wrap gap-2">
+          <div>
+            <span class="section-kicker"><i class="fa-solid fa-building-columns text-primary ms-1"></i> پایش بلادرنگ مرحله سوم</span>
+            <h3 class="mb-0">وضعیت بانک‌های متقاضیان در مرحله انتخاب بانک</h3>
+            <p class="text-muted small mb-0">نمایش وضعیت واقعی ظرفیت بانک‌ها، نوع مراجعه (غیرحضوری/حضوری) و آخرین مشاهده DOM بر اساس نشست‌های معتبر</p>
+          </div>
+          <span class="badge" style="background:#E6FAF8;color:#009F98;border:1px solid #39E0D3;padding:6px 14px;border-radius:20px;font-weight:700;">
+            <i class="fa-solid fa-radar ms-1"></i> وضعیت زنده
+          </span>
+        </div>
+        <div class="table-responsive mt-3">
+          <table class="table modern-table compact-table">
+            <thead>
+              <tr>
+                <th>متقاضی</th>
+                <th>استان / شهر</th>
+                <th>بانک اولویت‌دار</th>
+                <th>بانک انتخابی</th>
+                <th>نوع مراجعه</th>
+                <th>شعبه</th>
+                <th>آخرین وضعیت سهمیه</th>
+                <th>زمان بررسی</th>
+              </tr>
+            </thead>
+            <tbody id="stage3BankStatusBody">
+              <tr>
+                <td colspan="8" class="text-center text-muted py-3">در حال حاضر پرونده‌ای در مرحله سوم (انتخاب بانک) قرار ندارد.</td>
+              </tr>
+            </tbody>
+          </table>
         </div>
       </article>
     </section>
@@ -451,10 +485,45 @@
             <input id="inpZip" class="form-control" inputmode="numeric" maxlength="10" pattern="[0-9]{10}" placeholder="با حفظ کامل صفرهای ابتدا">
           </label>
           <label>استان محل سکونت
-            <input id="inpState" class="form-control" placeholder="مثال: تهران">
+            <select id="inpState" class="form-select" onchange="onProvinceSelected(this.value)">
+              <option value="">-- انتخاب استان محل سکونت --</option>
+              <option value="تهران">تهران</option>
+              <option value="آذربایجان شرقی">آذربایجان شرقی</option>
+              <option value="آذربایجان غربی">آذربایجان غربی</option>
+              <option value="اردبیل">اردبیل</option>
+              <option value="اصفهان">اصفهان</option>
+              <option value="البرز">البرز</option>
+              <option value="ایلام">ایلام</option>
+              <option value="بوشهر">بوشهر</option>
+              <option value="چهارمحال و بختیاری">چهارمحال و بختیاری</option>
+              <option value="خراسان جنوبی">خراسان جنوبی</option>
+              <option value="خراسان رضوی">خراسان رضوی</option>
+              <option value="خراسان شمالی">خراسان شمالی</option>
+              <option value="خوزستان">خوزستان</option>
+              <option value="زنجان">زنجان</option>
+              <option value="سمنان">سمنان</option>
+              <option value="سیستان و بلوچستان">سیستان و بلوچستان</option>
+              <option value="فارس">فارس</option>
+              <option value="قزوین">قزوین</option>
+              <option value="قم">قم</option>
+              <option value="کردستان">کردستان</option>
+              <option value="کرمان">کرمان</option>
+              <option value="کرمانشاه">کرمانشاه</option>
+              <option value="کهگیلویه و بویراحمد">کهگیلویه و بویراحمد</option>
+              <option value="گلستان">گلستان</option>
+              <option value="گیلان">گیلان</option>
+              <option value="لرستان">لرستان</option>
+              <option value="مازندران">مازندران</option>
+              <option value="مرکزی">مرکزی</option>
+              <option value="هرمزگان">هرمزگان</option>
+              <option value="همدان">همدان</option>
+              <option value="یزد">یزد</option>
+            </select>
           </label>
           <label>شهر محل سکونت
-            <input id="inpCity" class="form-control" placeholder="مثال: تهران">
+            <select id="inpCity" class="form-select">
+              <option value="">-- ابتدا استان را انتخاب کنید --</option>
+            </select>
           </label>
           <label>وضعیت نظام وظیفه
             <select id="inpMilitary" class="form-select">
@@ -536,16 +605,23 @@
         <div class="form-grid mb-3">
           <label>روش پذیرش بانک
             <select id="inpBankMode" class="form-select" onchange="toggleBranchFieldByMode();syncVisualBankMode();">
-              <option value="">بر اساس قابلیت بانک (پیش‌فرض)</option>
-              <option value="online">غیرحضوری (بدون نیاز به شعبه)</option>
-              <option value="in_person">حضوری (با انتخاب شعبه)</option>
+              <option value="">بر اساس اولویت سیستم (پیش‌فرض)</option>
+              <option value="only_online">فقط غیرحضوری (پایش مستمر سهمیه آنلاین)</option>
+              <option value="prefer_online">ترجیحاً غیرحضوری (در صورت اتمام سهمیه، سوئیچ به حضوری و انتخاب شعبه)</option>
+              <option value="prefer_in_person">ترجیحاً حضوری (در صورت نبود شعبه، غیرحضوری)</option>
+              <option value="only_in_person">فقط حضوری (با انتخاب شعبه)</option>
             </select>
           </label>
           <label id="lblPriorityBranches">شعب اولویت‌دار (با ویرگول جدا کنید)
             <input id="inpPriorityBranches" class="form-control" placeholder="مثال: ۱۲۳۴، شعبه میدان ونک">
           </label>
+          <label class="check-card"><input id="inpInheritFinalSubmit" type="checkbox" checked onchange="syncApplicantSubmissionControls()"> ثبت نهایی طبق تنظیم عمومی</label>
+          <label class="check-card"><input id="inpAutoFinalSubmit" type="checkbox" disabled> ثبت نهایی خودکار این متقاضی</label>
+          <label>فاصله تلاش مجدد ثبت نهایی (ثانیه)
+            <input id="inpFinalSubmitInterval" class="form-control" type="number" min="1" max="600" step="0.1" placeholder="خالی: تنظیم عمومی">
+          </label>
           <label class="check-card mt-2">
-            <input id="inpAllowReserve" type="checkbox">
+            <input id="inpAllowReserve" type="checkbox" checked>
             پذیرش بانک در وضعیت رزرو / ذخیره (در انتظار ظرفیت جدید)
           </label>
         </div>
@@ -614,39 +690,151 @@
       </article>
     </section>
 
-    <!-- ════════════════ VIEW: BANK SELECTION (انتخاب بانک) ════════════════ -->
+    <!-- ════════════════ VIEW: BANK SELECTION (پایش و شکار ظرفیت) ════════════════ -->
     <section id="view-bank-select" class="view-section">
       <div class="page-heading">
         <div>
-          <span class="section-kicker">پایش هوشمند</span>
-          <h2>مدیریت انتخاب بانک</h2>
-          <p>پایش مستمر ظرفیت، بررسی وضعیت غیرحضوری و ادامه خودکار از آخرین Checkpoint.</p>
+          <span class="section-kicker">موتور پایش مستقل صفحه ۳ (SelectBnkShb.aspx)</span>
+          <h2>پایش مستمر و شکار ظرفیت غیرحضوری بانک‌ها</h2>
+          <p>پایش همزمان و چندکاربره ظرفیت بدون خروج از صفحه سوم، پایدارسازی انتخاب‌های متقاضی و ارسال نهایی به‌محض تخصیص سهمیه.</p>
+        </div>
+        <div class="d-flex gap-2 align-items-center flex-wrap">
+          <div class="d-flex align-items-center gap-1 p-1 rounded border" style="background:#112240; border-color:#1E3A5F !important;">
+            <small class="text-muted px-1">فاصله پایش:</small>
+            <input id="capIntervalInput" type="number" min="1" max="600" step="0.1" value="5" class="form-control form-control-sm text-center" style="width: 70px;">
+            <span class="small text-muted me-1">ثانیه</span>
+            <button class="btn btn-sm btn-outline-secondary" onclick="updateCapacityInterval()" title="اعمال فاصله پایش">ثبت</button>
+          </div>
+          <div class="d-flex align-items-center gap-1 p-1 rounded border" style="background:#112240; border-color:#1E3A5F !important;">
+            <small class="text-muted px-1">حداکثر همزمان:</small>
+            <input id="capConcurrencyInput" type="number" min="1" max="32" value="4" class="form-control form-control-sm text-center" style="width: 55px;">
+            <button class="btn btn-sm btn-outline-secondary" onclick="updateCapacityConcurrency()" title="اعمال سقف همزمانی">ثبت</button>
+          </div>
+          <button class="btn btn-success action-pill" onclick="startAllCapacity()">
+            <i class="fa-solid fa-play"></i>
+            <span>شروع همگانی پایش</span>
+          </button>
+          <button class="btn btn-warning action-pill text-dark" onclick="pauseAllCapacity()">
+            <i class="fa-solid fa-pause"></i>
+            <span>مکث همگانی</span>
+          </button>
+          <button class="btn btn-danger action-pill" onclick="stopAllCapacity()">
+            <i class="fa-solid fa-stop"></i>
+            <span>توقف همگانی</span>
+          </button>
         </div>
       </div>
-      <article class="panel">
-        <div class="table-filter-bar">
-          <div class="table-search-input">
-            <i class="fa-solid fa-magnifying-glass"></i>
-            <input id="bankSelectSearchInput" class="form-control form-control-sm" placeholder="جستجوی متقاضی یا بانک..." oninput="filterApplicantsTable('bank-select')">
+
+      <!-- Capacity Stat Cards -->
+      <div class="stats-grid mb-4">
+        <article class="stat-card c-total">
+          <span class="stat-icon indigo"><i class="fa-solid fa-users-gear"></i></span>
+          <div>
+            <small>کل متقاضیان فعال</small>
+            <strong id="capStatTotal">۰</strong>
           </div>
-          <button class="btn btn-sm btn-outline-primary" onclick="fetchDashboardData()">
-            <i class="fa-solid fa-arrows-rotate ms-1"></i> به‌روزرسانی
+        </article>
+        <article class="stat-card c-bank">
+          <span class="stat-icon amber"><i class="fa-solid fa-hourglass-half"></i></span>
+          <div>
+            <small>در انتظار سهمیه (WAITING_CAPACITY)</small>
+            <strong id="capStatWaiting">۰</strong>
+          </div>
+        </article>
+        <article class="stat-card c-otp">
+          <span class="stat-icon pink"><i class="fa-solid fa-bolt"></i></span>
+          <div>
+            <small>در حال ارسال و استعلام</small>
+            <strong id="capStatSubmitting">۰</strong>
+          </div>
+        </article>
+        <article class="stat-card c-success">
+          <span class="stat-icon green"><i class="fa-solid fa-circle-check"></i></span>
+          <div>
+            <small>ثبت قطعی / شکار موفق</small>
+            <strong id="capStatSuccess">۰</strong>
+          </div>
+        </article>
+      </div>
+
+      <!-- View Switcher & Search Bar -->
+      <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-3">
+        <div class="d-flex align-items-center gap-2">
+          <span class="fw-bold text-muted small"><i class="fa-solid fa-sliders text-primary me-1"></i>حالت نمایش:</span>
+          <div class="btn-group btn-group-sm" role="group">
+            <button type="button" class="btn btn-primary active" id="btnModeCards" onclick="setBankSelectDisplayMode('cards')">
+              <i class="fa-solid fa-layer-group me-1"></i>کارت‌های پیشرفته پایش
+            </button>
+            <button type="button" class="btn btn-outline-secondary" id="btnModeTable" onclick="setBankSelectDisplayMode('table')">
+              <i class="fa-solid fa-table-list me-1"></i>جدول جامع
+            </button>
+          </div>
+        </div>
+        <div class="table-search-input" style="min-width: 280px;">
+          <i class="fa-solid fa-magnifying-glass"></i>
+          <input id="bankSelectSearchInput" class="form-control form-control-sm" placeholder="جستجوی متقاضی، کدملی، شهر یا بانک..." oninput="filterApplicantsTable('bank-select')">
+        </div>
+      </div>
+
+      <!-- Tier 1: Active Snipers (کارت‌های پایش زنده و فعال) -->
+      <section id="sectionActiveSnipers" class="mb-4">
+        <div class="two-tier-header">
+          <h3 class="tier-title tier-active">
+            <span class="radar-pulse"></span>
+            <span>شکارچی‌های فعال ظرفیت (صفحه ۳ باز و پایش ثانیه‌ای)</span>
+            <span class="badge badge-status-running ms-2" id="activeSnipersCount">۰ فعال</span>
+          </h3>
+          <small class="text-muted">کنترل بلادرنگ، استعلام خودکار، مکث و توقف نشست</small>
+        </div>
+        <div id="activeSnipersContainer" class="active-snipers-grid">
+          <div class="text-muted small p-3 text-center w-100 border rounded" style="background:#0D203D; border-color:#1E3A5F !important;">
+            در حال حاضر هیچ پرونده‌ای در وضعیت پایش بلادرنگ ظرفیت قرار ندارد. از فهرست زیر متقاضی را فعال کنید.
+          </div>
+        </div>
+      </section>
+
+      <!-- Tier 2: Standby Applicants (سایر متقاضیان در صف یا آماده) -->
+      <section id="sectionStandbyApplicants" class="mb-4">
+        <div class="two-tier-header">
+          <h3 class="tier-title tier-standby">
+            <i class="fa-solid fa-user-clock text-warning"></i>
+            <span>سایر متقاضیان (در صف یا متوقف شده)</span>
+            <span class="badge badge-status-neutral ms-2" id="standbyApplicantsCount">۰ متقاضی</span>
+          </h3>
+          <small class="text-muted">شروع پایش انفرادی، تعیین اولویت‌های بانک و تنظیمات سهمیه</small>
+        </div>
+        <div id="standbyApplicantsContainer" class="standby-applicants-grid">
+          <!-- Populated dynamically -->
+        </div>
+      </section>
+
+      <!-- Unified Table View (Synchronized for Table Inspection & Tests) -->
+      <article class="panel" id="sectionBankTableWrapper">
+        <div class="panel-heading d-flex justify-content-between align-items-center mb-2">
+          <div>
+            <h4 class="mb-0 text-white"><i class="fa-solid fa-table-list text-primary ms-1"></i> جدول نظارت و جزئیات پایش ظرفیت</h4>
+            <p class="text-muted small mb-0">مشاهده همزمان مشخصات، وضعیت نشست‌ها و دسترسی به کنترل‌های ردیفی</p>
+          </div>
+          <button class="btn btn-sm btn-outline-primary" onclick="loadCapacityStatus()">
+            <i class="fa-solid fa-arrows-rotate ms-1"></i> به‌روزرسانی زنده
           </button>
         </div>
         <div class="table-responsive">
-          <table class="table modern-table">
+          <table class="table modern-table" id="capacityMonitorTable">
             <thead>
               <tr>
-                <th>متقاضی</th>
-                <th>وضعیت</th>
-                <th>مرحله</th>
-                <th>مرورگر</th>
-                <th>بانک هدف</th>
-                <th>بانک‌های موجود</th>
-                <th>آخرین/بعدی</th>
-                <th>آخرین فعالیت</th>
-                <th>تلاش/خطا</th>
-                <th>عملیات</th>
+                <th>#</th>
+                <th>متقاضی (نام و کدملی)</th>
+                <th>شهر / استان</th>
+                <th>بانک انتخابی</th>
+                <th>روش پذیرش</th>
+                <th>وضعیت صفحه ۳</th>
+                <th>مدت انتظار سهمیه</th>
+                <th>دفعات استعلام</th>
+                <th>فاصله / پس‌نشست</th>
+                <th>آخرین پیام سامانه</th>
+                <th>نشست مرورگر</th>
+                <th>کد رهگیری / عملیات</th>
               </tr>
             </thead>
             <tbody id="bankSelectListBody"></tbody>
@@ -666,7 +854,7 @@
         <div class="d-flex gap-2 align-items-center flex-wrap">
           <div class="capacity-timer-pill" id="savedPagesCapacityTimer">
             <i class="fa-solid fa-clock-rotate-left"></i>
-            <span>بررسی دوره‌ای ظرفیت: <strong id="capacityCountdownVal">۲۰</strong>s</span>
+            <span><span id="capacityCheckLabel">بازخوانی وضعیت نشست</span>: <strong id="capacityCountdownVal">۵</strong>s</span>
           </div>
           <button class="btn btn-outline-primary action-pill" onclick="repairAllSavedPages()">
             <i class="fa-solid fa-screwdriver-wrench"></i>
@@ -737,7 +925,7 @@
             <h3><i class="fa-solid fa-layer-group ms-2 text-primary"></i> فهرست اسنپ‌شات‌های ثبت‌شده متقاضیان</h3>
             <p>اطلاعات حساس (کدملی) بر اساس تنظیمات پنهان‌سازی نمایش داده می‌شوند.</p>
           </div>
-          <span id="savedPagesCountBadge" class="badge bg-light text-dark">۰ مورد</span>
+          <span id="savedPagesCountBadge" class="badge badge-status-info">۰ مورد</span>
         </div>
         <div class="table-responsive mt-3">
           <table class="table modern-table align-middle">
@@ -862,9 +1050,9 @@
         <div class="form-grid compact mt-3">
           <label>پالت رنگ و تم بصری
             <select id="themeColorSelect" class="form-select" onchange="applyThemePreset(this.value)">
-              <option value="default">یاسی و صورتی ملایم (تم پیش‌فرض ازدواج)</option>
-              <option value="sky-mint">آبی آسمانی و سبز نعنایی (تم فرزندآوری و آرامش)</option>
-              <option value="gold-peach">هلویی و طلایی (تم درخشان جشن و امید)</option>
+              <option value="scheme-c">طرح C (پیشنهادی) — ماهان سلطنتی (فیروزه‌ای، رز ملایم و طلایی)</option>
+              <option value="scheme-a">طرح A — فیروزه‌ای مرواریدی و طلایی (تمرکز فناوری و آرامش)</option>
+              <option value="scheme-b">طرح B — رز لوکس و فیروزه‌ای (انرژی و نشاط ثبت ازدواج)</option>
             </select>
           </label>
           <label>اندازه قلم متون
@@ -913,8 +1101,22 @@
             <label>روش پیش‌فرض پذیرش بانک
               <select id="set_default_bank_mode" class="form-select">
                 <option value="online">غیرحضوری (پیش‌فرض)</option>
+                <option value="prefer_online">ترجیحاً غیرحضوری با سوئیچ به حضوری</option>
                 <option value="in_person">حضوری</option>
               </select>
+            </label>
+            <label>بزرگ‌نمایی صفحه مرورگر (Zoom)
+              <select id="set_browser_page_zoom" class="form-select">
+                <option value="1.0">۱۰۰٪ (عادی)</option>
+                <option value="1.25" selected>۱۲۵٪ (پیشنهادی - بهینه‌شده)</option>
+                <option value="1.50">۱۵۰٪ (بزرگ)</option>
+                <option value="1.75">۱۷۵٪ (خیلی بزرگ)</option>
+                <option value="0.55">۵۵٪ (بسیار فشرده)</option>
+              </select>
+            </label>
+            <label class="check-card text-info fw-bold" style="background:#F0F9FF; border-color:#BAE6FD;">
+              <input id="set_focus_view_enabled" type="checkbox" checked>
+              <i class="fa-solid fa-eye ms-1 text-info"></i> نمای تمرکزی فرم بانک (Focus View)
             </label>
             <label>حالت اجرا
               <select id="set_automation_mode" class="form-select">
@@ -923,8 +1125,8 @@
                 <option value="fast">Fast (سریع)</option>
               </select>
             </label>
-            <label>فاصله بررسی ظرفیت (ثانیه)
-              <input id="set_bank_capacity_recheck" type="number" min="5" max="600" value="20" class="form-control">
+            <label>فاصله تلاش مجدد ثبت نهایی (ثانیه)
+              <input id="set_bank_capacity_recheck" type="number" step="0.1" min="1" max="600" value="20" class="form-control">
             </label>
             <label>فاصله بررسی فهرست بانک (ثانیه)
               <input id="set_bank_refresh" type="number" min="1" max="300" value="5" class="form-control">
@@ -958,21 +1160,24 @@
             <label class="check-card"><input id="set_repair_page" type="checkbox" checked> Repair Page فعال</label>
             <label class="check-card"><input id="set_pause_manual_captcha" type="checkbox" checked> توقف برای ورود دستی CAPTCHA</label>
             <label class="check-card"><input id="set_pause_manual_otp" type="checkbox" checked> توقف برای ورود دستی OTP</label>
-            <label class="check-card"><input id="set_final_submit" type="checkbox"> ثبت نهایی خودکار (پیش‌فرض غیرفعال)</label>
-            <label class="check-card"><input id="set_allow_reserve_bank" type="checkbox"> پذیرش بانک رزرو</label>
+            <label class="check-card"><input id="set_final_submit" type="checkbox"> ثبت نهایی خودکار برای متقاضیان تابع تنظیم عمومی</label>
+            <label class="check-card"><input id="set_allow_reserve_bank" type="checkbox" checked> پذیرش بانک رزرو</label>
             <label class="check-card"><input id="set_diagnostic_logging" type="checkbox" checked> ثبت لاگ تشخیصی</label>
             <label class="check-card"><input id="set_bank_monitor" type="checkbox" checked> پایش بانک فعال</label>
             <label class="check-card"><input id="set_save_html" type="checkbox" checked> ذخیره فایل HTML</label>
             <label class="check-card"><input id="set_save_screenshot" type="checkbox" checked> ذخیره تصویر صفحه</label>
             <label class="check-card"><input id="set_save_change_only" type="checkbox" checked> فقط هنگام تغییر وضعیت</label>
             <label class="check-card"><input id="set_auto_repair" type="checkbox"> تعمیر خودکار snapshot</label>
+            <div hidden style="display:none">
             <label class="check-card text-danger fw-bold" style="background:#FFF1F2; border-color:#FECDD3;">
               <input id="set_sniper_mode" type="checkbox">
-              <i class="fa-solid fa-crosshairs ms-1 text-danger"></i> حالت شکار لحظه‌ای سهمیه (Quota Sniper)
+              <i class="fa-solid fa-crosshairs ms-1 text-danger"></i> شکار سهمیه غیرحضوری برای همه متقاضیان در حال اجرا
             </label>
-            <label>سرعت شکار سهمیه (میلی‌ثانیه)
-              <input id="set_sniper_interval" type="number" min="200" max="5000" step="100" value="800" class="form-control">
+            <label>فاصله ارسال درخواست شکار سهمیه (ثانیه؛ حداقل ۵)
+              <input id="set_sniper_interval" type="number" min="5" max="600" step="1" value="5" class="form-control">
+              <small>با ثبت نهایی خودکار فعال، پس از رد صریح تکمیل ظرفیت دوباره درخواست ارسال می‌شود. بانک و غیرحضوری حفظ می‌شوند؛ تغییر به حضوری در این حالت انجام نمی‌شود.</small>
             </label>
+            </div>
             <label class="check-card text-primary fw-bold" style="background:#EEF2FF; border-color:#C7D2FE;">
               <input id="set_auto_switch_bank" type="checkbox" checked>
               <i class="fa-solid fa-water ms-1 text-primary"></i> سوییچ خودکار آبشاری به اولویت بعدی (Waterfall)
@@ -1119,7 +1324,7 @@
       </article>
 
       <!-- ════════════════ PANEL: AUTOMATED SMS & GSM DONGLE ════════════════ -->
-      <article class="panel mt-4" style="border-top:4px solid var(--violet, #8B5CF6)">
+      <article class="panel mt-4" style="border-top:4px solid var(--gold, #E9BD63)">
         <div class="panel-title">
           <div>
             <h3><i class="fa-solid fa-tower-broadcast ms-2 text-primary"></i> دریافت خودکار پیامک و وب‌هوک (SMS & GSM)</h3>
@@ -1256,6 +1461,325 @@
         </div>
       </details>
     </section>
+  
+    <!-- ════════════════ VIEW: SUPPORT (پشتیبانی و ارتباطات) ════════════════ -->
+    <section id="view-support" class="view-section">
+      <div class="page-heading">
+        <div>
+          <span class="section-kicker"><i class="fa-solid fa-headset text-primary ms-1"></i> ارتباط مستقیم و خدمات پس از فروش</span>
+          <h2>مرکز پشتیبانی و ارتباطات رسمی MAHANBOT 2.0</h2>
+          <p>کانال رسمی اطلاع‌رسانی سهمیه‌ها، ارتباط با توسعه‌دهنده، دانلود اپلیکیشن اندروید فورواردر پیامک و راهنمای راه‌اندازی سریع.</p>
+        </div>
+        <span class="badge" style="background:#E6FAF8;color:#009F98;border:1px solid #39E0D3;padding:8px 16px;border-radius:20px;font-size:12px;font-weight:700;">
+          <i class="fa-solid fa-circle-check text-success ms-1"></i> نسخه ۲.۰ تجاری فعال
+        </span>
+      </div>
+
+      <!-- Telegram Official Channels Grid -->
+      <div class="row g-3 mb-4">
+        <!-- Channel Card -->
+        <div class="col-lg-4 col-md-6">
+          <div class="support-card h-100 d-flex flex-column justify-content-between">
+            <div>
+              <div class="d-flex align-items-center gap-3 mb-3">
+                <div class="support-icon-box" style="background:#E6FAF8;color:#009F98;">
+                  <i class="fa-brands fa-telegram"></i>
+                </div>
+                <div>
+                  <h4 class="mb-0 fw-bold fs-6">کانال رسمی تلگرام تسهیلات</h4>
+                  <small class="text-muted font-monospace">@mahanbot_ezdavaj</small>
+                </div>
+              </div>
+              <p class="text-muted small mb-3">اطلاع‌رسانی لحظه‌ای باز شدن سهمیه بانک‌های سراسر کشور، زمان‌بندی تزریق اعتبار و اطلاعیه‌های به‌روزرسانی سامانه.</p>
+            </div>
+            <div class="d-flex gap-2">
+              <a href="https://t.me/mahanbot_ezdavaj" target="_blank" class="btn btn-sm btn-primary flex-fill" data-tooltip="باز کردن کانال رسمی در تلگرام">
+                <i class="fa-solid fa-arrow-up-right-from-square ms-1"></i> ورود به کانال
+              </a>
+              <button type="button" class="btn btn-sm btn-outline-secondary" onclick="copyToClipboard('@mahanbot_ezdavaj', this)" data-tooltip="کپی شناسه کانال در حافظه">
+                <i class="fa-regular fa-copy"></i>
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Developer Contact Card -->
+        <div class="col-lg-4 col-md-6">
+          <div class="support-card h-100 d-flex flex-column justify-content-between">
+            <div>
+              <div class="d-flex align-items-center gap-3 mb-3">
+                <div class="support-icon-box" style="background:#FEF9EB;color:#E5A900;">
+                  <i class="fa-solid fa-user-shield"></i>
+                </div>
+                <div>
+                  <h4 class="mb-0 fw-bold fs-6">مدیریت و پشتیبانی فنی</h4>
+                  <small class="text-muted font-monospace">@mahan402</small>
+                </div>
+              </div>
+              <p class="text-muted small mb-3">ارتباط مستقیم با مدیر فنی نرم‌افزار جهت فعال‌سازی، راهنمایی ویژه و پاسخ به درخواست‌های فوری.</p>
+            </div>
+            <div class="d-flex gap-2">
+              <a href="https://t.me/mahan402" target="_blank" class="btn btn-sm btn-primary flex-fill" data-tooltip="ارسال پیام مستقیم به مدیر فنی در تلگرام">
+                <i class="fa-solid fa-paper-plane ms-1"></i> پیام به مدیر
+              </a>
+              <button type="button" class="btn btn-sm btn-outline-secondary" onclick="copyToClipboard('@mahan402', this)" data-tooltip="کپی شناسه ادمین در حافظه">
+                <i class="fa-regular fa-copy"></i>
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Support Specialist Card -->
+        <div class="col-lg-4 col-md-6">
+          <div class="support-card h-100 d-flex flex-column justify-content-between">
+            <div>
+              <div class="d-flex align-items-center gap-3 mb-3">
+                <div class="support-icon-box" style="background:#E6F8F2;color:#0DAA74;">
+                  <i class="fa-solid fa-headset"></i>
+                </div>
+                <div>
+                  <h4 class="mb-0 fw-bold fs-6">کارشناس پشتیبانی و رفع اشکال</h4>
+                  <small class="text-muted font-monospace">@dr_mahan22</small>
+                </div>
+              </div>
+              <p class="text-muted small mb-3">پاسخگویی به سوالات، راهنمایی اتصال مودم‌های GSM و وب‌هوک اندروید و رفع خطاهای سیستمی.</p>
+            </div>
+            <div class="d-flex gap-2">
+              <a href="https://t.me/dr_mahan22" target="_blank" class="btn btn-sm btn-primary flex-fill" data-tooltip="ارسال پیام به کارشناس پشتیبانی">
+                <i class="fa-solid fa-comments ms-1"></i> پیام به پشتیبان
+              </a>
+              <button type="button" class="btn btn-sm btn-outline-secondary" onclick="copyToClipboard('@dr_mahan22', this)" data-tooltip="کپی شناسه پشتیبان در حافظه">
+                <i class="fa-regular fa-copy"></i>
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ════════════════ SERVER & APP DOWNLOADS ════════════════ -->
+      <div class="row g-3 mb-4">
+        <!-- Android SMS Forwarder Direct Download Card -->
+        <div class="col-lg-6">
+          <article class="panel h-100 d-flex flex-column justify-content-between" style="border: 2px dashed #00BFB3; background: linear-gradient(135deg, #FFFFFF 0%, #F2FCFB 100%);">
+            <div>
+              <div class="d-flex align-items-center gap-3 mb-3">
+                <div class="support-icon-box" style="background:#009F98;color:#FFFFFF;width:52px;height:52px;font-size:24px;border-radius:12px;display:flex;align-items:center;justify-content:center;">
+                  <i class="fa-brands fa-android"></i>
+                </div>
+                <div>
+                  <div class="d-flex align-items-center gap-2">
+                    <h4 class="mb-0 fw-bold fs-6">دانلود اپلیکیشن اندروید ماهان‌بات (SMS Forwarder)</h4>
+                    <span class="badge" style="background:#E6FAF8;color:#009F98;border:1px solid #39E0D3;font-size:11px;">نسخه ۲.۰.۱ رسمی</span>
+                  </div>
+                  <small class="text-muted font-monospace">mahan-otp-2.0.1.apk</small>
+                </div>
+              </div>
+              <p class="text-muted small mb-3">دریافت خودکار پیامک‌های تأییدیه بانک و ارسال لحظه‌ای OTP به ربات از طریق وب‌هوک مستقیم بدون نیاز به دخالت دست.</p>
+              
+              <div class="bg-light p-2 rounded mb-3 border">
+                <div class="d-flex justify-content-between align-items-center text-muted small">
+                  <span><i class="fa-solid fa-server ms-1 text-primary"></i> سرور رله اختصاصی:</span>
+                  <span class="font-monospace fw-bold text-dark">otp.mahanvip.ir</span>
+                </div>
+                <div class="d-flex justify-content-between align-items-center text-muted small mt-1">
+                  <span><i class="fa-solid fa-mobile-screen ms-1 text-success"></i> سازگاری:</span>
+                  <span>اندروید ۷.۰ الی ۱۵ (بدون نیاز به روت)</span>
+                </div>
+              </div>
+            </div>
+
+            <div class="d-flex gap-2">
+              <a href="https://otp.mahanvip.ir/downloads/mahan-otp-2.0.1.apk" target="_blank" class="btn btn-primary flex-fill" data-tooltip="دانلود مستقیم فایل نصبی APK از سرور اختصاصی">
+                <i class="fa-solid fa-download ms-1"></i> دانلود مستقیم APK
+              </a>
+              <button type="button" class="btn btn-outline-secondary" onclick="copyToClipboard('https://otp.mahanvip.ir/downloads/mahan-otp-2.0.1.apk', this)" data-tooltip="کپی لینک مستقیم دانلود APK">
+                <i class="fa-regular fa-copy"></i>
+              </button>
+            </div>
+          </article>
+        </div>
+
+        <!-- MAHANBOT Server & Windows Release Download Card -->
+        <div class="col-lg-6">
+          <article class="panel h-100 d-flex flex-column justify-content-between" style="border: 2px dashed #E5A900; background: linear-gradient(135deg, #FFFFFF 0%, #FEF9EB 100%);">
+            <div>
+              <div class="d-flex align-items-center gap-3 mb-3">
+                <div class="support-icon-box" style="background:#E5A900;color:#FFFFFF;width:52px;height:52px;font-size:24px;border-radius:12px;display:flex;align-items:center;justify-content:center;">
+                  <i class="fa-solid fa-robot"></i>
+                </div>
+                <div>
+                  <div class="d-flex align-items-center gap-2">
+                    <h4 class="mb-0 fw-bold fs-6">دانلود نسخه نهایی ماهان‌بات (ویندوز و سرور)</h4>
+                    <span class="badge" style="background:#FEF3D6;color:#B38300;border:1px solid #F4BD32;font-size:11px;">v2.0.1 پایدار</span>
+                  </div>
+                  <small class="text-muted font-monospace">mahanbot-latest.zip (~30 MB)</small>
+                </div>
+              </div>
+              <p class="text-muted small mb-3">بسته کامل نرم‌افزاری شامل تمامی ماژول‌های اتوماسیون، موتور شکار ظرفیت، دیتابیس لوکال و لانچرهای اختصاصی Admin و Client.</p>
+              
+              <div class="bg-light p-2 rounded mb-3 border">
+                <div class="d-flex justify-content-between align-items-center text-muted small">
+                  <span><i class="fa-brands fa-windows ms-1 text-primary"></i> پلتفرم‌های هدف:</span>
+                  <span class="fw-bold text-dark">Windows 10/11 & Linux VPS Server</span>
+                </div>
+                <div class="d-flex justify-content-between align-items-center text-muted small mt-1">
+                  <span><i class="fa-solid fa-bolt ms-1 text-warning"></i> راه‌اندازی:</span>
+                  <span>اجرای ۱ کلیکه بدون نیاز به کانفیگ پیچیده</span>
+                </div>
+              </div>
+            </div>
+
+            <div class="d-flex gap-2">
+              <a href="https://otp.mahanvip.ir/downloads/mahanbot-latest.zip" target="_blank" class="btn btn-primary flex-fill" style="background:#E5A900;border-color:#E5A900;" data-tooltip="دانلود مستقیم بسته نصبی نسخه نهایی ماهان‌بات">
+                <i class="fa-solid fa-file-zipper ms-1"></i> دانلود مستقیم ماهان‌بات (ZIP)
+              </a>
+              <button type="button" class="btn btn-outline-secondary" onclick="copyToClipboard('https://otp.mahanvip.ir/downloads/mahanbot-latest.zip', this)" data-tooltip="کپی لینک مستقیم دانلود ماهان‌بات">
+                <i class="fa-regular fa-copy"></i>
+              </button>
+            </div>
+          </article>
+        </div>
+      </div>
+
+      <!-- ════════════════ ADVANCED IN-APP UPDATE CENTER ════════════════ -->
+      <article class="panel mb-4" id="updateCenterCard" style="border: 1px solid #D5EFEB; box-shadow: 0 4px 16px rgba(0, 191, 179, 0.08);">
+        <div class="panel-heading d-flex justify-content-between align-items-center flex-wrap gap-2 mb-3">
+          <div>
+            <span class="section-kicker"><i class="fa-solid fa-arrows-rotate text-primary ms-1"></i> مرکز ارتقا و نگهداری خودکار</span>
+            <h3 class="mb-0">مرکز به‌روزرسانی هوشمند درون‌برنامه‌ای</h3>
+            <p class="text-muted small mb-0">بررسی، دریافت و اعمال نسخه‌های جدید به صورت خودکار بدون اختلال در داده‌های متقاضیان و پایگاه داده</p>
+          </div>
+          <div class="d-flex align-items-center gap-2">
+            <span id="updateStatusPill" class="badge" style="background:#E6FAF8;color:#009F98;border:1px solid #39E0D3;padding:6px 14px;border-radius:20px;font-weight:700;">
+              <i class="fa-solid fa-shield-check ms-1"></i> نسخه شما: v2.0.1
+            </span>
+            <button type="button" class="btn btn-sm btn-outline-primary" onclick="checkForUpdates()" id="btnCheckUpdate" data-tooltip="استعلام آخرین نسخه از سرور اختصاصی otp.mahanvip.ir">
+              <i class="fa-solid fa-arrows-rotate ms-1" id="checkUpdateIcon"></i> بررسی نسخه جدید
+            </button>
+          </div>
+        </div>
+
+        <!-- Update Status Details & Actions -->
+        <div id="updateInfoContainer" class="p-3 rounded mb-3" style="background:#F2FCFB;border:1px solid #D5EFEB;">
+          <div class="d-flex justify-content-between align-items-center flex-wrap gap-2">
+            <div>
+              <h5 class="fw-bold mb-1 fs-6" id="updateHeadline"><i class="fa-solid fa-circle-check text-success ms-1"></i> وضعیت سیستم: به‌روز و پایدار</h5>
+              <p class="text-muted small mb-0" id="updateSubtext">شما از آخرین نگارش رسمی MAHANBOT 2.0 استفاده می‌فرمایید. کلیه ماژول‌های اتوماسیون فعال می‌باشند.</p>
+            </div>
+            <div id="updateActionButtons" style="display:none;">
+              <button class="btn btn-primary" id="btnStartUpdate" onclick="startAutoUpdate()">
+                <i class="fa-solid fa-cloud-arrow-down ms-1"></i> ارتقای خودکار به نسخه جدید
+              </button>
+            </div>
+          </div>
+
+          <!-- Changelog Details Box (collapsed/hidden until update available or requested) -->
+          <div id="updateChangelogBox" class="mt-3 pt-3 border-top" style="display:none;">
+            <h6 class="fw-bold fs-7 text-primary mb-2"><i class="fa-solid fa-list-check ms-1"></i> یادداشت‌های تغییرات نسخه جدید:</h6>
+            <ul id="updateReleaseNotesList" class="small text-muted mb-0 ps-3"></ul>
+          </div>
+        </div>
+
+        <!-- 5-Step Progress Stepper (visible during update) -->
+        <div id="updateProgressCard" class="p-3 rounded border" style="display:none;background:#FFFFFF;">
+          <h6 class="fw-bold fs-7 mb-3 text-secondary"><i class="fa-solid fa-gears ms-1 text-primary"></i> مراحل ارتقای خودکار سیستم:</h6>
+          <div class="update-stepper mb-3">
+            <div class="stepper-step" id="step-backup">
+              <span class="step-num">۱</span>
+              <span class="step-label">پشتیبان دیتابیس</span>
+            </div>
+            <div class="stepper-line"></div>
+            <div class="stepper-step" id="step-download">
+              <span class="step-num">۲</span>
+              <span class="step-label">دریافت بسته جدید</span>
+            </div>
+            <div class="stepper-line"></div>
+            <div class="stepper-step" id="step-verify">
+              <span class="step-num">۳</span>
+              <span class="step-label">اعتبارسنجی فایل‌ها</span>
+            </div>
+            <div class="stepper-line"></div>
+            <div class="stepper-step" id="step-apply">
+              <span class="step-num">۴</span>
+              <span class="step-label">اعمال تغییرات</span>
+            </div>
+            <div class="stepper-line"></div>
+            <div class="stepper-step" id="step-complete">
+              <span class="step-num">۵</span>
+              <span class="step-label">پایان و تثبیت</span>
+            </div>
+          </div>
+
+          <div class="progress mb-2" style="height: 10px; border-radius: 6px;">
+            <div id="updateProgressBar" class="progress-bar progress-bar-striped progress-bar-animated" role="progressbar" style="width: 0%; background: linear-gradient(90deg, #00BFB3, #009F98);"></div>
+          </div>
+          <div class="d-flex justify-content-between align-items-center">
+            <small class="text-muted font-monospace" id="updateProgressMessage">در حال آماده‌سازی...</small>
+            <small class="fw-bold text-primary font-monospace" id="updateProgressPercent">۰٪</small>
+          </div>
+        </div>
+
+        <!-- Rollback & Safety Note -->
+        <div class="d-flex justify-content-between align-items-center mt-3 pt-2 text-muted small">
+          <div>
+            <i class="fa-solid fa-shield-halved text-success ms-1"></i>
+            <span>حفاظت قطعی داده‌ها: پیش از هرگونه به‌روزرسانی، پشتیبان خودکار ایجاد می‌شود.</span>
+          </div>
+          <button type="button" class="btn btn-sm btn-link text-muted p-0" id="btnRollback" onclick="rollbackUpdate()" style="display:none;" data-tooltip="بازگردانی دیتابیس به پیش از آخرین آپدیت">
+            <i class="fa-solid fa-rotate-left ms-1"></i> بازگردانی به نسخه پیشین
+          </button>
+        </div>
+      </article>
+
+      <!-- FAQ & Diagnostics Accordion -->
+      <article class="panel mb-4">
+        <div class="panel-heading mb-3">
+          <div>
+            <h4 class="mb-0 fw-bold"><i class="fa-solid fa-circle-question text-primary ms-1"></i> پرسش‌های متداول و راهنمای شروع سریع</h4>
+            <p class="text-muted small mb-0">پاسخ سریع به متداول‌ترین سوالات کاربران پیرامون چرخه ثبت، پایش و ظرفیت‌ها</p>
+          </div>
+        </div>
+        <div class="accordion faq-accordion" id="faqAccordion">
+          <div class="accordion-item">
+            <h2 class="accordion-header" id="faqHeading1">
+              <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#faqCollapse1">
+                چگونه ربات بدون درخواست مجدد پیامک، سهمیه بانک را در مرحله سوم پایش می‌کند؟
+              </button>
+            </h2>
+            <div id="faqCollapse1" class="accordion-collapse collapse" data-bs-parent="#faqAccordion">
+              <div class="accordion-body small text-muted">
+                ماهان‌بات پس از احراز هویت متقاضی و گذر از مرحله پیامک (OTP)، نشست زنده مرورگر را در صفحه انتخاب بانک و شعبه (<code class="font-monospace">SelectBnkShb.aspx</code>) نگه‌داری می‌کند. در این صفحه با فاصله‌های زمانی تنظیمی (مثلاً هر ۳ الی ۵ ثانیه)، وضعیت ظرفیت را با تغییر بانک استعلام کرده و به هیچ عنوان از ابتدا ثبت‌نام نمی‌کند و پیامک مجدد نمی‌سوزاند.
+              </div>
+            </div>
+          </div>
+          <div class="accordion-item">
+            <h2 class="accordion-header" id="faqHeading2">
+              <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#faqCollapse2">
+                تفاوت حالت مراجعه حضوری با غیرحضوری در سرعت ثبت سهمیه چیست؟
+              </button>
+            </h2>
+            <div id="faqCollapse2" class="accordion-collapse collapse" data-bs-parent="#faqAccordion">
+              <div class="accordion-body small text-muted">
+                در حالت «غیرحضوری»، سامانه بانک مرکزی نیازی به لود شدن فهرست شعب شهر ندارد و فرم بلافاصله با کمترین تأخیر ثبت نهایی می‌شود. اگر بانک مورد نظر فقط ظرفیت حضوری ارائه دهد، ربات به‌صورت خودکار شعبه تنظیم‌شده متقاضی را برگزیده و عملیات را تکمیل می‌کند.
+              </div>
+            </div>
+          </div>
+          <div class="accordion-item">
+            <h2 class="accordion-header" id="faqHeading3">
+              <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#faqCollapse3">
+                چگونه اندازه پنجره مرورگر را متناسب با مانیتور خود تنظیم کنیم؟
+              </button>
+            </h2>
+            <div id="faqCollapse3" class="accordion-collapse collapse" data-bs-parent="#faqAccordion">
+              <div class="accordion-body small text-muted">
+                در نسخه ۲.۰، اندازه استاندارد مرورگر روی عرض ۹۰۰ پیکسل و ارتفاع ۶۲۰ پیکسل همراه با مقیاس ۱۰۰٪ طبیعی محتوا تنظیم شده است تا متن فرم کاملاً درشت و خوانا باشد. شما می‌توانید در بخش «تنظیمات سامانه > مرورگر»، ابعاد دلخواه و موقعیت پنجره را تغییر دهید تا برای اجراهای بعدی ذخیره شود.
+              </div>
+            </div>
+          </div>
+        </div>
+      </article>
+    </section>
+
   </main>
 
   <!-- ════════════════ MODAL: SNAPSHOT PREVIEW ════════════════ -->
@@ -1296,7 +1820,7 @@
           <div class="tab-content" id="spModalTabContent">
             <!-- Tab 1: HTML Iframe -->
             <div class="tab-pane fade show active p-2" id="spTabHtml" role="tabpanel">
-              <iframe id="spHtmlFrame" src="about:blank" style="width:100%;height:580px;border:none;border-radius:8px;background:#ffffff;"></iframe>
+              <iframe id="spHtmlFrame" sandbox src="about:blank" style="width:100%;height:580px;border:none;border-radius:8px;background:#ffffff;"></iframe>
             </div>
             <!-- Tab 2: PNG Screenshot -->
             <div class="tab-pane fade p-3 text-center" id="spTabPng" role="tabpanel">
@@ -1429,6 +1953,6 @@
   <!-- Scripts -->
   <script src="/static/vendor/bootstrap.bundle.min.js"></script>
   <script src="/static/messages_fa.js?v=20261016-2"></script>
-  <script src="/static/script.js?v=20261016-2"></script>
+  <script src="/static/script.js?v=20261021-1"></script>
 </body>
 </html>

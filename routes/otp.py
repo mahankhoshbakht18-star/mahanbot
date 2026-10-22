@@ -46,10 +46,21 @@ async def _signal_otp_event(nid: str) -> None:
 
 
 def _handle_receive_sms(nid: str, code: str, status_label: str = "received", ts: Optional[float] = None) -> bool:
+    import re
+    from sms_service import normalize_digits
+    code = normalize_digits(code).strip()
+    if not re.fullmatch(r"[0-9]{4,8}", code):
+        return False
     otp_ts = float(ts) if ts is not None else time.time()
-    success = DBHandler.set_otp(nid, code, ts=otp_ts, status=status_label)
+    previous = DBHandler.get_otp_record(nid)
+    if previous and previous.get("otp") == code and otp_ts - float(previous.get("ts") or 0) < 600:
+        # Forwarder retries must not turn a stale/consumed message into a fresh code.
+        return True
+    request_id = DBHandler.get_runtime(nid).get("otp_request_id")
+    success = DBHandler.set_otp(nid, code, ts=otp_ts, status=status_label, request_id=request_id)
     if not success:
         return False
+    DBHandler.update_runtime(nid, otp_state="SMS_RECEIVED")
     log_event(nid, None, "OTP received", "success")
     logger.info("OTP received for %s; notifying waiters", _mask_identifier(nid))
     if _state.MAIN_LOOP:
@@ -60,6 +71,8 @@ def _handle_receive_sms(nid: str, code: str, status_label: str = "received", ts:
 # ── OTP endpoints ─────────────────────────────────────────────────────
 @router.post("/receive_sms")
 def receive_sms(req: SMSRequest, _: bool = Depends(require_otp_secret)):
+    if req.request_id and req.nid and req.request_id != DBHandler.get_runtime(_normalize_nid(req.nid)).get("otp_request_id"):
+        raise HTTPException(status_code=409, detail="OTP request does not match the current applicant request")
     # 1. If text/message/body is provided, route via smart parser
     sms_text = req.text or req.message or req.body
     if sms_text:
@@ -68,6 +81,7 @@ def receive_sms(req: SMSRequest, _: bool = Depends(require_otp_secret)):
             from_number=req.from_number or req.phone,
             explicit_nid=req.nid,
             explicit_code=req.code,
+            request_id=req.request_id,
         )
         if ok:
             return {"status": "ok", "ts": time.time(), **res}
@@ -79,7 +93,7 @@ def receive_sms(req: SMSRequest, _: bool = Depends(require_otp_secret)):
 
     # If code is present but nid is omitted, attempt auto-routing to active waiter
     if code and not nid:
-        ok, res = route_incoming_sms(text="", explicit_code=code)
+        ok, res = route_incoming_sms(text="", explicit_code=code, request_id=req.request_id)
         if ok:
             return {"status": "ok", "ts": time.time(), **res}
 
@@ -102,7 +116,7 @@ def receive_sms(req: SMSRequest, _: bool = Depends(require_otp_secret)):
 
 @router.post("/sms/webhook")
 @router.post("/api/sms/webhook")
-async def universal_sms_webhook(request: Request):
+async def universal_sms_webhook(request: Request, _: bool = Depends(require_otp_secret)):
     """
     Universal SMS Webhook compatible with Android SMS Forwarder apps, Tasker,
     MacroDroid, GSM dongles, and custom webhook forwarders.
@@ -112,6 +126,7 @@ async def universal_sms_webhook(request: Request):
     from_number = None
     explicit_nid = None
     explicit_code = None
+    request_id = None
 
     content_type = request.headers.get("content-type", "").lower()
     if "application/json" in content_type:
@@ -122,6 +137,7 @@ async def universal_sms_webhook(request: Request):
                 from_number = str(data.get("from") or data.get("sender") or data.get("phone") or data.get("from_number") or "").strip()
                 explicit_nid = data.get("nid")
                 explicit_code = data.get("code") or data.get("otp")
+                request_id = data.get("request_id")
         except Exception:
             pass
     elif "application/x-www-form-urlencoded" in content_type or "multipart/form-data" in content_type:
@@ -131,6 +147,7 @@ async def universal_sms_webhook(request: Request):
             from_number = str(form.get("from") or form.get("sender") or form.get("phone") or "").strip()
             explicit_nid = form.get("nid")
             explicit_code = form.get("code") or form.get("otp")
+            request_id = form.get("request_id")
         except Exception:
             pass
     
@@ -152,6 +169,7 @@ async def universal_sms_webhook(request: Request):
         from_number=from_number,
         explicit_nid=explicit_nid,
         explicit_code=explicit_code,
+        request_id=request_id,
     )
 
     if ok:
@@ -190,22 +208,27 @@ def test_parse_sms(payload: Dict[str, Any]):
 @router.post("/manual_otp")
 @router.post("/otp/manual")
 def manual_otp(req: SMSRequest):
+    from sms_service import normalize_digits
+    import re
     raw_nid = str(req.nid or "").strip()
     nid = _normalize_nid(raw_nid)
-    code = str(req.code or "").strip()
+    code = normalize_digits(req.code or "").strip()
+    if not re.fullmatch(r"[0-9]{4,8}", code):
+        raise HTTPException(status_code=400, detail="Invalid OTP format")
     if not (nid or raw_nid) or not code:
         raise HTTPException(status_code=400, detail="Invalid payload")
 
-    success = DBHandler.save_otp(nid or raw_nid, code, status="received")
-    if not success and raw_nid and raw_nid != nid:
-        success = DBHandler.save_otp(raw_nid, code, status="received")
+    final_nid = nid or raw_nid
+    success = DBHandler.save_otp(final_nid, code, status="manual")
+    if not success and raw_nid and raw_nid != final_nid:
+        success = DBHandler.save_otp(raw_nid, code, status="manual")
     if not success:
         logger.warning(
             "Manual OTP not saved: applicant not found for nid=%s raw=%s",
             _mask_identifier(nid), _mask_identifier(raw_nid),
         )
         raise HTTPException(status_code=404, detail="Applicant not found")
-    final_nid = nid or raw_nid
+    DBHandler.update_runtime(final_nid, otp_state="SMS_RECEIVED")
     log_event(final_nid, None, "OTP received manually", "success")
     logger.info("Manual OTP received for %s; notifying waiters", _mask_identifier(final_nid))
     try:
@@ -238,6 +261,8 @@ async def wait_otp(nid: str, timeout: int = 120, min_ts: float = 0.0):
     logger.info("wait_otp waiting for %s (min_ts=%s)", _mask_identifier(nid), min_ts)
 
     while True:
+        event = await _get_otp_event(nid)
+        event.clear()
         record = DBHandler.get_otp_record(nid or raw_nid)
         if not record and raw_nid and raw_nid != nid:
             record = DBHandler.get_otp_record(raw_nid)
@@ -247,7 +272,8 @@ async def wait_otp(nid: str, timeout: int = 120, min_ts: float = 0.0):
                 record_ts = float(record.get("ts") or 0.0)
             except Exception:
                 record_ts = 0.0
-        if record and record.get("otp") and record_ts > min_ts:
+        ttl = DBHandler.get_config().get("otp_validity_seconds", 120)
+        if record and record.get("otp") and record.get("status") != "consumed" and record_ts > min_ts and 0 <= time.time() - record_ts <= ttl:
             logger.info(
                 "wait_otp released for %s ts=%s > min_ts=%s",
                 _mask_identifier(nid), record_ts, min_ts,
@@ -256,7 +282,8 @@ async def wait_otp(nid: str, timeout: int = 120, min_ts: float = 0.0):
                 "nid": nid,
                 "otp": record["otp"],
                 "source": "fresh",
-                "ts": record_ts or time.time(),
+                "ts": record_ts,
+                "request_id": record.get("request_id"),
             }
 
         remaining = deadline - time.monotonic()
@@ -264,8 +291,6 @@ async def wait_otp(nid: str, timeout: int = 120, min_ts: float = 0.0):
             logger.info("wait_otp timeout for %s", _mask_identifier(nid))
             return Response(status_code=204)
 
-        event = await _get_otp_event(nid)
-        event.clear()
         try:
             await asyncio.wait_for(event.wait(), timeout=remaining)
         except asyncio.TimeoutError:
