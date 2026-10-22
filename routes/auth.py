@@ -75,11 +75,7 @@ def health():
 
 
 @router.get("/login")
-def serve_login(request: Request):
-    from core.deps import _session_user
-    token = request.cookies.get(AUTH_COOKIE)
-    if token and _session_user(token):
-        return RedirectResponse("/", status_code=303)
+def serve_login():
     path = os.path.join(STATIC_DIR, "login.html")
     with open(path, "r", encoding="utf-8") as handle:
         return HTMLResponse(handle.read())
@@ -94,12 +90,15 @@ def login(req: LoginRequest):
     return _issue_auth_session(user)
 
 
-@router.post("/logout")
+@router.api_route("/logout", methods=["GET", "POST"])
 def logout(request: Request):
     token = request.cookies.get(AUTH_COOKIE, "")
     AUTH_SESSIONS.pop(token, None)
     DBHandler.delete_app_session(token)
-    response = JSONResponse({"status": "ok"})
+    if request.method == "GET":
+        response = RedirectResponse("/login", status_code=303)
+    else:
+        response = JSONResponse({"status": "ok"})
     response.delete_cookie(AUTH_COOKIE, path="/")
     return response
 
