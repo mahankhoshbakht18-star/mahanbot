@@ -1072,6 +1072,63 @@ class DBHandler:
         return False
 
     @staticmethod
+    def save_recovered_tracking_code(nid: str, tracking_code: str) -> bool:
+        """ذخیره اختصاصی کد رهگیری بازیابی‌شده و به‌روزرسانی آنی وضعیت متقاضی"""
+        clean_code = str(tracking_code or "").strip()
+        if not clean_code or clean_code == "-":
+            return False
+        user = DBHandler.get_applicant(nid)
+        if not user:
+            return False
+        try:
+            with DBHandler._connect() as conn:
+                conn.execute('BEGIN IMMEDIATE')
+                d = DBHandler._load_applicant_data(conn, nid) or {}
+                d["tracking_code"] = clean_code
+                d["final_submitted"] = True
+                d["final_submitted_at"] = time.time()
+                d["recovered_at"] = time.time()
+                c = conn.cursor()
+                c.execute(
+                    "UPDATE applicants "
+                    "SET data=?, status='Success', last_log=? "
+                    "WHERE national_id=?",
+                    (json.dumps(d, ensure_ascii=False), f"کد رهگیری بازیابی شد: {clean_code}", nid),
+                )
+                conn.commit()
+            DBHandler.save_checkpoint(
+                nid,
+                {
+                    "last_verified_step": "DONE",
+                    "expected_next_step": "NONE",
+                    "last_operation_result": "TRACKING_CODE_RECOVERED",
+                    "tracking_code": clean_code,
+                    "can_resume": False,
+                },
+            )
+            # Emit snapshot to live UI
+            try:
+                from core.helpers import _emit_applicants_snapshot
+                _emit_applicants_snapshot()
+            except Exception:
+                pass
+            try:
+                from event_logger import emit_structured_event
+                emit_structured_event(
+                    nid,
+                    "REGISTRATION_CONFIRMED",
+                    step="DONE",
+                    result=clean_code,
+                    reason=f"کد رهگیری {clean_code} با موفقیت از سامانه مرکزی بازیابی و ذخیره شد."
+                )
+            except Exception:
+                pass
+            return True
+        except Exception as e:
+            print(f"Save Recovered Tracking Code Error: {e}")
+            return False
+
+    @staticmethod
     def clear_request_data(nid: str, note: str = "ثبت‌نام از سامانه بانک مرکزی حذف شد") -> bool:
         """پاکسازی کد رهگیری و بازنشانی پرونده پس از حذف موفق از سامانه بانک مرکزی"""
         user = DBHandler.get_applicant(nid)

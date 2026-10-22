@@ -145,5 +145,38 @@ class RecoveryAndDeleteTests(unittest.TestCase):
         self.assertIn(data.get("status"), ("queued", "already_running"))
 
 
+    def test_08_save_recovered_tracking_code_persists_and_emits(self):
+        """Verify save_recovered_tracking_code saves tracking_code, marks status Success, and updates checkpoints."""
+        rec_code = "7766554433"
+        saved = DBHandler.save_recovered_tracking_code(self.test_nid, rec_code)
+        self.assertTrue(saved)
+
+        # Inspect database
+        import json
+        app = DBHandler.get_applicant(self.test_nid)
+        d = json.loads(app["data"]) if isinstance(app["data"], str) else app["data"]
+        self.assertEqual(d.get("tracking_code"), rec_code)
+        self.assertTrue(d.get("final_submitted"))
+        self.assertIn("بازیابی", app["last_log"])
+        self.assertEqual(app["status"], "Success")
+
+        # Inspect checkpoint
+        cp = DBHandler.get_checkpoint(self.test_nid)
+        self.assertEqual(cp.get("tracking_code"), rec_code)
+        self.assertEqual(cp.get("last_operation_result"), "TRACKING_CODE_RECOVERED")
+
+    def test_09_recovery_bot_normalizes_persian_digits(self):
+        """Verify RecoveryBot extracts tracking code even when displayed in Persian digits."""
+        bot = RecoveryBot(self.test_nid, {})
+        mock_page = MagicMock()
+        mock_locator = MagicMock()
+        # Simulate site displaying Persian digits: "کد رهگیری: ۹۸۷۶۵۴۳۲۱۰"
+        mock_locator.inner_text.return_value = "کد رهگیری شما: ۹۸۷۶۵۴۳۲۱۰"
+        bot._first_visible_locator = MagicMock(return_value=mock_locator)
+
+        extracted = bot._extract_tracking_code(mock_page)
+        self.assertEqual(extracted, "9876543210")
+
+
 if __name__ == "__main__":
     unittest.main()

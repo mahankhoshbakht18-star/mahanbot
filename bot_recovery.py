@@ -57,7 +57,7 @@ class RecoveryBot(BotCore):
             self._fill_recovery_form(page)
             code = self._main_recovery_loop(page, stop_event)
             if code:
-                DBHandler.save_success_data(self.nid, code)
+                DBHandler.save_recovered_tracking_code(self.nid, code)
                 self.log(f"کد رهگیری استخراج و ذخیره شد: {self._mask(code)}", "success", page)
                 return code
             return None
@@ -238,31 +238,64 @@ class RecoveryBot(BotCore):
         return True
 
     def _extract_tracking_code(self, page) -> Optional[str]:
+        def _normalize_digits(s: str) -> str:
+            fa_digits = "۰۱۲۳۴۵۶۷۸۹"
+            ar_digits = "٠١٢٣٤٥٦٧٨٩"
+            res = []
+            for ch in s:
+                if ch in fa_digits:
+                    res.append(str(fa_digits.index(ch)))
+                elif ch in ar_digits:
+                    res.append(str(ar_digits.index(ch)))
+                else:
+                    res.append(ch)
+            return "".join(res)
+
         selectors = [
             "#ctl00_ContentPlaceHolder1_lblTrackingCode",
+            "#ctl00_ContentPlaceHolder1_lblTraceCD",
+            "#ctl00_ContentPlaceHolder1_lblTraceCode",
+            "#ctl00_ContentPlaceHolder1_lblTrCD",
             "span[id*='TrackingCode']",
             "label[id*='TrackingCode']",
+            "span[id*='Trace']",
+            "label[id*='Trace']",
+            "td:has-text('کد رهگیری') + td",
             "td:has-text('کد رهگیری')",
+            "tr:has-text('کد رهگیری')",
+            ".alert-success",
         ]
         for selector in selectors:
             try:
                 locator = self._first_visible_locator(page, [selector])
                 if locator is None:
                     continue
-                text = (locator.inner_text() or "").strip()
-                match = re.search(r"(\d{6,20})", text)
-                if match:
-                    return match.group(1)
+                text = _normalize_digits((locator.inner_text() or "").strip())
+                for match in re.finditer(r"(\d{6,20})", text):
+                    candidate = match.group(1)
+                    if candidate != self.nid and len(candidate) >= 8:
+                        return candidate
             except Exception:
                 continue
+
         try:
-            body = page.inner_text("body") or ""
+            body = _normalize_digits(page.inner_text("body") or "")
         except Exception:
             body = ""
-        for pattern in [r"کد\s*رهگیری\s*[:\-]?\s*(\d{6,20})", r"tracking\s*code\s*[:\-]?\s*(\d{6,20})"]:
+
+        patterns = [
+            r"کد\s*رهگیری\s*(?:شما)?\s*[:\-]?\s*(\d{6,20})",
+            r"شماره\s*پیگیری\s*[:\-]?\s*(\d{6,20})",
+            r"کد\s*پیگیری\s*[:\-]?\s*(\d{6,20})",
+            r"tracking\s*code\s*[:\-]?\s*(\d{6,20})",
+            r"trace\s*code\s*[:\-]?\s*(\d{6,20})",
+        ]
+        for pattern in patterns:
             match = re.search(pattern, body, re.IGNORECASE)
             if match:
-                return match.group(1)
+                candidate = match.group(1)
+                if candidate != self.nid and len(candidate) >= 8:
+                    return candidate
         return None
 
     def _solve_firewall_loop(self, page, stop_event) -> bool:
@@ -430,7 +463,7 @@ class RecoveryBot(BotCore):
                     break
                 tracking = self._extract_tracking_code(page)
                 if tracking:
-                    DBHandler.update_status(self.nid, "Success", "Tracking code recovered (step2)")
+                    DBHandler.save_recovered_tracking_code(self.nid, tracking)
                     return tracking
                 new_code, _, last_server_poll_ts = self._get_otp_fresh_recovery(last_server_poll_ts)
                 if new_code and new_code != last_injected_code:
@@ -506,7 +539,7 @@ class RecoveryBot(BotCore):
                     break
                 code = self._extract_tracking_code(page)
                 if code:
-                    DBHandler.update_status(self.nid, "Success", "Tracking code recovered")
+                    DBHandler.save_recovered_tracking_code(self.nid, code)
                     return code
                 if self._detect_captcha_failure(page):
                     self.log("کپچای مرحله اول رد شد؛ رفرش و تلاش مجدد.", "warning", page)
