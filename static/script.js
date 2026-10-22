@@ -74,18 +74,36 @@ const logFilters = {
 };
 
 const BANK_OPTIONS = [
-
     'ملی',
-    'ملت',
     'صادرات',
     'تجارت',
+    'ملت',
     'سپه',
+    'کشاورزی',
+    'مسکن',
+    'رفاه کارگران',
+    'توسعه تعاون',
+    'توسعه صادرات',
+    'صنعت و معدن',
+    'پست بانک',
+    'اقتصاد نوین',
     'پارسیان',
     'پاسارگاد',
+    'کارآفرین',
     'سامان',
+    'سینا',
+    'سرمایه',
+    'شهر',
     'دی',
-    'اقتصاد نوین',
-
+    'گردشگری',
+    'ایران زمین',
+    'آینده',
+    'خاورمیانه',
+    'ایران و ونزوئلا',
+    'قرض الحسنه مهر ایران',
+    'قرض الحسنه رسالت',
+    'موسسه اعتباری ملل',
+    'موسسه اعتباری نور'
 ];
 
 let priorityBanks = [];
@@ -572,23 +590,46 @@ function formatBanksInput(banks) {
 
 
 function initBankSelectors() {
-
+    populateCbiAllBanksDropdown();
     const optionsEl = document.getElementById('bankOptions');
-
     const priorityEl = document.getElementById('priorityBanksList');
-
     const favoriteEl = document.getElementById('favoriteBanksList');
-
     if (!optionsEl || !priorityEl || !favoriteEl) return;
 
     renderBankOptions();
-
     renderPriorityBanks();
-
     renderFavoriteBanks();
-
     setupDragAndDrop(priorityEl);
+}
 
+function populateCbiAllBanksDropdown() {
+    const sel = document.getElementById('cbiAllBanksDropdown');
+    if (!sel) return;
+    sel.innerHTML = '<option value="">-- برای افزودن، نام بانک را از لیست ۳۰ بانک رسمی انتخاب کنید --</option>';
+    BANK_OPTIONS.forEach(bank => {
+        const opt = document.createElement('option');
+        opt.value = bank;
+        opt.textContent = `بانک ${bank}`;
+        sel.appendChild(opt);
+    });
+}
+
+function addBankFromDropdown() {
+    const sel = document.getElementById('cbiAllBanksDropdown');
+    if (!sel || !sel.value) {
+        showToast('لطفاً ابتدا یک بانک از لیست کشویی انتخاب کنید.', 'warning');
+        return;
+    }
+    const bankName = sel.value;
+    if (!priorityBanks.includes(bankName)) {
+        priorityBanks.push(bankName);
+        renderPriorityBanks();
+        renderBankOptions();
+        showToast(`بانک «${bankName}» با موفقیت به اولویت‌ها اضافه شد.`, 'success');
+    } else {
+        showToast(`بانک «${bankName}» در اولویت‌ها قرار دارد.`, 'info');
+    }
+    sel.value = '';
 }
 
 
@@ -1384,20 +1425,27 @@ function setBankSelectDisplayMode(mode) {
     const secActive = document.getElementById('sectionActiveSnipers');
     const secStandby = document.getElementById('sectionStandbyApplicants');
     const secTable = document.getElementById('sectionBankTableWrapper');
-    if (mode === 'cards') {
-        btnCards?.classList.add('btn-primary', 'active');
-        btnCards?.classList.remove('btn-outline-secondary');
-        btnTable?.classList.remove('btn-primary', 'active');
-        btnTable?.classList.add('btn-outline-secondary');
+    if (secTable) {
+        if (mode === 'cards') {
+            btnCards?.classList.add('btn-primary', 'active');
+            btnCards?.classList.remove('btn-outline-secondary');
+            btnTable?.classList.remove('btn-primary', 'active');
+            btnTable?.classList.add('btn-outline-secondary');
+            if (secActive) secActive.style.display = 'block';
+            if (secStandby) secStandby.style.display = 'block';
+            secTable.style.display = 'none';
+        } else {
+            btnTable?.classList.add('btn-primary', 'active');
+            btnTable?.classList.remove('btn-outline-secondary');
+            btnCards?.classList.remove('btn-primary', 'active');
+            btnCards?.classList.add('btn-outline-secondary');
+            if (secActive) secActive.style.display = 'none';
+            if (secStandby) secStandby.style.display = 'none';
+            secTable.style.display = 'block';
+        }
+    } else {
         if (secActive) secActive.style.display = 'block';
         if (secStandby) secStandby.style.display = 'block';
-    } else {
-        btnTable?.classList.add('btn-primary', 'active');
-        btnTable?.classList.remove('btn-outline-secondary');
-        btnCards?.classList.remove('btn-primary', 'active');
-        btnCards?.classList.add('btn-outline-secondary');
-        if (secActive) secActive.style.display = 'none';
-        if (secStandby) secStandby.style.display = 'none';
     }
 }
 
@@ -1490,11 +1538,11 @@ function renderBankSelectList(data) {
                     <td>
                         <strong>${escapeHtml(user.full_name)}</strong>
                         <div class="font-monospace small text-muted">${formatNid(nid)}</div>
-                        <label class="d-block small mt-2"><input type="checkbox" data-final-submit-nid="${nid}" ${finalEnabled ? 'checked' : ''}
+                        <label class="d-block small mt-2"><input type="checkbox" data-legacy-submit-nid="${nid}" ${finalEnabled ? 'checked' : ''}
                             onchange="updateApplicantSubmission('${nid}', {auto_final_submit: this.checked})"> ثبت نهایی خودکار</label>
                         <button class="btn btn-sm btn-link p-0" onclick="updateApplicantSubmission('${nid}', {auto_final_submit: null})">طبق تنظیم عمومی</button>
                         <label class="d-block small">فاصله تلاش (ثانیه)
-                            <input type="number" min="1" max="600" step="0.1" class="form-control form-control-sm" data-final-interval-nid="${nid}"
+                            <input type="number" min="1" max="600" step="0.1" class="form-control form-control-sm" data-legacy-interval-nid="${nid}"
                                 value="${customInterval}" placeholder="عمومی: ${submissionDefaults.interval}"
                                 onchange="updateApplicantSubmission('${nid}', {final_submit_interval_seconds: this.value === '' ? null : Number(this.value)})">
                         </label>
@@ -1578,13 +1626,16 @@ function renderBankSelectList(data) {
                             <i class="fa-solid fa-circle-info ms-1 text-primary"></i>
                             ${escapeHtml(lastMsg)}
                         </div>
-                        <div class="d-flex align-items-center justify-content-between pt-1">
+                        <div class="d-flex align-items-center justify-content-between pt-1 flex-wrap gap-2">
                             <label class="small text-muted mb-0 d-flex align-items-center gap-1 cursor-pointer">
-                                <input type="checkbox" data-card-final-submit-nid="${nid}" ${finalEnabled ? 'checked' : ''}
+                                <input type="checkbox" data-final-submit-nid="${nid}" ${finalEnabled ? 'checked' : ''}
                                     onchange="updateApplicantSubmission('${nid}', {auto_final_submit: this.checked})">
-                                <span>ثبت نهایی فوری سهمیه</span>
+                                <span>ثبت نهایی خودکار</span>
                             </label>
-                            <span class="small font-monospace text-muted">فاصله: ${interval}s</span>
+                            <div class="d-flex align-items-center gap-1">
+                                <small class="text-muted">فاصله:</small>
+                                <input type="number" min="1" max="600" step="0.1" class="form-control form-control-sm py-0 px-1" style="width:70px;display:inline-block;height:24px;" data-final-interval-nid="${nid}" value="${customInterval}" placeholder="${submissionDefaults.interval}" onchange="updateApplicantSubmission('${nid}', {final_submit_interval_seconds: this.value === '' ? null : Number(this.value)})">
+                            </div>
                         </div>
                     </div>
                     <div class="sniper-card-actions">
@@ -1615,6 +1666,10 @@ function renderBankSelectList(data) {
                             <span class="badge badge-status-neutral mb-1 d-block">${escapeHtml(bank)}</span>
                             ${modeText}
                         </div>
+                    </div>
+                    <div class="mt-2 d-flex align-items-center gap-2 flex-wrap" style="font-size:0.8rem;">
+                        <label class="text-muted mb-0"><input type="checkbox" data-final-submit-nid="${nid}" ${finalEnabled ? 'checked' : ''} onchange="updateApplicantSubmission('${nid}', {auto_final_submit: this.checked})"> ثبت نهایی خودکار</label>
+                        <input type="number" min="1" max="600" step="0.1" class="form-control form-control-sm py-0 px-1" style="width:75px;display:inline-block;height:24px;" data-final-interval-nid="${nid}" value="${customInterval}" placeholder="فاصله" onchange="updateApplicantSubmission('${nid}', {final_submit_interval_seconds: this.value === '' ? null : Number(this.value)})">
                     </div>
                     <div class="standby-card-bottom">
                         <button class="btn btn-sm btn-primary flex-fill" onclick="startBankSelect('${nid}')">
@@ -3819,6 +3874,11 @@ function filterApplicantsTable(viewType) {
     } else if (viewType === 'bank-select') {
         const input = document.getElementById('bankSelectSearchInput');
         const query = (input?.value || '').trim().toLowerCase();
+        const cards = document.querySelectorAll('#standbyApplicantsContainer .standby-card, #activeSnipersContainer .standby-card, #activeSnipersContainer .active-sniper-card, #activeSnipersContainer .sniper-card');
+        cards.forEach(c => {
+            const text = c.textContent.toLowerCase();
+            c.style.display = (!query || text.includes(query)) ? '' : 'none';
+        });
         const rows = document.querySelectorAll('#bankSelectListBody tr');
         rows.forEach(r => {
             const text = r.textContent.toLowerCase();

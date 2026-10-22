@@ -95,7 +95,7 @@ class DashboardUiTests(unittest.TestCase):
         self.page.evaluate("switchView('bank-select'); renderBankSelectList(allUsersData)")
         for width in (480, 720, 1024, 1440):
             self.page.set_viewport_size({'width': width, 'height': 850})
-            button = self.page.locator('#bankSelectListBody .btn-primary').first
+            button = self.page.locator('.standby-card .btn-primary, #standbyApplicantsContainer .btn-primary, #bankSelectListBody .btn-primary').first
             box = button.bounding_box()
             self.assertIsNotNone(box)
             self.assertGreaterEqual(box['x'], 0)

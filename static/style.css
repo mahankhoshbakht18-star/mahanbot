@@ -2604,3 +2604,24 @@ article.bg-light,
   border: 1px solid #1E3A5F !important;
   color: #F8FAFC !important;
 }
+
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   MAHANBOT Edition Separation (Admin vs Client)
+   ═══════════════════════════════════════════════════════════════════════════ */
+body.client-edition .admin-only,
+.client-edition .admin-only {
+  display: none !important;
+}
+
+body.admin-edition .client-only,
+.admin-edition .client-only {
+  display: none !important;
+}
+
+.cbi-dropdown-wrapper {
+  background: rgba(0, 191, 179, 0.08);
+  border: 1px solid rgba(0, 191, 179, 0.25);
+  border-radius: 10px;
+  padding: 12px 16px;
+}
