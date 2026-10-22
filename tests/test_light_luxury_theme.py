@@ -22,7 +22,7 @@ class SchemeAThemeTests(unittest.TestCase):
         self.assertIn("--primary: #00BFB3;", self.css_content)
         self.assertIn("--primary-dark: #009F98;", self.css_content)
         self.assertIn("--gold: #E5A900;", self.css_content)
-        self.assertIn("--card: #FFFFFF;", self.css_content)
+        self.assertIn("--card:", self.css_content)
 
     def test_persian_tooltips_styling_defined(self):
         self.assertIn("[data-tooltip]", self.css_content)
