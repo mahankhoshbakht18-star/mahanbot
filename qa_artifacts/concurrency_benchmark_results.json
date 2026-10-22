@@ -1,0 +1,72 @@
+{
+  "timestamp": 1792698739.1258714,
+  "worker_scaling": [
+    {
+      "configured_limit": 2,
+      "jobs_submitted": 40,
+      "jobs_completed": 40,
+      "peak_observed_concurrency": 2,
+      "duration_seconds": 1.946,
+      "throughput_jobs_per_sec": 20.56,
+      "concurrency_limit_honored": true
+    },
+    {
+      "configured_limit": 4,
+      "jobs_submitted": 40,
+      "jobs_completed": 40,
+      "peak_observed_concurrency": 4,
+      "duration_seconds": 1.105,
+      "throughput_jobs_per_sec": 36.2,
+      "concurrency_limit_honored": true
+    },
+    {
+      "configured_limit": 8,
+      "jobs_submitted": 40,
+      "jobs_completed": 40,
+      "peak_observed_concurrency": 7,
+      "duration_seconds": 0.783,
+      "throughput_jobs_per_sec": 51.08,
+      "concurrency_limit_honored": true
+    },
+    {
+      "configured_limit": 16,
+      "jobs_submitted": 40,
+      "jobs_completed": 40,
+      "peak_observed_concurrency": 6,
+      "duration_seconds": 0.514,
+      "throughput_jobs_per_sec": 77.86,
+      "concurrency_limit_honored": true
+    },
+    {
+      "configured_limit": 32,
+      "jobs_submitted": 40,
+      "jobs_completed": 40,
+      "peak_observed_concurrency": 14,
+      "duration_seconds": 0.499,
+      "throughput_jobs_per_sec": 80.19,
+      "concurrency_limit_honored": true
+    }
+  ],
+  "applicant_mutual_exclusion": {
+    "applicant_id": "9988776655",
+    "first_job_id": "51af32452dc0414b853e1f9dfceadcc1",
+    "second_job_rejected": true,
+    "status": "PASS"
+  },
+  "sqlite_lock_contention": {
+    "concurrent_threads": 32,
+    "total_write_operations": 320,
+    "successful_writes": 320,
+    "lock_or_busy_errors": 0,
+    "total_time_seconds": 1.659,
+    "writes_per_second": 192.9,
+    "latency_ms": {
+      "min": 5.03,
+      "p50": 19.37,
+      "p95": 684.64,
+      "p99": 1362.35,
+      "max": 1598.09
+    },
+    "status": "PASS"
+  }
+}

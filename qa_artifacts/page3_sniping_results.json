@@ -1,0 +1,163 @@
+[
+  {
+    "test_id": "P3-INTERVAL-VALID-1",
+    "category": "Interval Validation",
+    "input": 1,
+    "status": "PASS",
+    "detail": "Valid interval 1s accepted"
+  },
+  {
+    "test_id": "P3-INTERVAL-VALID-2.5",
+    "category": "Interval Validation",
+    "input": 2.5,
+    "status": "PASS",
+    "detail": "Valid interval 2.5s accepted"
+  },
+  {
+    "test_id": "P3-INTERVAL-VALID-5",
+    "category": "Interval Validation",
+    "input": 5,
+    "status": "PASS",
+    "detail": "Valid interval 5s accepted"
+  },
+  {
+    "test_id": "P3-INTERVAL-VALID-10",
+    "category": "Interval Validation",
+    "input": 10,
+    "status": "PASS",
+    "detail": "Valid interval 10s accepted"
+  },
+  {
+    "test_id": "P3-INTERVAL-VALID-60",
+    "category": "Interval Validation",
+    "input": 60,
+    "status": "PASS",
+    "detail": "Valid interval 60s accepted"
+  },
+  {
+    "test_id": "P3-INTERVAL-VALID-600",
+    "category": "Interval Validation",
+    "input": 600,
+    "status": "PASS",
+    "detail": "Valid interval 600s accepted"
+  },
+  {
+    "test_id": "P3-INTERVAL-INVALID-Zero",
+    "category": "Interval Validation",
+    "input": "0",
+    "status": "PASS",
+    "detail": "Invalid interval 0 (Zero) properly rejected"
+  },
+  {
+    "test_id": "P3-INTERVAL-INVALID-Negative",
+    "category": "Interval Validation",
+    "input": "-1",
+    "status": "PASS",
+    "detail": "Invalid interval -1 (Negative) properly rejected"
+  },
+  {
+    "test_id": "P3-INTERVAL-INVALID-Negative large",
+    "category": "Interval Validation",
+    "input": "-50",
+    "status": "PASS",
+    "detail": "Invalid interval -50 (Negative large) properly rejected"
+  },
+  {
+    "test_id": "P3-INTERVAL-INVALID-Over 600s max",
+    "category": "Interval Validation",
+    "input": "601",
+    "status": "PASS",
+    "detail": "Invalid interval 601 (Over 600s max) properly rejected"
+  },
+  {
+    "test_id": "P3-INTERVAL-INVALID-Extreme high",
+    "category": "Interval Validation",
+    "input": "10000",
+    "status": "PASS",
+    "detail": "Invalid interval 10000 (Extreme high) properly rejected"
+  },
+  {
+    "test_id": "P3-INTERVAL-INVALID-String non-numeric",
+    "category": "Interval Validation",
+    "input": "abc",
+    "status": "PASS",
+    "detail": "Invalid interval abc (String non-numeric) properly rejected"
+  },
+  {
+    "test_id": "P3-INTERVAL-INVALID-Boolean value",
+    "category": "Interval Validation",
+    "input": "True",
+    "status": "PASS",
+    "detail": "Invalid interval True (Boolean value) properly rejected"
+  },
+  {
+    "test_id": "P3-INTERVAL-INVALID-Boolean False",
+    "category": "Interval Validation",
+    "input": "False",
+    "status": "PASS",
+    "detail": "Invalid interval False (Boolean False) properly rejected"
+  },
+  {
+    "test_id": "P3-INTERVAL-INVALID-NaN",
+    "category": "Interval Validation",
+    "input": "nan",
+    "status": "PASS",
+    "detail": "Invalid interval nan (NaN) properly rejected"
+  },
+  {
+    "test_id": "P3-INTERVAL-INVALID-Infinity",
+    "category": "Interval Validation",
+    "input": "inf",
+    "status": "PASS",
+    "detail": "Invalid interval inf (Infinity) properly rejected"
+  },
+  {
+    "test_id": "P3-PRECEDENCE-APP-ON-GLOBAL-OFF",
+    "category": "Preference Precedence",
+    "description": "Applicant ON must override Global OFF",
+    "status": "PASS",
+    "detail": "Applicant-specific setting took precedence (resolved: True)"
+  },
+  {
+    "test_id": "P3-PRECEDENCE-APP-OFF-GLOBAL-ON",
+    "category": "Preference Precedence",
+    "description": "Applicant explicit OFF must override Global ON",
+    "status": "PASS",
+    "detail": "Explicit applicant OFF was respected (resolved: False)"
+  },
+  {
+    "test_id": "P3-PRECEDENCE-INHERIT-GLOBAL",
+    "category": "Preference Precedence",
+    "description": "Empty applicant preference inherits Global value",
+    "status": "PASS",
+    "detail": "Inherited successfully from global setting (enabled=True, interval=15.0)"
+  },
+  {
+    "test_id": "P3-ANALYZE-Confirmation (Pure Digits)",
+    "category": "Bank Page State Analysis",
+    "input_label": "Confirmation (Pure Digits)",
+    "status": "PASS",
+    "detail": "State: REGISTRATION_CONFIRMED (Expected: REGISTRATION_CONFIRMED)"
+  },
+  {
+    "test_id": "P3-ANALYZE-Confirmation (With Persian Prefix)",
+    "category": "Bank Page State Analysis",
+    "input_label": "Confirmation (With Persian Prefix)",
+    "status": "PASS",
+    "detail": "State: REGISTRATION_CONFIRMED (Expected: REGISTRATION_CONFIRMED)"
+  },
+  {
+    "test_id": "P3-ANALYZE-Capacity Full",
+    "category": "Bank Page State Analysis",
+    "input_label": "Capacity Full",
+    "status": "PASS",
+    "detail": "State: CAPACITY_FULL (Expected: CAPACITY_FULL)"
+  },
+  {
+    "test_id": "P3-ANALYZE-Session Expired",
+    "category": "Bank Page State Analysis",
+    "input_label": "Session Expired",
+    "status": "PASS",
+    "detail": "State: SESSION_EXPIRED (Expected: SESSION_EXPIRED)"
+  }
+]

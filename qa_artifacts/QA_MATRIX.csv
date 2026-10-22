@@ -1,0 +1,58 @@
+﻿Test_ID,Category,Scenario_Description,Input_or_Load,Expected_Behavior,Observed_Behavior,Result,Severity_if_Failed
+BASE-001,Regression Baseline,Full suite execution via scripts/run_tests.py,267 unit & integration tests,All tests PASS (exit code 0),"254 PASS, 9 FAIL, 4 ERROR (exit code 1)",FAIL,P2
+SEC-AUTH-GET-/applicants,Authentication Guard,Unauthenticated request to /applicants,HTTP Request / DB Query,Denied or Handled safely,Blocked as expected,PASS,N/A
+SEC-AUTH-POST-/applicants,Authentication Guard,Unauthenticated request to /applicants,HTTP Request / DB Query,Denied or Handled safely,Blocked as expected,PASS,N/A
+SEC-AUTH-GET-/settings,Authentication Guard,Unauthenticated request to /settings,HTTP Request / DB Query,Denied or Handled safely,Blocked as expected,PASS,N/A
+SEC-AUTH-POST-/settings,Authentication Guard,Unauthenticated request to /settings,HTTP Request / DB Query,Denied or Handled safely,Blocked as expected,PASS,N/A
+SEC-AUTH-GET-/api/capacity/status,Authentication Guard,Unauthenticated request to /api/capacity/status,HTTP Request / DB Query,Denied or Handled safely,Blocked as expected,PASS,N/A
+SEC-AUTH-POST-/jobs/start,Authentication Guard,Unauthenticated request to /jobs/start,HTTP Request / DB Query,Denied or Handled safely,Blocked as expected,PASS,N/A
+SEC-AUTH-POST-/bot/action/delete-request/0012345678,Authentication Guard,Unauthenticated request to /bot/action/delete-request/0012345678,HTTP Request / DB Query,Denied or Handled safely,Blocked as expected,PASS,N/A
+SEC-TRAVERSAL-/static/../../server.py,Path Traversal,Attempt directory traversal on /static/../../server.py,HTTP Request / DB Query,Denied or Handled safely,Traversal denied,PASS,N/A
+SEC-TRAVERSAL-/static/..%2f..%2fserver.py,Path Traversal,Attempt directory traversal on /static/..%2f..%2fserver.py,HTTP Request / DB Query,Denied or Handled safely,Traversal denied,PASS,N/A
+SEC-TRAVERSAL-/static/%2e%2e/%2e%2e/cbi_ultimate.db,Path Traversal,Attempt directory traversal on /static/%2e%2e/%2e%2e/cbi_ultimate.db,HTTP Request / DB Query,Denied or Handled safely,Traversal denied,PASS,N/A
+SEC-TRAVERSAL-/static/....//....//server.py,Path Traversal,Attempt directory traversal on /static/....//....//server.py,HTTP Request / DB Query,Denied or Handled safely,Traversal denied,PASS,N/A
+SEC-SQLI-0012345678' OR ,SQL Injection,Parameterized query handling of '0012345678' OR '1'='',HTTP Request / DB Query,Denied or Handled safely,Parameterized query successfully prevented injection,PASS,N/A
+SEC-SQLI-0012345678'; DR,SQL Injection,Parameterized query handling of '0012345678'; DROP TA',HTTP Request / DB Query,Denied or Handled safely,Parameterized query successfully prevented injection,PASS,N/A
+SEC-SQLI-0012345678' UNI,SQL Injection,Parameterized query handling of '0012345678' UNION SE',HTTP Request / DB Query,Denied or Handled safely,Parameterized query successfully prevented injection,PASS,N/A
+SEC-XSS-STORAGE,XSS & Content Sanitization,Store raw HTML/XSS in database without corruption,HTTP Request / DB Query,Denied or Handled safely,Data stored faithfully; frontend uses innerText/textContent/escaped templates,PASS,N/A
+SEC-RBAC-CLIENT-EDITION,Role-Based Access Control,Client edition must be denied access to admin configuration,HTTP Request / DB Query,Denied or Handled safely,403 Forbidden received as expected,PASS,N/A
+SEC-OTP-COOLDOWN,OTP Abuse Prevention,120-second cooldown on consecutive OTP requests for same mobile,HTTP Request / DB Query,Denied or Handled safely,429 Too Many Requests enforced,PASS,N/A
+SEC-OTP-BRUTE-FORCE,OTP Abuse Prevention,5-attempt brute-force lockout on OTP verification,HTTP Request / DB Query,Denied or Handled safely,"Brute force blocked with response: {""detail"":""کد تایید منقضی شده یا نامعتبر است. لطفاً مجدداً کد دریافت کنید.""}",PASS,N/A
+CONC-SCALE-W2,JobQueue Worker Scaling,Worker pool capacity scaled to 2,40 jobs submitted under 2 max workers,Active concurrency <= 2,"Peak 2 workers, Throughput: 20.56 jobs/s",PASS,N/A
+CONC-SCALE-W4,JobQueue Worker Scaling,Worker pool capacity scaled to 4,40 jobs submitted under 4 max workers,Active concurrency <= 4,"Peak 4 workers, Throughput: 36.2 jobs/s",PASS,N/A
+CONC-SCALE-W8,JobQueue Worker Scaling,Worker pool capacity scaled to 8,40 jobs submitted under 8 max workers,Active concurrency <= 8,"Peak 7 workers, Throughput: 51.08 jobs/s",PASS,N/A
+CONC-SCALE-W16,JobQueue Worker Scaling,Worker pool capacity scaled to 16,40 jobs submitted under 16 max workers,Active concurrency <= 16,"Peak 6 workers, Throughput: 77.86 jobs/s",PASS,N/A
+CONC-SCALE-W32,JobQueue Worker Scaling,Worker pool capacity scaled to 32,40 jobs submitted under 32 max workers,Active concurrency <= 32,"Peak 14 workers, Throughput: 80.19 jobs/s",PASS,N/A
+CONC-MUTUAL-EXCLUSION,Concurrency & Integrity,Single active job per applicant constraint,Applicant 9988776655 double start,Second job rejected immediately with None/409,Second job rejected=True; simultaneous=False,PASS,N/A
+CONC-SQLITE-32T,Database Concurrency,SQLite 32 concurrent worker thread write contention,320 write operations across 32 threads,Zero database locked/busy errors (WAL mode),"0 errors, p95 latency: 684.64ms",PASS,N/A
+P3-INTERVAL-VALID-1,Interval Validation,P3-INTERVAL-VALID-1,1,Adhere to Page 3 submission policy,Valid interval 1s accepted,PASS,N/A
+P3-INTERVAL-VALID-2.5,Interval Validation,P3-INTERVAL-VALID-2.5,2.5,Adhere to Page 3 submission policy,Valid interval 2.5s accepted,PASS,N/A
+P3-INTERVAL-VALID-5,Interval Validation,P3-INTERVAL-VALID-5,5,Adhere to Page 3 submission policy,Valid interval 5s accepted,PASS,N/A
+P3-INTERVAL-VALID-10,Interval Validation,P3-INTERVAL-VALID-10,10,Adhere to Page 3 submission policy,Valid interval 10s accepted,PASS,N/A
+P3-INTERVAL-VALID-60,Interval Validation,P3-INTERVAL-VALID-60,60,Adhere to Page 3 submission policy,Valid interval 60s accepted,PASS,N/A
+P3-INTERVAL-VALID-600,Interval Validation,P3-INTERVAL-VALID-600,600,Adhere to Page 3 submission policy,Valid interval 600s accepted,PASS,N/A
+P3-INTERVAL-INVALID-Zero,Interval Validation,P3-INTERVAL-INVALID-Zero,0,Adhere to Page 3 submission policy,Invalid interval 0 (Zero) properly rejected,PASS,N/A
+P3-INTERVAL-INVALID-Negative,Interval Validation,P3-INTERVAL-INVALID-Negative,-1,Adhere to Page 3 submission policy,Invalid interval -1 (Negative) properly rejected,PASS,N/A
+P3-INTERVAL-INVALID-Negative large,Interval Validation,P3-INTERVAL-INVALID-Negative large,-50,Adhere to Page 3 submission policy,Invalid interval -50 (Negative large) properly rejected,PASS,N/A
+P3-INTERVAL-INVALID-Over 600s max,Interval Validation,P3-INTERVAL-INVALID-Over 600s max,601,Adhere to Page 3 submission policy,Invalid interval 601 (Over 600s max) properly rejected,PASS,N/A
+P3-INTERVAL-INVALID-Extreme high,Interval Validation,P3-INTERVAL-INVALID-Extreme high,10000,Adhere to Page 3 submission policy,Invalid interval 10000 (Extreme high) properly rejected,PASS,N/A
+P3-INTERVAL-INVALID-String non-numeric,Interval Validation,P3-INTERVAL-INVALID-String non-numeric,abc,Adhere to Page 3 submission policy,Invalid interval abc (String non-numeric) properly rejected,PASS,N/A
+P3-INTERVAL-INVALID-Boolean value,Interval Validation,P3-INTERVAL-INVALID-Boolean value,True,Adhere to Page 3 submission policy,Invalid interval True (Boolean value) properly rejected,PASS,N/A
+P3-INTERVAL-INVALID-Boolean False,Interval Validation,P3-INTERVAL-INVALID-Boolean False,False,Adhere to Page 3 submission policy,Invalid interval False (Boolean False) properly rejected,PASS,N/A
+P3-INTERVAL-INVALID-NaN,Interval Validation,P3-INTERVAL-INVALID-NaN,nan,Adhere to Page 3 submission policy,Invalid interval nan (NaN) properly rejected,PASS,N/A
+P3-INTERVAL-INVALID-Infinity,Interval Validation,P3-INTERVAL-INVALID-Infinity,inf,Adhere to Page 3 submission policy,Invalid interval inf (Infinity) properly rejected,PASS,N/A
+P3-PRECEDENCE-APP-ON-GLOBAL-OFF,Preference Precedence,Applicant ON must override Global OFF,N/A,Adhere to Page 3 submission policy,Applicant-specific setting took precedence (resolved: True),PASS,N/A
+P3-PRECEDENCE-APP-OFF-GLOBAL-ON,Preference Precedence,Applicant explicit OFF must override Global ON,N/A,Adhere to Page 3 submission policy,Explicit applicant OFF was respected (resolved: False),PASS,N/A
+P3-PRECEDENCE-INHERIT-GLOBAL,Preference Precedence,Empty applicant preference inherits Global value,N/A,Adhere to Page 3 submission policy,"Inherited successfully from global setting (enabled=True, interval=15.0)",PASS,N/A
+P3-ANALYZE-Confirmation (Pure Digits),Bank Page State Analysis,P3-ANALYZE-Confirmation (Pure Digits),Confirmation (Pure Digits),Adhere to Page 3 submission policy,State: REGISTRATION_CONFIRMED (Expected: REGISTRATION_CONFIRMED),PASS,N/A
+P3-ANALYZE-Confirmation (With Persian Prefix),Bank Page State Analysis,P3-ANALYZE-Confirmation (With Persian Prefix),Confirmation (With Persian Prefix),Adhere to Page 3 submission policy,State: UNKNOWN (Expected: REGISTRATION_CONFIRMED),FAIL,P2
+P3-ANALYZE-Capacity Full,Bank Page State Analysis,P3-ANALYZE-Capacity Full,Capacity Full,Adhere to Page 3 submission policy,State: CAPACITY_FULL (Expected: CAPACITY_FULL),PASS,N/A
+P3-ANALYZE-Session Expired,Bank Page State Analysis,P3-ANALYZE-Session Expired,Session Expired,Adhere to Page 3 submission policy,State: SESSION_EXPIRED (Expected: SESSION_EXPIRED),PASS,N/A
+PERF-LOAD-VU1,Load & Performance,API load step with 1 virtual users,"1 concurrent users, 40 requests","p95 < 500ms, p99 < 1500ms, Error rate < 1.0%","RPS: 108.6, p50: 7.67ms, p95: 13.46ms, p99: 49.13ms, Err: 0.0%",PASS,N/A
+PERF-LOAD-VU5,Load & Performance,API load step with 5 virtual users,"5 concurrent users, 40 requests","p95 < 500ms, p99 < 1500ms, Error rate < 1.0%","RPS: 187.7, p50: 21.62ms, p95: 55.55ms, p99: 83.07ms, Err: 0.0%",PASS,N/A
+PERF-LOAD-VU10,Load & Performance,API load step with 10 virtual users,"10 concurrent users, 40 requests","p95 < 500ms, p99 < 1500ms, Error rate < 1.0%","RPS: 153.1, p50: 45.24ms, p95: 95.38ms, p99: 98.98ms, Err: 0.0%",PASS,N/A
+PERF-LOAD-VU25,Load & Performance,API load step with 25 virtual users,"25 concurrent users, 100 requests","p95 < 500ms, p99 < 1500ms, Error rate < 1.0%","RPS: 145.4, p50: 122.77ms, p95: 343.64ms, p99: 369.54ms, Err: 0.0%",PASS,N/A
+PERF-LOAD-VU50,Load & Performance,API load step with 50 virtual users,"50 concurrent users, 200 requests","p95 < 500ms, p99 < 1500ms, Error rate < 1.0%","RPS: 165.9, p50: 211.39ms, p95: 550.91ms, p99: 585.24ms, Err: 0.0%",DEGRADED,P3
+PERF-LOAD-VU100,Load & Performance,API load step with 100 virtual users,"100 concurrent users, 400 requests","p95 < 500ms, p99 < 1500ms, Error rate < 1.0%","RPS: 152.8, p50: 316.9ms, p95: 759.21ms, p99: 802.34ms, Err: 0.0%",DEGRADED,P3
+PERF-LOAD-VU200,Load & Performance,API load step with 200 virtual users,"200 concurrent users, 800 requests","p95 < 500ms, p99 < 1500ms, Error rate < 1.0%","RPS: 140.7, p50: 358.47ms, p95: 842.93ms, p99: 908.2ms, Err: 0.0%",DEGRADED,P3
+PERF-LOAD-VU300,Load & Performance,API load step with 300 virtual users,"300 concurrent users, 1200 requests","p95 < 500ms, p99 < 1500ms, Error rate < 1.0%","RPS: 123.0, p50: 417.08ms, p95: 939.28ms, p99: 1020.09ms, Err: 0.0%",DEGRADED,P3

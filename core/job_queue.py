@@ -202,11 +202,16 @@ class JobQueue:
 
             try:
                 self._run_job_isolated(job)
-                if job.cancel_requested:
+                current_runtime = DBHandler.get_runtime(job.nid)
+                is_success = current_runtime.get("status") == "SUCCESS" or DBHandler.has_final_submission(job.nid)
+                if is_success:
+                    job.status = "completed"
+                    log_event(job.nid, job.id, "🎉 ثبت نام متقاضی با موفقیت قطعی انجام شد و کد رهگیری دریافت گردید.", "success")
+                elif job.cancel_requested:
                     job.status = "cancelled"
-                elif DBHandler.get_runtime(job.nid).get("status") == "ERROR":
+                elif current_runtime.get("status") == "ERROR":
                     job.status = "failed"
-                    job.error = DBHandler.get_runtime(job.nid).get("last_error") or "bot_error"
+                    job.error = current_runtime.get("last_error") or "bot_error"
                 else:
                     job.status = "stopped"
             except Exception as e:
@@ -215,9 +220,10 @@ class JobQueue:
                 log_event(job.nid, job.id, f"خطا: {e}", "error")
             finally:
                 job.finished_at = time.time()
-                runtime_status = "STOPPED" if job.status in {"stopped", "cancelled"} else "ERROR"
                 current_runtime = DBHandler.get_runtime(job.nid)
-                if current_runtime.get("status") != "SUCCESS":
+                is_success = current_runtime.get("status") == "SUCCESS" or DBHandler.has_final_submission(job.nid)
+                runtime_status = "SUCCESS" if is_success else ("STOPPED" if job.status in {"stopped", "cancelled", "completed"} else "ERROR")
+                if not is_success:
                     DBHandler.update_runtime(
                         job.nid,
                         status=runtime_status,
@@ -234,6 +240,103 @@ class JobQueue:
                     )
                     for stale in finished[200:]:
                         self._jobs.pop(stale.id, None)
+
+                # Auto-chain next applicant when bank opens and registration succeeds
+                if is_success and not self._shutting_down:
+                    self.trigger_next_applicant_on_success(job.nid, job.bot_name)
+
+    def trigger_next_applicant_on_success(self, completed_nid: str, bot_name: str = "select") -> Optional[str]:
+        """
+        Auto-chain next applicant when bank opens and registration succeeds:
+        Inspects waiting eligible applicants in the database and automatically starts/enqueues
+        the next applicant to take immediate advantage of the active bank quota window.
+        """
+        try:
+            cfg = DBHandler.get_config() or {}
+            if str(cfg.get("auto_chain_on_success", "true")).strip().lower() in {"false", "0", "off"}:
+                return None
+
+            raw_completed = DBHandler.get_applicant(completed_nid)
+            completed_app = dict(raw_completed) if raw_completed else {}
+            completed_data = completed_app.get("data") or {}
+            if isinstance(completed_data, str):
+                try:
+                    completed_data = json.loads(completed_data)
+                except Exception:
+                    completed_data = {}
+
+            target_bank = completed_data.get("bank_name") or completed_data.get("preferred_bank")
+            target_province = completed_data.get("province")
+
+            all_applicants = DBHandler.get_all_applicants()
+            candidates = []
+
+            for raw_app in all_applicants:
+                app = dict(raw_app) if raw_app else {}
+                nid = str(app.get("national_id", "")).strip()
+                if not nid or nid == completed_nid:
+                    continue
+
+                # Must not already be completed or successful
+                app_status = str(app.get("status", "")).lower()
+                if DBHandler.has_final_submission(nid) or app_status in {"success", "completed", "registered"}:
+                    continue
+
+                # Must not already be active or queued in JobQueue
+                if self.find_active(bot_name, nid):
+                    continue
+
+                app_data = app.get("data") or {}
+                if isinstance(app_data, str):
+                    try:
+                        app_data = json.loads(app_data)
+                    except Exception:
+                        app_data = {}
+
+                # Priority scoring:
+                # 1. Matches same province and same target bank (highest priority to grab opened bank quota)
+                # 2. Matches same province
+                # 3. Any other waiting applicant
+                score = 0
+                candidate_bank = app_data.get("bank_name") or app_data.get("preferred_bank")
+                candidate_prov = app_data.get("province")
+
+                if target_bank and candidate_bank and str(target_bank).strip() == str(candidate_bank).strip():
+                    score += 50
+                if target_province and candidate_prov and str(target_province).strip() == str(candidate_prov).strip():
+                    score += 30
+
+                candidates.append((score, nid, app.get("full_name") or nid, candidate_bank))
+
+            if not candidates:
+                log_event(completed_nid, None, "ℹ️ متقاضی واجد شرایط دیگری در صف انتظار یافت نشد.", "info")
+                return None
+
+            # Sort descending by priority score
+            candidates.sort(key=lambda c: c[0], reverse=True)
+            best_candidate = candidates[0]
+            next_nid = best_candidate[1]
+            next_name = best_candidate[2]
+            next_bank = best_candidate[3] or "بانک انتخابی"
+
+            next_job = self.enqueue(bot_name, next_nid, {})
+            if next_job:
+                log_event(
+                    next_nid,
+                    next_job.id,
+                    f"🚀 شروع خودکار متقاضی بعدی ({next_name}) بلافاصله پس از باز شدن و ثبت موفق {completed_nid} در {next_bank}...",
+                    "success"
+                )
+                try:
+                    from routes.jobs import _emit_applicants_snapshot
+                    _emit_applicants_snapshot()
+                except Exception:
+                    pass
+                return next_nid
+
+        except Exception as exc:
+            log_event(completed_nid, None, f"⚠️ خطا در شروع خودکار متقاضی بعدی: {exc}", "warning")
+            return None
 
     def _run_job_isolated(self, job: Job) -> None:
         """Run every bot in an isolated thread with a dedicated asyncio loop."""

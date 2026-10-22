@@ -1,0 +1,146 @@
+[
+  {
+    "test_id": "SEC-AUTH-GET-/applicants",
+    "category": "Authentication Guard",
+    "description": "Unauthenticated request to /applicants",
+    "status": "PASS",
+    "observed_status": 303,
+    "detail": "Blocked as expected"
+  },
+  {
+    "test_id": "SEC-AUTH-POST-/applicants",
+    "category": "Authentication Guard",
+    "description": "Unauthenticated request to /applicants",
+    "status": "PASS",
+    "observed_status": 401,
+    "detail": "Blocked as expected"
+  },
+  {
+    "test_id": "SEC-AUTH-GET-/settings",
+    "category": "Authentication Guard",
+    "description": "Unauthenticated request to /settings",
+    "status": "PASS",
+    "observed_status": 303,
+    "detail": "Blocked as expected"
+  },
+  {
+    "test_id": "SEC-AUTH-POST-/settings",
+    "category": "Authentication Guard",
+    "description": "Unauthenticated request to /settings",
+    "status": "PASS",
+    "observed_status": 401,
+    "detail": "Blocked as expected"
+  },
+  {
+    "test_id": "SEC-AUTH-GET-/api/capacity/status",
+    "category": "Authentication Guard",
+    "description": "Unauthenticated request to /api/capacity/status",
+    "status": "PASS",
+    "observed_status": 303,
+    "detail": "Blocked as expected"
+  },
+  {
+    "test_id": "SEC-AUTH-POST-/jobs/start",
+    "category": "Authentication Guard",
+    "description": "Unauthenticated request to /jobs/start",
+    "status": "PASS",
+    "observed_status": 401,
+    "detail": "Blocked as expected"
+  },
+  {
+    "test_id": "SEC-AUTH-POST-/bot/action/delete-request/0012345678",
+    "category": "Authentication Guard",
+    "description": "Unauthenticated request to /bot/action/delete-request/0012345678",
+    "status": "PASS",
+    "observed_status": 401,
+    "detail": "Blocked as expected"
+  },
+  {
+    "test_id": "SEC-TRAVERSAL-/static/../../server.py",
+    "category": "Path Traversal",
+    "description": "Attempt directory traversal on /static/../../server.py",
+    "status": "PASS",
+    "observed_status": 303,
+    "detail": "Traversal denied"
+  },
+  {
+    "test_id": "SEC-TRAVERSAL-/static/..%2f..%2fserver.py",
+    "category": "Path Traversal",
+    "description": "Attempt directory traversal on /static/..%2f..%2fserver.py",
+    "status": "PASS",
+    "observed_status": 404,
+    "detail": "Traversal denied"
+  },
+  {
+    "test_id": "SEC-TRAVERSAL-/static/%2e%2e/%2e%2e/cbi_ultimate.db",
+    "category": "Path Traversal",
+    "description": "Attempt directory traversal on /static/%2e%2e/%2e%2e/cbi_ultimate.db",
+    "status": "PASS",
+    "observed_status": 404,
+    "detail": "Traversal denied"
+  },
+  {
+    "test_id": "SEC-TRAVERSAL-/static/....//....//server.py",
+    "category": "Path Traversal",
+    "description": "Attempt directory traversal on /static/....//....//server.py",
+    "status": "PASS",
+    "observed_status": 404,
+    "detail": "Traversal denied"
+  },
+  {
+    "test_id": "SEC-SQLI-0012345678' OR ",
+    "category": "SQL Injection",
+    "description": "Parameterized query handling of '0012345678' OR '1'=''",
+    "status": "PASS",
+    "observed_status": "Handled Safely",
+    "detail": "Parameterized query successfully prevented injection"
+  },
+  {
+    "test_id": "SEC-SQLI-0012345678'; DR",
+    "category": "SQL Injection",
+    "description": "Parameterized query handling of '0012345678'; DROP TA'",
+    "status": "PASS",
+    "observed_status": "Handled Safely",
+    "detail": "Parameterized query successfully prevented injection"
+  },
+  {
+    "test_id": "SEC-SQLI-0012345678' UNI",
+    "category": "SQL Injection",
+    "description": "Parameterized query handling of '0012345678' UNION SE'",
+    "status": "PASS",
+    "observed_status": "Handled Safely",
+    "detail": "Parameterized query successfully prevented injection"
+  },
+  {
+    "test_id": "SEC-XSS-STORAGE",
+    "category": "XSS & Content Sanitization",
+    "description": "Store raw HTML/XSS in database without corruption",
+    "status": "PASS",
+    "observed_status": "Stored safely as literal data",
+    "detail": "Data stored faithfully; frontend uses innerText/textContent/escaped templates"
+  },
+  {
+    "test_id": "SEC-RBAC-CLIENT-EDITION",
+    "category": "Role-Based Access Control",
+    "description": "Client edition must be denied access to admin configuration",
+    "status": "PASS",
+    "observed_status": 403,
+    "detail": "403 Forbidden received as expected"
+  },
+  {
+    "test_id": "SEC-OTP-COOLDOWN",
+    "category": "OTP Abuse Prevention",
+    "description": "120-second cooldown on consecutive OTP requests for same mobile",
+    "status": "PASS",
+    "observed_status": 429,
+    "detail": "429 Too Many Requests enforced"
+  },
+  {
+    "test_id": "SEC-OTP-BRUTE-FORCE",
+    "category": "OTP Abuse Prevention",
+    "description": "5-attempt brute-force lockout on OTP verification",
+    "status": "PASS",
+    "observed_status": 400,
+    "detail": "Brute force blocked with response: {\"detail\":\"کد تایید منقضی شده یا نامعتبر است. لطفاً مجدداً کد دریافت کنید.\"}"
+  }
+]

@@ -320,9 +320,10 @@ def analyze_bank_page_html(html: str) -> Dict[str, Any]:
     # 3. Tracking Code (if page already completed)
     tr_m = re.search(r'id=["\']ctl00_ContentPlaceHolder1_lblTrackingCode["\'][^>]*>(.*?)</span>', html, re.DOTALL | re.IGNORECASE)
     if tr_m:
-        code = re.sub(r'<[^>]+>', '', tr_m.group(1)).strip()
-        if code and re.match(r'^\d{6,20}$', code):
-            res["tracking_code"] = code
+        raw_txt = re.sub(r'<[^>]+>', '', tr_m.group(1)).strip()
+        match_digits = re.search(r'(\d{6,20})', raw_txt)
+        if match_digits:
+            res["tracking_code"] = match_digits.group(1)
             res["state"] = BankPageState.REGISTRATION_CONFIRMED
             return res
 

@@ -1,0 +1,27 @@
+{
+  "engine": "ddddocr",
+  "timestamp": 1792699120.1049714,
+  "cold_start_ms": 742.05,
+  "warm_inference_ms": [
+    17.03,
+    9.04,
+    8.01,
+    9.42,
+    7.45,
+    8.78,
+    6.91,
+    8.54,
+    6.6,
+    7.64,
+    9.97,
+    10.98,
+    8.84,
+    10.57,
+    9.33
+  ],
+  "warm_p50_ms": 8.84,
+  "warm_p95_ms": 17.03,
+  "warm_avg_ms": 9.27,
+  "corrupted_image_handled": true,
+  "empty_image_handled": true
+}
