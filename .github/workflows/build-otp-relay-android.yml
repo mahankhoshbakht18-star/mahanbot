@@ -1,0 +1,86 @@
+name: Build Android OTP Relay
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+      - android/otp-unified-v2.8.0
+    paths:
+      - "android/otp-relay-app/**"
+      - ".github/workflows/build-otp-relay-android.yml"
+  pull_request:
+    paths:
+      - "android/otp-relay-app/**"
+      - ".github/workflows/build-otp-relay-android.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    defaults:
+      run:
+        working-directory: android/otp-relay-app
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android platform
+        run: sdkmanager "platforms;android-35" "build-tools;35.0.0"
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.11.1"
+
+      - name: Run unit tests and build APK
+        id: gradle_build
+        continue-on-error: true
+        run: |
+          set -o pipefail
+          mkdir -p delivery
+          gradle :app:testDebugUnitTest :app:assembleDebug --stacktrace --no-daemon 2>&1 | tee delivery/build.log
+
+      - name: Prepare APK artifact
+        if: steps.gradle_build.outcome == 'success'
+        run: |
+          cp app/build/outputs/apk/debug/app-debug.apk delivery/MahanOtpRelay-2.8.0-debug.apk
+          sha256sum delivery/MahanOtpRelay-2.8.0-debug.apk | tee delivery/SHA256SUMS.txt
+
+      - name: Upload build log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: MahanOtpRelay-2.8.0-build-log
+          path: android/otp-relay-app/delivery/build.log
+          if-no-files-found: warn
+          retention-days: 30
+
+      - name: Upload APK
+        if: steps.gradle_build.outcome == 'success'
+        uses: actions/upload-artifact@v4
+        with:
+          name: MahanOtpRelay-2.8.0-apk
+          path: |
+            android/otp-relay-app/delivery/MahanOtpRelay-2.8.0-debug.apk
+            android/otp-relay-app/delivery/SHA256SUMS.txt
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Fail workflow when Gradle failed
+        if: steps.gradle_build.outcome == 'failure'
+        run: exit 1
