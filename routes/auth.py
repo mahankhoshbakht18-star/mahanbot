@@ -77,7 +77,8 @@ def health():
 @router.get("/login")
 def serve_login(request: Request):
     from core.deps import _session_user
-    if _session_user(request.cookies.get(AUTH_COOKIE)):
+    token = request.cookies.get(AUTH_COOKIE)
+    if token and _session_user(token):
         return RedirectResponse("/", status_code=303)
     path = os.path.join(STATIC_DIR, "login.html")
     with open(path, "r", encoding="utf-8") as handle:
