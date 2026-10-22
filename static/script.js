@@ -1017,9 +1017,9 @@ async function fetchApplicants(mode) {
 
         else if(mode === 'status') renderStatusList(data);
 
-        else if(mode === 'recover') renderSimpleList(data, 'recoverListBody', 'actionRecover', 'شروع بازیابی', 'btn-warning text-dark');
+        else if(mode === 'recover') renderRecoverList(data);
 
-        else if(mode === 'delete-req') renderSimpleList(data, 'deleteReqListBody', 'actionDeleteReq', 'حذف درخواست', 'btn-danger');
+        else if(mode === 'delete-req') renderDeleteReqList(data);
 
     } catch(e){console.error(e);}
 
@@ -3069,6 +3069,10 @@ function refreshCurrentView() {
 
     if (currentViewId === 'status') renderStatusList(allUsersData);
 
+    if (currentViewId === 'recover') renderRecoverList(allUsersData);
+
+    if (currentViewId === 'delete-req') renderDeleteReqList(allUsersData);
+
 }
 
 
@@ -4583,4 +4587,91 @@ if (_origLoadSubscriptionManager) {
             console.warn('loadSubscriptionManager wrapped error:', e);
         }
     };
+}
+
+function renderRecoverList(data) {
+    const tbody = document.getElementById('recoverListBody');
+    if (!tbody) return;
+    tbody.innerHTML = '';
+
+    (data || []).forEach((user, idx) => {
+        const d = parseUserData(user.data);
+        const code = d.tracking_code || '-';
+        const hasCode = code && code !== '-';
+        const codeBadge = hasCode
+            ? `<span class="badge bg-success-subtle text-success fw-bold px-2 py-1 font-monospace">${escapeHtml(code)}</span>`
+            : `<span class="text-secondary fw-semibold">فاقد کد رهگیری</span>`;
+
+        tbody.innerHTML += `
+            <tr>
+                <td class="text-center fw-bold" style="color: #64748B; font-size: 12px;">${idx + 1}</td>
+                <td>
+                    <span class="applicant-name-link" onclick="editUser(${idx})" title="مشاهده و ویرایش">${escapeHtml(user.full_name)}</span>
+                </td>
+                <td class="font-monospace text-center fw-semibold" style="color: #E2E8F0; font-size: 13px; letter-spacing: 0.5px;">${formatNid(user.national_id)}</td>
+                <td class="font-monospace text-center">${codeBadge}</td>
+                <td class="text-center"><span class="badge ${getStatusBadge(user.status)}">${translateStatus(user.status)}</span></td>
+                <td class="text-center">
+                    <button class="btn btn-sm btn-outline-primary rounded-pill px-3" onclick="actionRecover('${user.national_id}')">
+                        <i class="fa-solid fa-file-invoice me-1"></i>بازیابی کد رهگیری
+                    </button>
+                </td>
+            </tr>
+        `;
+    });
+}
+
+function renderDeleteReqList(data) {
+    const tbody = document.getElementById('deleteReqListBody');
+    if (!tbody) return;
+    tbody.innerHTML = '';
+
+    (data || []).forEach((user, idx) => {
+        const d = parseUserData(user.data);
+        const code = d.tracking_code || '-';
+        const hasCode = code && code !== '-';
+        const codeDisplay = hasCode
+            ? `<span class="badge bg-success-subtle text-success fw-bold px-2 py-1 font-monospace">${escapeHtml(code)}</span>`
+            : `<span class="badge bg-danger-subtle text-danger fw-semibold">فاقد کد (الزامی)</span>`;
+
+        const deleteButton = hasCode
+            ? `<button class="btn btn-sm btn-outline-danger rounded-pill px-3" onclick="actionDeleteReq('${user.national_id}')">
+                   <i class="fa-solid fa-trash-can me-1"></i>حذف از سامانه مرکزی
+               </button>`
+            : `<button class="btn btn-sm btn-outline-secondary rounded-pill px-3" disabled title="برای حذف در سامانه ve.cbi.ir، کد رهگیری الزامی است. ابتدا بازیابی کنید.">
+                   <i class="fa-solid fa-ban me-1"></i>نیازمند کد رهگیری
+               </button>`;
+
+        tbody.innerHTML += `
+            <tr>
+                <td class="text-center fw-bold" style="color: #64748B; font-size: 12px;">${idx + 1}</td>
+                <td>
+                    <span class="applicant-name-link" onclick="editUser(${idx})" title="مشاهده و ویرایش">${escapeHtml(user.full_name)}</span>
+                </td>
+                <td class="font-monospace text-center fw-semibold" style="color: #E2E8F0; font-size: 13px; letter-spacing: 0.5px;">${formatNid(user.national_id)}</td>
+                <td class="font-monospace text-center">${codeDisplay}</td>
+                <td class="text-center"><span class="badge ${getStatusBadge(user.status)}">${translateStatus(user.status)}</span></td>
+                <td class="text-center">${deleteButton}</td>
+            </tr>
+        `;
+    });
+}
+
+async function actionDeleteReq(nid) {
+    const user = (allUsersData || []).find(u => String(u.national_id) === String(nid));
+    const name = user?.full_name || nid;
+    if (!confirm(`آیا از ارسال درخواست حذف ثبت‌نام متقاضی «${name}» به سامانه مرکزی ve.cbi.ir اطمینان دارید؟\n\n⚠️ این عملیات، ثبت‌نام قبلی را در سامانه بانک مرکزی (TasReqDelete.aspx) لغو می‌کند تا امکان ثبت‌نام مجدد فعال شود.`)) {
+        return;
+    }
+    try {
+        const response = await apiCall(`/bot/action/delete-request/${nid}`, 'POST');
+        if (response?.status === 'queued' || response?.status === 'already_running') {
+            setUserStatus(nid, 'Running');
+            switchView('dashboard');
+        } else {
+            alert('درخواست حذف ثبت‌نام در صف قرار گرفت.');
+        }
+    } catch (e) {
+        alert(e.message || 'خطا در شروع بات حذف ثبت‌نام');
+    }
 }

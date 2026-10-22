@@ -1072,6 +1072,34 @@ class DBHandler:
         return False
 
     @staticmethod
+    def clear_request_data(nid: str, note: str = "ثبت‌نام از سامانه بانک مرکزی حذف شد") -> bool:
+        """پاکسازی کد رهگیری و بازنشانی پرونده پس از حذف موفق از سامانه بانک مرکزی"""
+        user = DBHandler.get_applicant(nid)
+        if not user:
+            return False
+        try:
+            with DBHandler._connect() as conn:
+                conn.execute('BEGIN IMMEDIATE')
+                d = DBHandler._load_applicant_data(conn, nid) or {}
+                d["tracking_code"] = ""
+                d["final_submitted"] = False
+                d.pop("final_submitted_at", None)
+                d.pop("final_submit_status", None)
+                c = conn.cursor()
+                c.execute(
+                    "UPDATE applicants "
+                    "SET data=?, status='Ready', last_log=? "
+                    "WHERE national_id=?",
+                    (json.dumps(d, ensure_ascii=False), note, nid),
+                )
+                conn.execute("DELETE FROM checkpoints WHERE nid=?", (nid,))
+                conn.commit()
+            return True
+        except Exception as e:
+            print(f"Clear Request Error: {e}")
+            return False
+
+    @staticmethod
     def _current_timestamp_seconds_ms() -> float:
         """Return current unix timestamp in seconds with millisecond precision."""
         return time.time_ns() / 1_000_000_000

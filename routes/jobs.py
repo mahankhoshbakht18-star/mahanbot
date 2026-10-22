@@ -126,7 +126,13 @@ def delete_request(nid: str, _: bool = Depends(require_api_key)):
     applicant = DBHandler.get_applicant(nid)
     if not applicant:
         raise HTTPException(status_code=404, detail="Applicant not found")
+    if not _state.JOB_QUEUE:
+        raise HTTPException(status_code=500, detail="Job queue not ready")
+    job = _state.JOB_QUEUE.enqueue("delete_req", nid, {})
+    if job is None:
+        existing = _state.JOB_QUEUE.find_active("delete_req", nid)
+        return {"status": "already_running", "job": existing.to_dict() if existing else None}
     from event_logger import log_event
-    log_event(nid, None, "Delete request submitted", "warning")
+    log_event(nid, None, "Delete request enqueued for CBI TasReqDelete", "warning")
     _emit_applicants_snapshot()
-    return {"status": "ok"}
+    return {"status": "queued", "job": job.to_dict()}

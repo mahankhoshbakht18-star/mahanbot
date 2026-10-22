@@ -20,6 +20,7 @@ from bot_register import RegistrationBot
 from bot_recovery import RecoveryBot
 from bot_select import BankSelectionBot
 from bot_status import StatusBot
+from bot_delete import DeleteRequestBot
 
 
 # ── Single job ────────────────────────────────────────────────────────
@@ -335,6 +336,8 @@ class JobQueue:
             StatusBot(job.nid, settings, log_callback, captcha_service, browser_profile).run(job.stop_event)
         elif job.bot_name == "recovery":
             RecoveryBot(job.nid, settings, log_callback, captcha_service, browser_profile).run(job.stop_event)
+        elif job.bot_name in ("delete", "delete_req"):
+            DeleteRequestBot(job.nid, settings, log_callback, captcha_service, browser_profile).run(job.stop_event)
         else:
             raise ValueError("Unsupported bot name")
 
