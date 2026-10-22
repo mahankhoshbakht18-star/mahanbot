@@ -144,7 +144,7 @@ async function loadSubscriptionManager() {
         if (meResponse.status === 401) { location.replace('/login'); return; }
         const me = await meResponse.json();
         if (!me.is_admin) return;
-        document.getElementById('subscriptionPanel').hidden = false;
+        document.getElementById('subscriptionPanel').hidden = false; loadSmsGatewayConfig();
         const users = await (await fetch('/admin/users')).json();
         const body = document.getElementById('subscriptionUsers');
         body.innerHTML = users.map(user => {
@@ -172,6 +172,78 @@ async function setSubscriptionState(encodedUsername, active) {
 }
 
 async function logoutApp() { await fetch('/logout', {method:'POST'}); location.replace('/login'); }
+
+async function loadSmsGatewayConfig() {
+    try {
+        const resp = await fetch('/admin/sms-config');
+        if (!resp.ok) return;
+        const cfg = await resp.json();
+        const p = document.getElementById('smsGatewayPanel');
+        if (p) p.hidden = false;
+        if (document.getElementById('sms_otp_enabled')) document.getElementById('sms_otp_enabled').checked = Boolean(cfg.otp_auth_enabled);
+        if (document.getElementById('sms_provider_select')) document.getElementById('sms_provider_select').value = cfg.sms_provider || 'mock';
+        if (document.getElementById('sms_sender_line_input')) document.getElementById('sms_sender_line_input').value = cfg.sms_sender_line || '';
+        if (document.getElementById('sms_pattern_code_input')) document.getElementById('sms_pattern_code_input').value = cfg.sms_pattern_code || '';
+        if (document.getElementById('sms_otp_template_input')) document.getElementById('sms_otp_template_input').value = cfg.sms_otp_template || '?? ???? ?? ?????????: {code}\n??????: ? ?????';
+        if (document.getElementById('sms_api_key_input') && cfg.has_api_key) {
+            document.getElementById('sms_api_key_input').placeholder = '???????????????? (??? ???)';
+        }
+    } catch (e) {
+        console.warn('loadSmsGatewayConfig error:', e);
+    }
+}
+
+async function saveSmsGatewayConfig() {
+    const alertBox = document.getElementById('smsGatewayAlert');
+    try {
+        const payload = {
+            otp_auth_enabled: document.getElementById('sms_otp_enabled').checked,
+            sms_provider: document.getElementById('sms_provider_select').value,
+            sms_api_key: document.getElementById('sms_api_key_input').value.trim(),
+            sms_sender_line: document.getElementById('sms_sender_line_input').value.trim(),
+            sms_pattern_code: document.getElementById('sms_pattern_code_input').value.trim(),
+            sms_otp_template: document.getElementById('sms_otp_template_input').value.trim(),
+        };
+        const resp = await fetch('/admin/sms-config', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify(payload)
+        });
+        const res = await resp.json();
+        if (!resp.ok) throw new Error(res.detail || '??? ?? ????? ???????');
+        if (alertBox) {
+            alertBox.className = 'small mt-2 alert alert-success';
+            alertBox.textContent = res.message || '??????? ??? ????? ????? ??.';
+            alertBox.style.display = 'block';
+            setTimeout(() => alertBox.style.display = 'none', 4000);
+        }
+        await loadSmsGatewayConfig();
+    } catch (err) {
+        if (alertBox) {
+            alertBox.className = 'small mt-2 alert alert-danger';
+            alertBox.textContent = err.message;
+            alertBox.style.display = 'block';
+        }
+    }
+}
+
+async function testSendSmsPrompt() {
+    const mobile = prompt('????? ?????? ?????? ?? ???? ?????? (????: 09123456789):');
+    if (!mobile) return;
+    const alertBox = document.getElementById('smsGatewayAlert');
+    try {
+        const resp = await fetch('/admin/sms-test', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({mobile: mobile.trim()})
+        });
+        const res = await resp.json();
+        if (!resp.ok) throw new Error(res.detail || '??? ?? ????? ????? ???????');
+        alert(res.message || '????? ??????? ?? ?????? ????? ??.');
+    } catch (err) {
+        alert('???: ' + err.message);
+    }
+}
 
 async function loadBrowserDisplayMode() {
     try {

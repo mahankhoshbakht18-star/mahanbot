@@ -7,7 +7,7 @@ import time
 import hmac
 import secrets
 from contextlib import contextmanager
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 
 def resource_path(relative_path: str) -> str:
@@ -48,6 +48,12 @@ DEFAULT_CONFIG = {
     "sniper_mode_enabled": False,
     "sniper_interval_ms": 5000,
     "auto_switch_alternative_bank": True,
+    "otp_auth_enabled": True,
+    "sms_provider": "mock",
+    "sms_api_key": "",
+    "sms_sender_line": "",
+    "sms_pattern_code": "",
+    "sms_otp_template": "?? ???? ?? ?????????: {code}\n??????: ? ?????",
     "fallback_to_in_person": False,
     "bank_cooldown_seconds": 30,
     "gsm_modem_enabled": False,
@@ -154,6 +160,12 @@ def normalize_config(stored: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     merged["sniper_mode_enabled"] = bool(merged.get("sniper_mode_enabled", False))
     merged["sniper_interval_ms"] = _bounded(merged.get("sniper_interval_ms"), 5000, 200, 10000, int)
     merged["auto_switch_alternative_bank"] = bool(merged.get("auto_switch_alternative_bank", True))
+    merged["otp_auth_enabled"] = bool(merged.get("otp_auth_enabled", True))
+    merged["sms_provider"] = str(merged.get("sms_provider") or "mock").strip().lower()
+    merged["sms_api_key"] = str(merged.get("sms_api_key") or "").strip()
+    merged["sms_sender_line"] = str(merged.get("sms_sender_line") or "").strip()
+    merged["sms_pattern_code"] = str(merged.get("sms_pattern_code") or "").strip()
+    merged["sms_otp_template"] = str(merged.get("sms_otp_template") or "?? ???? ?? ?????????: {code}\n??????: ? ?????")
     merged["fallback_to_in_person"] = bool(merged.get("fallback_to_in_person", False))
     merged["bank_cooldown_seconds"] = _bounded(merged.get("bank_cooldown_seconds"), 30, 5, 600, int)
     merged["max_concurrency"] = _bounded(merged.get("max_concurrency"), 4, 1, 32, int)
@@ -238,6 +250,44 @@ class DBHandler:
                 c.execute("PRAGMA synchronous=NORMAL;")
                 c.execute("PRAGMA busy_timeout=5000;")
                 c.execute("PRAGMA foreign_keys=ON;")
+                # Ensure mobile column exists on app_users
+                try:
+                    c.execute("ALTER TABLE app_users ADD COLUMN mobile TEXT")
+                except Exception:
+                    pass
+                try:
+                    c.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_app_users_mobile ON app_users(mobile) WHERE mobile IS NOT NULL")
+                except Exception:
+                    pass
+
+                # Auth OTP table for multi-factor login & registration
+                c.execute(
+                    """CREATE TABLE IF NOT EXISTS auth_otps (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        mobile TEXT NOT NULL,
+                        code_hash TEXT NOT NULL,
+                        code_salt TEXT NOT NULL,
+                        purpose TEXT NOT NULL DEFAULT 'login',
+                        attempts INTEGER NOT NULL DEFAULT 0,
+                        max_attempts INTEGER NOT NULL DEFAULT 5,
+                        expires_at REAL NOT NULL,
+                        consumed INTEGER NOT NULL DEFAULT 0,
+                        ip_address TEXT,
+                        created_at REAL NOT NULL
+                    )"""
+                )
+                c.execute("CREATE INDEX IF NOT EXISTS idx_auth_otps_lookup ON auth_otps(mobile, purpose, expires_at, consumed)")
+
+                # Password reset tokens table
+                c.execute(
+                    """CREATE TABLE IF NOT EXISTS password_reset_tokens (
+                        token TEXT PRIMARY KEY,
+                        username TEXT NOT NULL COLLATE NOCASE,
+                        expires_at REAL NOT NULL,
+                        used INTEGER NOT NULL DEFAULT 0,
+                        created_at REAL NOT NULL
+                    )"""
+                )
 
                 c.execute(
                     """CREATE TABLE IF NOT EXISTS applicants (
@@ -584,6 +634,247 @@ class DBHandler:
                 conn.commit()
         except Exception:
             pass
+
+
+    # ── Mobile & OTP Authentication Engine ──────────────────────────────────
+    @staticmethod
+    def create_auth_otp(mobile: str, code: str, purpose: str = "login", ip: str = None) -> Tuple[bool, str, int]:
+        """
+        Securely generates and records an OTP verification request with rate-limiting.
+        Returns (success, message, cooldown_seconds).
+        """
+        mobile = str(mobile or "").strip()
+        code = str(code or "").strip()
+        if not mobile or len(code) != 6:
+            return False, "شماره موبایل یا کد نامعتبر است.", 0
+
+        now = time.time()
+        cooldown_window = 120  # 2 minutes cooldown between requests
+        max_10m_requests = 4   # max 4 requests per 10 minutes
+
+        try:
+            with DBHandler._connect(row_factory=True) as conn:
+                # 1. Check resend cooldown
+                row = conn.execute(
+                    "SELECT created_at FROM auth_otps WHERE mobile=? AND purpose=? ORDER BY id DESC LIMIT 1",
+                    (mobile, purpose),
+                ).fetchone()
+                if row:
+                    elapsed = now - float(row["created_at"])
+                    if elapsed < cooldown_window:
+                        remaining = int(cooldown_window - elapsed)
+                        return False, f"لطفاً {remaining} ثانیه دیگر جهت درخواست مجدد کد شکیبا باشید.", remaining
+
+                # 2. Check 10-minute rate limit
+                count_row = conn.execute(
+                    "SELECT COUNT(*) AS c FROM auth_otps WHERE mobile=? AND created_at > ?",
+                    (mobile, now - 600),
+                ).fetchone()
+                if count_row and int(count_row["c"]) >= max_10m_requests:
+                    return False, "تعداد درخواست‌های کد برای این شماره بیش از حد مجاز است. لطفاً ۱۰ دقیقه دیگر تلاش کنید.", 0
+
+                # 3. Hash code with fresh salt
+                salt = secrets.token_hex(16)
+                code_hash = DBHandler._hash_password(code, salt)
+                expires_at = now + 300  # 5 minutes validity
+
+                conn.execute(
+                    """INSERT INTO auth_otps
+                       (mobile, code_hash, code_salt, purpose, attempts, max_attempts, expires_at, consumed, ip_address, created_at)
+                       VALUES (?, ?, ?, ?, 0, 5, ?, 0, ?, ?)""",
+                    (mobile, code_hash, salt, purpose, expires_at, str(ip or ""), now),
+                )
+                conn.commit()
+                return True, "کد تایید امن صادر گردید.", cooldown_window
+        except Exception as exc:
+            print(f"[create_auth_otp error] {exc}")
+            return False, "خطای پایگاه‌داده در صدور کد تایید.", 0
+
+    @staticmethod
+    def verify_auth_otp(mobile: str, code: str, purpose: str = "login") -> Tuple[bool, str, Optional[Dict[str, Any]]]:
+        """
+        Validates OTP code, guards against Brute-Force, prevents replay, and returns matched user if any.
+        Returns (success, message, user_or_none).
+        """
+        mobile = str(mobile or "").strip()
+        code = str(code or "").strip()
+        if not mobile or not code:
+            return False, "شماره موبایل و کد الزامی هستند.", None
+
+        now = time.time()
+        try:
+            with DBHandler._connect(row_factory=True) as conn:
+                # Find latest active unconsumed OTP
+                row = conn.execute(
+                    """SELECT * FROM auth_otps
+                       WHERE mobile=? AND purpose=? AND consumed=0 AND expires_at > ?
+                       ORDER BY id DESC LIMIT 1""",
+                    (mobile, purpose, now),
+                ).fetchone()
+
+                if not row:
+                    return False, "کد تایید منقضی شده یا نامعتبر است. لطفاً مجدداً کد دریافت کنید.", None
+
+                otp_id = row["id"]
+                attempts = int(row["attempts"])
+                max_attempts = int(row["max_attempts"])
+
+                if attempts >= max_attempts:
+                    conn.execute("UPDATE auth_otps SET consumed=1 WHERE id=?", (otp_id,))
+                    conn.commit()
+                    return False, "تعداد دفعات تلاش اشتباه بیش از حد مجاز بود. کد باطل شد؛ لطفاً کد جدید دریافت کنید.", None
+
+                candidate = DBHandler._hash_password(code, row["code_salt"])
+                if not hmac.compare_digest(candidate, row["code_hash"]):
+                    new_attempts = attempts + 1
+                    consumed = 1 if new_attempts >= max_attempts else 0
+                    conn.execute("UPDATE auth_otps SET attempts=?, consumed=? WHERE id=?", (new_attempts, consumed, otp_id))
+                    conn.commit()
+                    rem = max(0, max_attempts - new_attempts)
+                    if rem == 0:
+                        return False, "کد اشتباه بود و پس از ۵ بار تلاش باطل شد. لطفاً کد جدید بگیرید.", None
+                    return False, f"کد تایید وارد شده نادرست است ({rem} تلاش دیگر باقی‌مانده).", None
+
+                # Correct code: mark consumed immediately
+                conn.execute("UPDATE auth_otps SET consumed=1 WHERE id=?", (otp_id,))
+                conn.commit()
+
+                # Find associated user
+                user_row = conn.execute(
+                    "SELECT * FROM app_users WHERE mobile=?",
+                    (mobile,),
+                ).fetchone()
+
+                if user_row:
+                    user_data = dict(user_row)
+                    if not user_data.get("active"):
+                        return False, "حساب کاربری متصل به این شماره غیرفعال شده است.", None
+                    if float(user_data.get("expires_at", 0)) <= now:
+                        return False, "اعتبار اشتراک این حساب به پایان رسیده است.", None
+                    return True, "احراز هویت موفق با پیامک.", user_data
+
+                return True, "شماره موبایل با موفقیت تایید شد.", None
+        except Exception as exc:
+            print(f"[verify_auth_otp error] {exc}")
+            return False, "خطا در تایید کد پیامکی.", None
+
+    @staticmethod
+    def get_user_by_mobile(mobile: str) -> Optional[Dict[str, Any]]:
+        try:
+            with DBHandler._connect(row_factory=True) as conn:
+                row = conn.execute("SELECT * FROM app_users WHERE mobile=?", (str(mobile).strip(),)).fetchone()
+                return dict(row) if row else None
+        except Exception:
+            return None
+
+    @staticmethod
+    def link_mobile_to_user(username: str, mobile: str) -> Tuple[bool, str]:
+        username = str(username or "").strip()
+        mobile = str(mobile or "").strip()
+        if not username or not mobile:
+            return False, "نام کاربری و شماره موبایل الزامی است."
+        try:
+            with DBHandler._connect(row_factory=True) as conn:
+                # Check if mobile taken by another user
+                existing = conn.execute(
+                    "SELECT username FROM app_users WHERE mobile=? AND username!=? COLLATE NOCASE",
+                    (mobile, username),
+                ).fetchone()
+                if existing:
+                    return False, f"این شماره موبایل قبلاً به حساب '{existing['username']}' متصل شده است."
+
+                cur = conn.execute(
+                    "UPDATE app_users SET mobile=?, updated_at=? WHERE username=? COLLATE NOCASE",
+                    (mobile, time.time(), username),
+                )
+                conn.commit()
+                if cur.rowcount > 0:
+                    return True, "شماره موبایل با موفقیت به حساب کاربری متصل شد."
+                return False, "کاربر یافت نشد."
+        except Exception as exc:
+            return False, f"خطای دیتابیس: {exc}"
+
+    @staticmethod
+    def create_user_with_mobile(username: str, mobile: str, password: str = None, days: int = 30, is_admin: bool = False) -> Tuple[bool, str, Optional[Dict[str, Any]]]:
+        username = str(username or "").strip()
+        mobile = str(mobile or "").strip()
+        if not username or not mobile:
+            return False, "نام کاربری و شماره موبایل الزامی است.", None
+
+        now = time.time()
+        pass_to_use = password or secrets.token_urlsafe(12)
+        salt = secrets.token_hex(16)
+        p_hash = DBHandler._hash_password(pass_to_use, salt)
+        expires_at = now + int(days) * 86400
+
+        try:
+            with DBHandler._connect(row_factory=True) as conn:
+                # Check duplicate username
+                if conn.execute("SELECT 1 FROM app_users WHERE username=? COLLATE NOCASE", (username,)).fetchone():
+                    return False, "این نام کاربری قبلاً ثبت شده است.", None
+                # Check duplicate mobile
+                if conn.execute("SELECT 1 FROM app_users WHERE mobile=?", (mobile,)).fetchone():
+                    return False, "این شماره موبایل قبلاً ثبت شده است.", None
+
+                conn.execute(
+                    """INSERT INTO app_users
+                       (username, mobile, password_hash, password_salt, expires_at, is_admin, active, created_at, updated_at)
+                       VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?)""",
+                    (username, mobile, p_hash, salt, expires_at, int(bool(is_admin)), now, now),
+                )
+                conn.commit()
+                row = conn.execute("SELECT * FROM app_users WHERE username=? COLLATE NOCASE", (username,)).fetchone()
+                return True, "حساب کاربری با موفقیت ایجاد شد.", dict(row)
+        except Exception as exc:
+            return False, f"خطای دیتابیس در ایجاد کاربر: {exc}", None
+
+    @staticmethod
+    def create_password_reset_token(username: str) -> Optional[str]:
+        username = str(username or "").strip()
+        if not username:
+            return None
+        token = secrets.token_urlsafe(32)
+        now = time.time()
+        expires_at = now + 900  # 15 minutes
+        try:
+            with DBHandler._connect() as conn:
+                conn.execute(
+                    "INSERT INTO password_reset_tokens (token, username, expires_at, used, created_at) VALUES (?, ?, ?, 0, ?)",
+                    (token, username, expires_at, now),
+                )
+                conn.commit()
+            return token
+        except Exception:
+            return None
+
+    @staticmethod
+    def reset_password_with_token(token: str, new_password: str) -> Tuple[bool, str]:
+        token = str(token or "").strip()
+        if not token or len(new_password) < 4:
+            return False, "توکن نامعتبر یا گذرواژه کمتر از ۴ حرف است."
+        now = time.time()
+        try:
+            with DBHandler._connect(row_factory=True) as conn:
+                row = conn.execute(
+                    "SELECT * FROM password_reset_tokens WHERE token=? AND used=0 AND expires_at > ?",
+                    (token, now),
+                ).fetchone()
+                if not row:
+                    return False, "لینک یا توکن بازیابی رمز عبور منقضی یا استفاده شده است."
+
+                username = row["username"]
+                salt = secrets.token_hex(16)
+                p_hash = DBHandler._hash_password(new_password, salt)
+
+                conn.execute(
+                    "UPDATE app_users SET password_hash=?, password_salt=?, updated_at=? WHERE username=? COLLATE NOCASE",
+                    (p_hash, salt, now, username),
+                )
+                conn.execute("UPDATE password_reset_tokens SET used=1 WHERE token=?", (token,))
+                conn.commit()
+                return True, "رمز عبور با موفقیت به‌روزرسانی شد. اکنون می‌توانید وارد شوید."
+        except Exception as exc:
+            return False, f"خطای پایگاه‌داده: {exc}"
 
     @staticmethod
     def get_applicant(nid: str):

@@ -1,299 +1,927 @@
 <!doctype html>
 <html lang="fa" dir="rtl">
 <head>
-  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>ورود به ماهان‌بات</title>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>ورود به سامانه هوشمند ماهان‌بات</title>
   <link rel="stylesheet" href="/static/vendor/all.min.css">
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Vazirmatn:wght@400;500;600;700;800;900&display=swap" media="print" onload="this.media='all'">
   <style>
-    *{box-sizing:border-box;margin:0;padding:0}
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
     
-    body{
-      min-height:100vh;display:flex;align-items:center;justify-content:center;
-      font-family:'Vazirmatn',Tahoma,sans-serif;
-      background:#0a1a17;color:#e0f0eb;overflow:hidden;
+    :root {
+      --primary: #00BFB3;
+      --primary-hover: #00A69B;
+      --primary-glow: rgba(0, 191, 179, 0.4);
+      --bg-dark: #0A192F;
+      --card-bg: rgba(17, 34, 64, 0.75);
+      --card-border: rgba(56, 189, 248, 0.18);
+      --text-main: #F8FAFC;
+      --text-muted: #94A3B8;
+      --text-accent: #38BDF8;
+      --gold: #E5A900;
+      --gold-glow: rgba(229, 169, 0, 0.3);
+      --danger: #F87171;
+      --success: #34D399;
+      --radius-lg: 24px;
+      --radius-md: 14px;
     }
 
-    /* ══════ Animated Background ══════ */
-    .bg-layer{position:fixed;inset:0;z-index:0;overflow:hidden}
-    .bg-gradient{position:absolute;inset:0;background:linear-gradient(135deg,#071f1b 0%,#0b3d33 30%,#0d5a4a 60%,#071f1b 100%);animation:bgShift 12s ease infinite alternate}
-    @keyframes bgShift{0%{filter:hue-rotate(0deg)}100%{filter:hue-rotate(15deg)}}
-    
-    .bg-orb{position:absolute;border-radius:50%;filter:blur(80px);opacity:.35;animation:orbFloat 8s ease-in-out infinite alternate}
-    .bg-orb-1{width:400px;height:400px;background:radial-gradient(circle,#23b69d,transparent 70%);top:-100px;right:-80px;animation-delay:0s;animation-duration:10s}
-    .bg-orb-2{width:300px;height:300px;background:radial-gradient(circle,#0ea5e9,transparent 70%);bottom:-60px;left:-60px;animation-delay:2s;animation-duration:8s}
-    .bg-orb-3{width:250px;height:250px;background:radial-gradient(circle,#a78bfa,transparent 70%);top:40%;left:30%;animation-delay:4s;animation-duration:12s}
-    @keyframes orbFloat{0%{transform:translate(0,0) scale(1)}100%{transform:translate(30px,-25px) scale(1.15)}}
-
-    .bg-grid{position:absolute;inset:0;background-image:radial-gradient(rgba(255,255,255,.04) 1px,transparent 1px);background-size:32px 32px}
-
-    .bg-particles{position:absolute;inset:0}
-    .particle{position:absolute;width:3px;height:3px;background:rgba(35,182,157,.5);border-radius:50%;animation:particleRise linear infinite}
-    @keyframes particleRise{0%{transform:translateY(100vh) scale(0);opacity:0}10%{opacity:1}90%{opacity:1}100%{transform:translateY(-10vh) scale(1);opacity:0}}
-    .particle:nth-child(1){left:10%;animation-duration:14s;animation-delay:0s}
-    .particle:nth-child(2){left:25%;animation-duration:18s;animation-delay:2s;width:2px;height:2px}
-    .particle:nth-child(3){left:45%;animation-duration:12s;animation-delay:4s}
-    .particle:nth-child(4){left:65%;animation-duration:16s;animation-delay:1s;width:4px;height:4px}
-    .particle:nth-child(5){left:80%;animation-duration:20s;animation-delay:3s}
-    .particle:nth-child(6){left:92%;animation-duration:15s;animation-delay:5s;width:2px;height:2px}
-    .particle:nth-child(7){left:35%;animation-duration:17s;animation-delay:7s}
-    .particle:nth-child(8){left:55%;animation-duration:13s;animation-delay:6s;width:4px;height:4px}
-
-    /* ══════ Card ══════ */
-    .login-wrapper{position:relative;z-index:10;width:min(460px,calc(100% - 32px))}
-    
-    .login-card{
-      background:rgba(255,255,255,.06);
-      backdrop-filter:blur(24px) saturate(1.4);
-      -webkit-backdrop-filter:blur(24px) saturate(1.4);
-      border:1px solid rgba(255,255,255,.1);
-      border-radius:28px;
-      padding:44px 36px 36px;
-      box-shadow:0 32px 80px rgba(0,0,0,.35), inset 0 1px 0 rgba(255,255,255,.08);
-      animation:cardIn .6s cubic-bezier(.22,1,.36,1) both;
+    body {
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-family: 'Vazirmatn', -apple-system, BlinkMacSystemFont, Tahoma, sans-serif;
+      background: var(--bg-dark);
+      color: var(--text-main);
+      overflow-x: hidden;
+      position: relative;
+      padding: 20px;
     }
-    @keyframes cardIn{from{opacity:0;transform:translateY(30px) scale(.97)}to{opacity:1;transform:none}}
 
-    .brand-top{display:flex;align-items:center;gap:14px;margin-bottom:28px}
-    .brand-icon{
-      width:56px;height:56px;border-radius:18px;
-      background:linear-gradient(135deg,#23b69d,#0ea5e9);
-      display:grid;place-items:center;
-      box-shadow:0 12px 32px rgba(35,182,157,.35);
-      animation:iconPulse 3s ease-in-out infinite;
+    /* ══════ Ambient Background ══════ */
+    .bg-layer { position: fixed; inset: 0; z-index: 0; pointer-events: none; overflow: hidden; }
+    .bg-mesh {
+      position: absolute; inset: 0;
+      background: 
+        radial-gradient(circle at 15% 20%, rgba(0, 191, 179, 0.18) 0%, transparent 40%),
+        radial-gradient(circle at 85% 80%, rgba(14, 165, 233, 0.16) 0%, transparent 45%),
+        radial-gradient(circle at 50% 50%, rgba(10, 25, 47, 0.95) 0%, #060D17 100%);
     }
-    @keyframes iconPulse{0%,100%{box-shadow:0 12px 32px rgba(35,182,157,.35)}50%{box-shadow:0 12px 40px rgba(35,182,157,.55)}}
-    .brand-icon i{font-size:26px;color:#fff}
-    .brand-text strong{display:block;font-size:20px;font-weight:800;color:#fff;letter-spacing:-.02em}
-    .brand-text small{display:block;color:#7dbdb5;font-size:12px;margin-top:3px;letter-spacing:.02em}
+    .bg-orb {
+      position: absolute; border-radius: 50%; filter: blur(90px); opacity: 0.35;
+      animation: orbFloat 10s ease-in-out infinite alternate;
+    }
+    .orb-1 { width: 420px; height: 420px; background: #00BFB3; top: -120px; right: -80px; }
+    .orb-2 { width: 340px; height: 340px; background: #0284C7; bottom: -80px; left: -80px; animation-delay: 2s; }
+    .orb-3 { width: 260px; height: 260px; background: #E5A900; top: 40%; left: 10%; opacity: 0.18; animation-delay: 4s; }
 
-    .login-title{font-size:26px;font-weight:900;color:#fff;margin-bottom:6px;line-height:1.4}
-    .login-hint{color:#8ab4ac;font-size:14px;line-height:1.8;margin-bottom:28px}
+    @keyframes orbFloat {
+      0% { transform: translate(0, 0) scale(1); }
+      100% { transform: translate(30px, -25px) scale(1.1); }
+    }
 
-    /* ══════ Form ══════ */
-    .field-group{margin-bottom:20px;position:relative}
-    .field-group label{
-      display:flex;align-items:center;gap:8px;font-size:13px;font-weight:700;
-      color:#a8d4cc;margin-bottom:8px;
+    .bg-grid {
+      position: absolute; inset: 0;
+      background-image: radial-gradient(rgba(255, 255, 255, 0.05) 1px, transparent 1px);
+      background-size: 28px 28px;
     }
-    .field-group label i{font-size:14px;opacity:.7}
 
-    .input-wrap{position:relative}
-    .input-wrap i.field-icon{
-      position:absolute;right:14px;top:50%;transform:translateY(-50%);
-      font-size:16px;color:#4a8a7f;transition:color .25s;pointer-events:none;
+    /* ══════ Card Container ══════ */
+    .auth-container {
+      position: relative;
+      z-index: 10;
+      width: 100%;
+      max-width: 480px;
+      animation: cardEnter 0.55s cubic-bezier(0.16, 1, 0.3, 1) both;
     }
-    .input-wrap input{
-      width:100%;height:52px;
-      background:rgba(255,255,255,.06);
-      border:1.5px solid rgba(255,255,255,.1);
-      border-radius:14px;
-      padding:0 46px 0 16px;
-      font:600 15px/1 'Vazirmatn',Tahoma,sans-serif;
-      color:#e0f0eb;outline:none;
-      transition:all .3s cubic-bezier(.22,1,.36,1);
-    }
-    .input-wrap input::placeholder{color:#5a8a7f}
-    .input-wrap input:focus{
-      border-color:#23b69d;
-      background:rgba(255,255,255,.09);
-      box-shadow:0 0 0 4px rgba(35,182,157,.15), 0 8px 24px rgba(0,0,0,.2);
-    }
-    .input-wrap input:focus + i.field-icon,
-    .input-wrap input:focus ~ i.field-icon{color:#23b69d}
 
-    .toggle-pass{
-      position:absolute;left:14px;top:50%;transform:translateY(-50%);
-      background:none;border:none;color:#5a8a7f;cursor:pointer;
-      font-size:16px;padding:4px;transition:color .2s;
+    @keyframes cardEnter {
+      from { opacity: 0; transform: translateY(24px) scale(0.98); }
+      to { opacity: 1; transform: translateY(0) scale(1); }
     }
-    .toggle-pass:hover{color:#23b69d}
 
-    .login-btn{
-      width:100%;height:54px;border:0;border-radius:16px;margin-top:8px;
-      background:linear-gradient(135deg,#23b69d 0%,#0ea5e9 100%);
-      color:#fff;font:800 16px/1 'Vazirmatn',Tahoma,sans-serif;
-      cursor:pointer;position:relative;overflow:hidden;
-      transition:all .3s cubic-bezier(.22,1,.36,1);
-      box-shadow:0 8px 32px rgba(35,182,157,.3);
+    .auth-card {
+      background: var(--card-bg);
+      backdrop-filter: blur(28px) saturate(1.5);
+      -webkit-backdrop-filter: blur(28px) saturate(1.5);
+      border: 1px solid var(--card-border);
+      border-radius: var(--radius-lg);
+      padding: 38px 34px 32px;
+      box-shadow: 0 24px 64px rgba(0, 0, 0, 0.45), inset 0 1px 0 rgba(255, 255, 255, 0.1);
     }
-    .login-btn:hover{
-      transform:translateY(-2px);
-      box-shadow:0 14px 40px rgba(35,182,157,.45);
-    }
-    .login-btn:active{transform:translateY(0);box-shadow:0 4px 16px rgba(35,182,157,.3)}
-    .login-btn:disabled{opacity:.55;cursor:not-allowed;transform:none}
-    .login-btn .btn-shine{
-      position:absolute;top:0;left:-100%;width:100%;height:100%;
-      background:linear-gradient(90deg,transparent,rgba(255,255,255,.2),transparent);
-      animation:shine 3s ease-in-out infinite;
-    }
-    @keyframes shine{0%{left:-100%}50%,100%{left:100%}}
-    .login-btn .btn-text{position:relative;z-index:1;display:flex;align-items:center;justify-content:center;gap:10px}
-    .login-btn .btn-text i{font-size:18px;transition:transform .3s}
-    .login-btn:hover .btn-text i{transform:translateX(-4px)}
 
-    .error-box{
-      min-height:28px;margin-top:14px;
-      color:#f87171;font-size:13px;font-weight:600;
-      display:flex;align-items:center;gap:8px;
-      transition:all .3s;
+    /* ══════ Header / Branding ══════ */
+    .brand-header {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      margin-bottom: 24px;
     }
-    .error-box:not(:empty){
-      background:rgba(248,113,113,.08);
-      border:1px solid rgba(248,113,113,.2);
-      border-radius:10px;padding:10px 14px;
-      animation:shake .4s ease;
+    .brand-logo {
+      width: 54px;
+      height: 54px;
+      border-radius: 16px;
+      background: linear-gradient(135deg, var(--primary), #0284C7);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 24px;
+      color: #fff;
+      box-shadow: 0 10px 24px var(--primary-glow);
+      flex-shrink: 0;
     }
-    @keyframes shake{0%,100%{transform:translateX(0)}20%,60%{transform:translateX(-6px)}40%,80%{transform:translateX(6px)}}
-
-    .foot{text-align:center;color:#5a8a7f;font-size:12px;margin-top:20px;padding-top:16px;border-top:1px solid rgba(255,255,255,.06)}
-    .foot i{margin-left:4px}
-
-    /* ══════ Loading spinner ══════ */
-    .spinner{display:none;width:20px;height:20px;border:2.5px solid rgba(255,255,255,.3);border-top-color:#fff;border-radius:50%;animation:spin .7s linear infinite}
-    @keyframes spin{to{transform:rotate(360deg)}}
-    .login-btn.loading .spinner{display:inline-block}
-    .login-btn.loading .btn-text i{display:none}
-
-    /* ══════ Footer ══════ */
-    .login-footer{
-      display:flex;align-items:center;justify-content:center;gap:24px;
-      margin-top:32px;position:relative;z-index:10;
+    .brand-meta h2 {
+      font-size: 20px;
+      font-weight: 800;
+      color: #fff;
+      letter-spacing: -0.02em;
     }
-    .login-footer .feat{
-      display:flex;align-items:center;gap:8px;
-      background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.06);
-      border-radius:12px;padding:8px 14px;
-      font-size:12px;color:#7dbdb5;
-      animation:cardIn .6s cubic-bezier(.22,1,.36,1) both;
+    .brand-meta p {
+      font-size: 13px;
+      color: var(--text-accent);
+      margin-top: 2px;
+      font-weight: 500;
     }
-    .login-footer .feat:nth-child(1){animation-delay:.2s}
-    .login-footer .feat:nth-child(2){animation-delay:.3s}
-    .login-footer .feat:nth-child(3){animation-delay:.4s}
-    .login-footer .feat i{font-size:16px;color:#23b69d}
 
-    @media(max-width:520px){
-      .login-card{padding:32px 22px 28px;border-radius:22px}
-      .login-title{font-size:22px}
-      .login-footer{flex-direction:column;gap:10px}
+    /* ══════ Tab Navigation ══════ */
+    .tab-pills {
+      display: flex;
+      background: rgba(10, 25, 47, 0.7);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      border-radius: var(--radius-md);
+      padding: 4px;
+      margin-bottom: 26px;
+      position: relative;
+    }
+    .tab-btn {
+      flex: 1;
+      padding: 10px 14px;
+      background: transparent;
+      border: none;
+      border-radius: 10px;
+      font-family: inherit;
+      font-size: 13.5px;
+      font-weight: 700;
+      color: var(--text-muted);
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      transition: all 0.25s ease;
+    }
+    .tab-btn i { font-size: 15px; }
+    .tab-btn.active {
+      background: rgba(0, 191, 179, 0.15);
+      color: var(--primary);
+      box-shadow: 0 4px 12px rgba(0, 191, 179, 0.15);
+      border: 1px solid rgba(0, 191, 179, 0.3);
+    }
+    .tab-btn:hover:not(.active) {
+      color: var(--text-main);
+      background: rgba(255, 255, 255, 0.04);
+    }
+
+    /* ══════ Form Views ══════ */
+    .tab-content { display: none; }
+    .tab-content.active { display: block; animation: fadeIn 0.3s ease; }
+    @keyframes fadeIn { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
+
+    .form-group {
+      margin-bottom: 20px;
+      position: relative;
+    }
+    .form-label {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-size: 13px;
+      font-weight: 700;
+      color: #CBD5E1;
+      margin-bottom: 8px;
+    }
+    .form-label a {
+      color: var(--text-accent);
+      text-decoration: none;
+      font-weight: 600;
+      font-size: 12px;
+      transition: color 0.2s;
+    }
+    .form-label a:hover { color: var(--primary); text-decoration: underline; }
+
+    .input-box {
+      position: relative;
+      display: flex;
+      align-items: center;
+    }
+    .input-box i.leading-icon {
+      position: absolute;
+      right: 14px;
+      font-size: 16px;
+      color: #64748B;
+      pointer-events: none;
+      transition: color 0.2s;
+    }
+    .input-box input {
+      width: 100%;
+      height: 50px;
+      background: rgba(10, 25, 47, 0.65);
+      border: 1.5px solid rgba(255, 255, 255, 0.12);
+      border-radius: var(--radius-md);
+      padding: 0 46px 0 16px;
+      font-family: inherit;
+      font-size: 14.5px;
+      font-weight: 600;
+      color: #fff;
+      outline: none;
+      transition: all 0.25s ease;
+    }
+    .input-box input::placeholder { color: #64748B; font-weight: 500; }
+    .input-box input:focus {
+      border-color: var(--primary);
+      background: rgba(10, 25, 47, 0.85);
+      box-shadow: 0 0 0 3px rgba(0, 191, 179, 0.2);
+    }
+    .input-box input:focus + i.leading-icon,
+    .input-box input:focus ~ i.leading-icon { color: var(--primary); }
+
+    .toggle-password {
+      position: absolute;
+      left: 14px;
+      background: none;
+      border: none;
+      color: #64748B;
+      cursor: pointer;
+      font-size: 16px;
+      padding: 4px;
+      transition: color 0.2s;
+    }
+    .toggle-password:hover { color: var(--primary); }
+
+    /* ══════ 6-Box OTP Input (Inspired by Source-Cast) ══════ */
+    .otp-digits-container {
+      display: flex;
+      justify-content: space-between;
+      gap: 8px;
+      direction: ltr; /* English LTR for digits 1..6 */
+      margin: 18px 0 22px;
+    }
+    .otp-box {
+      width: 52px;
+      height: 60px;
+      background: rgba(10, 25, 47, 0.8);
+      border: 1.5px solid rgba(255, 255, 255, 0.14);
+      border-radius: 12px;
+      text-align: center;
+      font-size: 24px;
+      font-weight: 800;
+      color: #fff;
+      outline: none;
+      transition: all 0.25s ease;
+    }
+    .otp-box:focus {
+      border-color: var(--primary);
+      box-shadow: 0 0 0 3px rgba(0, 191, 179, 0.25);
+      background: rgba(10, 25, 47, 0.95);
+      transform: translateY(-2px);
+    }
+    .otp-box.filled {
+      border-color: rgba(0, 191, 179, 0.6);
+      background: rgba(0, 191, 179, 0.08);
+    }
+
+    .otp-meta-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-size: 13px;
+      margin-bottom: 20px;
+      color: var(--text-muted);
+    }
+    .otp-meta-row a {
+      color: var(--primary);
+      text-decoration: none;
+      font-weight: 700;
+      cursor: pointer;
+    }
+    .otp-meta-row a:hover { text-decoration: underline; }
+    .countdown-timer {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      font-weight: 700;
+      color: var(--gold);
+    }
+
+    /* ══════ Action Buttons ══════ */
+    .btn-submit {
+      width: 100%;
+      height: 52px;
+      border: none;
+      border-radius: var(--radius-md);
+      background: linear-gradient(135deg, var(--primary) 0%, #0284C7 100%);
+      color: #fff;
+      font-family: inherit;
+      font-size: 15.5px;
+      font-weight: 800;
+      cursor: pointer;
+      position: relative;
+      overflow: hidden;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 10px;
+      box-shadow: 0 8px 24px var(--primary-glow);
+      transition: all 0.25s ease;
+    }
+    .btn-submit:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 12px 30px rgba(0, 191, 179, 0.5);
+    }
+    .btn-submit:active { transform: translateY(0); }
+    .btn-submit:disabled {
+      opacity: 0.55;
+      cursor: not-allowed;
+      transform: none;
+      box-shadow: none;
+    }
+    .btn-submit .spinner {
+      display: none;
+      width: 20px;
+      height: 20px;
+      border: 2.5px solid rgba(255, 255, 255, 0.3);
+      border-top-color: #fff;
+      border-radius: 50%;
+      animation: spin 0.7s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .btn-submit.loading .spinner { display: inline-block; }
+    .btn-submit.loading .btn-text { display: none; }
+
+    /* ══════ Alert Box ══════ */
+    .alert-box {
+      margin-top: 16px;
+      border-radius: 12px;
+      padding: 12px 16px;
+      font-size: 13px;
+      font-weight: 600;
+      display: none;
+      align-items: center;
+      gap: 10px;
+      animation: alertSlide 0.3s ease;
+    }
+    @keyframes alertSlide { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: translateY(0); } }
+    .alert-box.danger {
+      display: flex;
+      background: rgba(248, 113, 113, 0.12);
+      border: 1px solid rgba(248, 113, 113, 0.35);
+      color: #FECACA;
+    }
+    .alert-box.success {
+      display: flex;
+      background: rgba(52, 211, 153, 0.12);
+      border: 1px solid rgba(52, 211, 153, 0.35);
+      color: #A7F3D0;
+    }
+
+    /* ══════ Footer Badges ══════ */
+    .auth-footer {
+      display: flex;
+      justify-content: center;
+      gap: 16px;
+      margin-top: 26px;
+    }
+    .footer-pill {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      background: rgba(17, 34, 64, 0.6);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      border-radius: 20px;
+      padding: 6px 14px;
+      font-size: 11.5px;
+      color: var(--text-muted);
+    }
+    .footer-pill i { color: var(--primary); font-size: 13px; }
+
+    /* ══════ Password Reset Modal ══════ */
+    .modal-backdrop {
+      position: fixed; inset: 0; background: rgba(6, 13, 23, 0.85);
+      backdrop-filter: blur(8px); display: none; align-items: center; justify-content: center;
+      z-index: 100; padding: 20px;
+    }
+    .modal-backdrop.open { display: flex; animation: fadeIn 0.25s ease; }
+    .modal-card {
+      background: var(--card-bg);
+      border: 1px solid var(--card-border);
+      border-radius: var(--radius-lg);
+      padding: 32px 28px;
+      width: 100%;
+      max-width: 420px;
+      box-shadow: 0 20px 50px rgba(0, 0, 0, 0.5);
+    }
+    .modal-card h3 { font-size: 18px; font-weight: 800; color: #fff; margin-bottom: 8px; }
+    .modal-card p { font-size: 13px; color: var(--text-muted); margin-bottom: 20px; line-height: 1.6; }
+
+    @media (max-width: 480px) {
+      .auth-card { padding: 28px 20px; border-radius: 20px; }
+      .otp-box { width: 44px; height: 52px; font-size: 20px; }
+      .brand-meta h2 { font-size: 18px; }
+      .auth-footer { flex-direction: column; gap: 8px; align-items: center; }
     }
   </style>
 </head>
 <body>
-  <!-- ══════ Animated Background ══════ -->
+  <!-- ══════ Ambient Background ══════ -->
   <div class="bg-layer">
-    <div class="bg-gradient"></div>
-    <div class="bg-orb bg-orb-1"></div>
-    <div class="bg-orb bg-orb-2"></div>
-    <div class="bg-orb bg-orb-3"></div>
+    <div class="bg-mesh"></div>
+    <div class="bg-orb orb-1"></div>
+    <div class="bg-orb orb-2"></div>
+    <div class="bg-orb orb-3"></div>
     <div class="bg-grid"></div>
-    <div class="bg-particles">
-      <div class="particle"></div><div class="particle"></div><div class="particle"></div>
-      <div class="particle"></div><div class="particle"></div><div class="particle"></div>
-      <div class="particle"></div><div class="particle"></div>
+  </div>
+
+  <div class="auth-container">
+    <div class="auth-card">
+      <!-- ══════ Header ══════ -->
+      <div class="brand-header">
+        <div class="brand-logo"><i class="fa-solid fa-shield-halved"></i></div>
+        <div class="brand-meta">
+          <h2>سامانه هوشمند ماهان‌بات</h2>
+          <p><i class="fa-solid fa-lock"></i> درگاه ورود یکپارچه و امن</p>
+        </div>
+      </div>
+
+      <!-- ══════ Navigation Tabs ══════ -->
+      <div class="tab-pills" role="tablist">
+        <button id="tabBtnPassword" class="tab-btn active" onclick="switchAuthTab('password')">
+          <i class="fa-solid fa-key"></i> نام کاربری و رمز
+        </button>
+        <button id="tabBtnOtp" class="tab-btn" onclick="switchAuthTab('otp')">
+          <i class="fa-solid fa-mobile-screen"></i> ورود با پیامک (OTP)
+        </button>
+      </div>
+
+      <!-- ══════ Tab 1: Username & Password ══════ -->
+      <div id="tabContentPassword" class="tab-content active">
+        <form id="formPassword" onsubmit="handlePasswordLogin(event)">
+          <div class="form-group">
+            <label class="form-label" for="txtUsername"><i class="fa-solid fa-user"></i> نام کاربری</label>
+            <div class="input-box">
+              <input id="txtUsername" type="text" autocomplete="username" required placeholder="نام کاربری حساب خود را وارد کنید">
+              <i class="fa-solid fa-user leading-icon"></i>
+            </div>
+          </div>
+
+          <div class="form-group">
+            <div class="form-label">
+              <span><i class="fa-solid fa-lock"></i> گذرواژه</span>
+              <a href="javascript:void(0)" onclick="openResetModal()">فراموشی رمز عبور؟</a>
+            </div>
+            <div class="input-box">
+              <input id="txtPassword" type="password" autocomplete="current-password" required placeholder="رمز عبور">
+              <i class="fa-solid fa-lock leading-icon"></i>
+              <button type="button" class="toggle-password" onclick="togglePasswordVisibility('txtPassword', 'eyePassIcon')" tabindex="-1">
+                <i id="eyePassIcon" class="fa-solid fa-eye"></i>
+              </button>
+            </div>
+          </div>
+
+          <button id="btnPassSubmit" class="btn-submit" type="submit">
+            <span class="btn-text"><i class="fa-solid fa-arrow-left-to-bracket"></i> ورود به داشبورد</span>
+            <span class="spinner"></span>
+          </button>
+        </form>
+      </div>
+
+      <!-- ══════ Tab 2: Mobile & OTP (Inspired by Source-Cast) ══════ -->
+      <div id="tabContentOtp" class="tab-content">
+        <!-- Step 1: Mobile Entry -->
+        <div id="otpStepPhone">
+          <form id="formSendOtp" onsubmit="handleSendOtp(event)">
+            <div class="form-group">
+              <label class="form-label" for="txtMobile"><i class="fa-solid fa-mobile-screen"></i> شماره موبایل</label>
+              <div class="input-box">
+                <input id="txtMobile" type="tel" dir="ltr" inputmode="numeric" required placeholder="09123456789" maxlength="11">
+                <i class="fa-solid fa-phone leading-icon"></i>
+              </div>
+            </div>
+
+            <button id="btnSendOtp" class="btn-submit" type="submit">
+              <span class="btn-text"><i class="fa-solid fa-paper-plane"></i> دریافت کد تایید پیامکی</span>
+              <span class="spinner"></span>
+            </button>
+          </form>
+        </div>
+
+        <!-- Step 2: 6-Box Verification -->
+        <div id="otpStepVerify" style="display: none;">
+          <div class="otp-meta-row">
+            <span>کد تایید به شماره <strong id="lblMaskedMobile" style="color:#fff;"></strong> ارسال شد.</span>
+            <a onclick="backToPhoneStep()"><i class="fa-solid fa-pen-to-square"></i> ویرایش</a>
+          </div>
+
+          <form id="formVerifyOtp" onsubmit="handleVerifyOtp(event)">
+            <div class="otp-digits-container" id="otpBoxContainer">
+              <input class="otp-box" type="text" maxlength="1" inputmode="numeric" pattern="[0-9]*" autofocus data-idx="0">
+              <input class="otp-box" type="text" maxlength="1" inputmode="numeric" pattern="[0-9]*" data-idx="1">
+              <input class="otp-box" type="text" maxlength="1" inputmode="numeric" pattern="[0-9]*" data-idx="2">
+              <input class="otp-box" type="text" maxlength="1" inputmode="numeric" pattern="[0-9]*" data-idx="3">
+              <input class="otp-box" type="text" maxlength="1" inputmode="numeric" pattern="[0-9]*" data-idx="4">
+              <input class="otp-box" type="text" maxlength="1" inputmode="numeric" pattern="[0-9]*" data-idx="5">
+            </div>
+
+            <div class="otp-meta-row">
+              <span id="countdownWrap">ارسال مجدد کد در: <span class="countdown-timer" id="lblCountdown">۰۲:۰۰</span></span>
+              <a id="btnResendOtp" style="display: none;" onclick="resendOtpCode()"><i class="fa-solid fa-rotate-right"></i> ارسال مجدد کد</a>
+            </div>
+
+            <button id="btnVerifySubmit" class="btn-submit" type="submit">
+              <span class="btn-text"><i class="fa-solid fa-shield-check"></i> تایید و ورود به حساب</span>
+              <span class="spinner"></span>
+            </button>
+          </form>
+        </div>
+      </div>
+
+      <!-- ══════ Global Alert Message ══════ -->
+      <div id="alertBox" class="alert-box"></div>
+    </div>
+
+    <!-- ══════ Footer Badges ══════ -->
+    <div class="auth-footer">
+      <div class="footer-pill"><i class="fa-solid fa-shield-halved"></i> رمزنگاری پیشرفته داده‌ها</div>
+      <div class="footer-pill"><i class="fa-solid fa-bolt"></i> اتصال پایدار و فوق‌سریع</div>
+      <div class="footer-pill"><i class="fa-solid fa-headset"></i> پشتیبانی ۲۴ ساعته</div>
     </div>
   </div>
 
-  <!-- ══════ Login Card ══════ -->
-  <main class="login-wrapper">
-    <div class="login-card">
-      <div class="brand-top">
-        <div class="brand-icon"><i class="fa-solid fa-shield-halved"></i></div>
-        <div class="brand-text"><strong>ماهان‌بات</strong><small>مرکز فرماندهی هوشمند</small></div>
+  <!-- ══════ Password Reset via OTP Modal ══════ -->
+  <div id="resetModal" class="modal-backdrop">
+    <div class="modal-card">
+      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
+        <h3><i class="fa-solid fa-key" style="color: var(--primary);"></i> بازیابی رمز عبور</h3>
+        <button type="button" onclick="closeResetModal()" style="background: none; border: none; color: #94A3B8; font-size: 18px; cursor: pointer;">&times;</button>
       </div>
+      <p>شماره موبایل متصل به حساب خود را وارد کنید تا کد تایید برای شما ارسال شود.</p>
 
-      <h1 class="login-title">ورود به پنل مدیریت</h1>
-      <p class="login-hint">برای ادامه، اطلاعات حساب دارای اشتراک فعال را وارد کنید.</p>
-
-      <form id="loginForm" autocomplete="on">
-        <div class="field-group">
-          <label><i class="fa-solid fa-user"></i> نام کاربری</label>
-          <div class="input-wrap">
-            <input id="username" name="username" autocomplete="username" required autofocus placeholder="نام کاربری خود را وارد کنید">
-            <i class="fa-solid fa-user field-icon"></i>
+      <!-- Stage 1: Phone -->
+      <div id="resetStagePhone">
+        <div class="form-group">
+          <label class="form-label">شماره موبایل</label>
+          <div class="input-box">
+            <input id="txtResetPhone" type="tel" dir="ltr" placeholder="09123456789">
+            <i class="fa-solid fa-phone leading-icon"></i>
           </div>
         </div>
-
-        <div class="field-group">
-          <label><i class="fa-solid fa-lock"></i> رمز عبور</label>
-          <div class="input-wrap">
-            <input id="password" name="password" type="password" autocomplete="current-password" required placeholder="رمز عبور">
-            <i class="fa-solid fa-key field-icon"></i>
-            <button type="button" class="toggle-pass" onclick="togglePassword()" tabindex="-1">
-              <i id="eyeIcon" class="fa-solid fa-eye"></i>
-            </button>
-          </div>
-        </div>
-
-        <button id="submit" class="login-btn" type="submit">
-          <span class="btn-shine"></span>
-          <span class="btn-text"><i class="fa-solid fa-arrow-left-to-bracket"></i> ورود به داشبورد</span>
+        <button class="btn-submit" onclick="sendResetOtp()">
+          <span class="btn-text">ارسال کد بازیابی</span>
           <span class="spinner"></span>
         </button>
+      </div>
 
-        <div id="error" class="error-box"></div>
-      </form>
+      <!-- Stage 2: Code & New Password -->
+      <div id="resetStageVerify" style="display: none;">
+        <div class="form-group">
+          <label class="form-label">کد تایید ۶ رقمی</label>
+          <div class="input-box">
+            <input id="txtResetCode" type="text" dir="ltr" maxlength="6" placeholder="123456">
+            <i class="fa-solid fa-shield leading-icon"></i>
+          </div>
+        </div>
+        <div class="form-group">
+          <label class="form-label">گذرواژه جدید</label>
+          <div class="input-box">
+            <input id="txtNewPass" type="password" placeholder="حداقل ۴ کاراکتر">
+            <i class="fa-solid fa-lock leading-icon"></i>
+          </div>
+        </div>
+        <button class="btn-submit" onclick="submitResetPassword()">
+          <span class="btn-text">ذخیره رمز جدید و ورود</span>
+          <span class="spinner"></span>
+        </button>
+      </div>
 
-      <div class="foot"><i class="fa-solid fa-circle-info"></i> اعتبار هر حساب بر اساس تعداد روز تعیین‌شده کنترل می‌شود.</div>
+      <div id="resetAlertBox" class="alert-box" style="margin-top: 14px;"></div>
     </div>
+  </div>
 
-    <div class="login-footer">
-      <div class="feat"><i class="fa-solid fa-bolt"></i> عملیات خودکار</div>
-      <div class="feat"><i class="fa-solid fa-shield-halved"></i> امن و مطمئن</div>
-      <div class="feat"><i class="fa-solid fa-headset"></i> پشتیبانی ۲۴ ساعته</div>
-    </div>
-  </main>
+  <script>
+    let activeTab = 'password';
+    let currentMobile = '';
+    let countdownInterval = null;
+    let cachedResetToken = '';
 
-<script>
-const form = document.getElementById('loginForm');
-const btn = document.getElementById('submit');
-const errorEl = document.getElementById('error');
-
-function togglePassword() {
-  const input = document.getElementById('password');
-  const icon = document.getElementById('eyeIcon');
-  if (input.type === 'password') {
-    input.type = 'text';
-    icon.className = 'fa-solid fa-eye-slash';
-  } else {
-    input.type = 'password';
-    icon.className = 'fa-solid fa-eye';
-  }
-}
-
-form.addEventListener('submit', async e => {
-  e.preventDefault();
-  errorEl.textContent = '';
-  btn.disabled = true;
-  btn.classList.add('loading');
-  try {
-    const response = await fetch('/login', {
-      method: 'POST',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({username: username.value.trim(), password: password.value})
-    });
-    const data = await response.json();
-    if (!response.ok) throw new Error(data.detail || 'ورود ناموفق بود');
-    // success animation
-    btn.classList.remove('loading');
-    btn.innerHTML = '<span class="btn-text"><i class="fa-solid fa-check"></i> ورود موفق!</span>';
-    btn.style.background = 'linear-gradient(135deg,#22c55e,#16a34a)';
-    setTimeout(() => location.replace('/'), 600);
-  } catch (ex) {
-    errorEl.innerHTML = '<i class="fa-solid fa-circle-exclamation"></i> ' + ex.message;
-    btn.classList.remove('loading');
-  } finally {
-    if (!btn.style.background) {
-      btn.disabled = false;
+    function switchAuthTab(tab) {
+      activeTab = tab;
+      clearAlert();
+      document.getElementById('tabBtnPassword').classList.toggle('active', tab === 'password');
+      document.getElementById('tabBtnOtp').classList.toggle('active', tab === 'otp');
+      document.getElementById('tabContentPassword').classList.toggle('active', tab === 'password');
+      document.getElementById('tabContentOtp').classList.toggle('active', tab === 'otp');
     }
-  }
-});
 
-// Enter on password submits
-document.getElementById('password').addEventListener('keypress', e => {
-  if (e.key === 'Enter') form.dispatchEvent(new Event('submit'));
-});
-</script>
+    function showAlert(msg, type = 'danger') {
+      const box = document.getElementById('alertBox');
+      box.className = 'alert-box ' + type;
+      box.innerHTML = `<i class="fa-solid ${type === 'danger' ? 'fa-circle-exclamation' : 'fa-circle-check'}"></i> <span>${msg}</span>`;
+      box.style.display = 'flex';
+    }
+
+    function clearAlert() {
+      const box = document.getElementById('alertBox');
+      box.style.display = 'none';
+      box.textContent = '';
+    }
+
+    function togglePasswordVisibility(inputId, iconId) {
+      const input = document.getElementById(inputId);
+      const icon = document.getElementById(iconId);
+      if (input.type === 'password') {
+        input.type = 'text';
+        icon.className = 'fa-solid fa-eye-slash';
+      } else {
+        input.type = 'password';
+        icon.className = 'fa-solid fa-eye';
+      }
+    }
+
+    // ── Digits Normalization ──
+    function normalizeDigits(str) {
+      const fa = '۰۱۲۳۴۵۶۷۸۹';
+      const ar = '٠١٢٣٤٥٦٧٨٩';
+      return String(str || '').replace(/[۰-۹]/g, c => fa.indexOf(c)).replace(/[٠-٩]/g, c => ar.indexOf(c)).trim();
+    }
+
+    // ── Username/Password Login ──
+    async function handlePasswordLogin(e) {
+      e.preventDefault();
+      clearAlert();
+      const btn = document.getElementById('btnPassSubmit');
+      btn.disabled = true;
+      btn.classList.add('loading');
+      const username = document.getElementById('txtUsername').value.trim();
+      const password = document.getElementById('txtPassword').value;
+
+      try {
+        const resp = await fetch('/login', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ username, password })
+        });
+        const data = await resp.json();
+        if (!resp.ok) throw new Error(data.detail || 'نام کاربری یا رمز عبور اشتباه است.');
+
+        btn.classList.remove('loading');
+        btn.innerHTML = '<span class="btn-text"><i class="fa-solid fa-check"></i> ورود موفقیت‌آمیز...</span>';
+        btn.style.background = 'linear-gradient(135deg, #10B981, #059669)';
+        setTimeout(() => location.replace('/'), 500);
+      } catch (err) {
+        showAlert(err.message, 'danger');
+        btn.classList.remove('loading');
+        btn.disabled = false;
+      }
+    }
+
+    // ── OTP: Send Code ──
+    async function handleSendOtp(e) {
+      if (e) e.preventDefault();
+      clearAlert();
+      const rawMobile = document.getElementById('txtMobile').value;
+      const cleanMobile = normalizeDigits(rawMobile);
+      if (!/^09\d{9}$/.test(cleanMobile)) {
+        showAlert('شماره موبایل باید ۱۱ رقم بوده و با ۰۹ شروع شود.', 'danger');
+        return;
+      }
+
+      const btn = document.getElementById('btnSendOtp');
+      btn.disabled = true;
+      btn.classList.add('loading');
+
+      try {
+        const resp = await fetch('/auth/otp/send', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ mobile: cleanMobile, purpose: 'login' })
+        });
+        const data = await resp.json();
+        if (!resp.ok) throw new Error(data.detail || 'خطا در ارسال پیامک کد تایید.');
+
+        currentMobile = cleanMobile;
+        document.getElementById('lblMaskedMobile').textContent = data.masked_mobile || cleanMobile;
+        document.getElementById('otpStepPhone').style.display = 'none';
+        document.getElementById('otpStepVerify').style.display = 'block';
+
+        startCountdown(data.resend_in || 120);
+        setupOtpInputBoxes();
+        showAlert(data.message || 'کد تایید ارسال شد.', 'success');
+      } catch (err) {
+        showAlert(err.message, 'danger');
+      } finally {
+        btn.classList.remove('loading');
+        btn.disabled = false;
+      }
+    }
+
+    function backToPhoneStep() {
+      clearInterval(countdownInterval);
+      document.getElementById('otpStepVerify').style.display = 'none';
+      document.getElementById('otpStepPhone').style.display = 'block';
+      clearAlert();
+    }
+
+    async function resendOtpCode() {
+      await handleSendOtp(null);
+    }
+
+    function startCountdown(seconds) {
+      clearInterval(countdownInterval);
+      let remaining = seconds;
+      const lbl = document.getElementById('lblCountdown');
+      const resendBtn = document.getElementById('btnResendOtp');
+      const wrap = document.getElementById('countdownWrap');
+
+      wrap.style.display = 'inline';
+      resendBtn.style.display = 'none';
+
+      function update() {
+        const m = String(Math.floor(remaining / 60)).padStart(2, '0');
+        const s = String(remaining % 60).padStart(2, '0');
+        lbl.textContent = normalizeDigits(`${m}:${s}`);
+        if (remaining <= 0) {
+          clearInterval(countdownInterval);
+          wrap.style.display = 'none';
+          resendBtn.style.display = 'inline';
+        }
+        remaining--;
+      }
+      update();
+      countdownInterval = setInterval(update, 1000);
+    }
+
+    // ── 6-Box OTP Interaction (Auto-Jump, Backspace & Paste) ──
+    function setupOtpInputBoxes() {
+      const boxes = document.querySelectorAll('#otpBoxContainer .otp-box');
+      boxes.forEach((box, idx) => {
+        box.value = '';
+        box.classList.remove('filled');
+
+        box.oninput = (e) => {
+          const val = normalizeDigits(box.value);
+          if (val.length > 0) {
+            box.value = val[val.length - 1];
+            box.classList.add('filled');
+            if (idx < boxes.length - 1) {
+              boxes[idx + 1].focus();
+            } else {
+              // auto submit when last digit filled
+              handleVerifyOtp();
+            }
+          } else {
+            box.classList.remove('filled');
+          }
+        };
+
+        box.onkeydown = (e) => {
+          if (e.key === 'Backspace' && !box.value && idx > 0) {
+            boxes[idx - 1].focus();
+            boxes[idx - 1].value = '';
+            boxes[idx - 1].classList.remove('filled');
+          }
+        };
+
+        box.onpaste = (e) => {
+          e.preventDefault();
+          const pasteData = normalizeDigits((e.clipboardData || window.clipboardData).getData('text'));
+          if (pasteData.length >= 6) {
+            for (let i = 0; i < 6; i++) {
+              boxes[i].value = pasteData[i] || '';
+              boxes[i].classList.add('filled');
+            }
+            boxes[5].focus();
+            handleVerifyOtp();
+          }
+        };
+      });
+
+      setTimeout(() => boxes[0].focus(), 100);
+    }
+
+    // ── OTP: Verify Code & Login ──
+    async function handleVerifyOtp(e) {
+      if (e) e.preventDefault();
+      clearAlert();
+
+      const boxes = document.querySelectorAll('#otpBoxContainer .otp-box');
+      let code = '';
+      boxes.forEach(b => code += b.value);
+      code = normalizeDigits(code);
+
+      if (code.length !== 6) {
+        showAlert('لطفاً کد تایید ۶ رقمی را کامل وارد نمایید.', 'danger');
+        return;
+      }
+
+      const btn = document.getElementById('btnVerifySubmit');
+      btn.disabled = true;
+      btn.classList.add('loading');
+
+      try {
+        const resp = await fetch('/auth/otp/verify', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ mobile: currentMobile, code: code, purpose: 'login' })
+        });
+        const data = await resp.json();
+        if (!resp.ok) throw new Error(data.detail || 'کد تایید نادرست است.');
+
+        btn.classList.remove('loading');
+        btn.innerHTML = '<span class="btn-text"><i class="fa-solid fa-check"></i> تایید شد؛ ورود...</span>';
+        btn.style.background = 'linear-gradient(135deg, #10B981, #059669)';
+        setTimeout(() => location.replace('/'), 500);
+      } catch (err) {
+        showAlert(err.message, 'danger');
+        btn.classList.remove('loading');
+        btn.disabled = false;
+      }
+    }
+
+    // ── Password Reset Modal Logic ──
+    function openResetModal() {
+      document.getElementById('resetModal').classList.add('open');
+      document.getElementById('resetStagePhone').style.display = 'block';
+      document.getElementById('resetStageVerify').style.display = 'none';
+      document.getElementById('resetAlertBox').style.display = 'none';
+      document.getElementById('txtResetPhone').value = '';
+    }
+
+    function closeResetModal() {
+      document.getElementById('resetModal').classList.remove('open');
+    }
+
+    async function sendResetOtp() {
+      const mobile = normalizeDigits(document.getElementById('txtResetPhone').value);
+      const alertBox = document.getElementById('resetAlertBox');
+      alertBox.style.display = 'none';
+
+      if (!/^09\d{9}$/.test(mobile)) {
+        alertBox.className = 'alert-box danger';
+        alertBox.innerHTML = '<i class="fa-solid fa-circle-exclamation"></i> شماره موبایل نامعتبر است.';
+        alertBox.style.display = 'flex';
+        return;
+      }
+
+      try {
+        const resp = await fetch('/auth/otp/send', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ mobile: mobile, purpose: 'reset_password' })
+        });
+        const data = await resp.json();
+        if (!resp.ok) throw new Error(data.detail || 'خطا در ارسال کد.');
+
+        document.getElementById('resetStagePhone').style.display = 'none';
+        document.getElementById('resetStageVerify').style.display = 'block';
+        alertBox.className = 'alert-box success';
+        alertBox.innerHTML = '<i class="fa-solid fa-circle-check"></i> کد تایید به شماره شما ارسال گردید.';
+        alertBox.style.display = 'flex';
+      } catch (err) {
+        alertBox.className = 'alert-box danger';
+        alertBox.innerHTML = '<i class="fa-solid fa-circle-exclamation"></i> ' + err.message;
+        alertBox.style.display = 'flex';
+      }
+    }
+
+    async function submitResetPassword() {
+      const mobile = normalizeDigits(document.getElementById('txtResetPhone').value);
+      const code = normalizeDigits(document.getElementById('txtResetCode').value);
+      const newPass = document.getElementById('txtNewPass').value;
+      const alertBox = document.getElementById('resetAlertBox');
+      alertBox.style.display = 'none';
+
+      if (code.length !== 6 || newPass.length < 4) {
+        alertBox.className = 'alert-box danger';
+        alertBox.innerHTML = '<i class="fa-solid fa-circle-exclamation"></i> کد ۶ رقمی و گذرواژه حداقل ۴ حرف الزامی است.';
+        alertBox.style.display = 'flex';
+        return;
+      }
+
+      try {
+        // Step 1: Verify OTP and obtain reset token
+        const vResp = await fetch('/auth/otp/verify', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ mobile: mobile, code: code, purpose: 'reset_password' })
+        });
+        const vData = await vResp.json();
+        if (!vResp.ok) throw new Error(vData.detail || 'کد تایید اشتباه است.');
+
+        // Step 2: Reset password
+        const rResp = await fetch('/auth/reset-password', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ reset_token: vData.reset_token, new_password: newPass })
+        });
+        const rData = await rResp.json();
+        if (!rResp.ok) throw new Error(rData.detail || 'خطا در ذخیره رمز جدید.');
+
+        alertBox.className = 'alert-box success';
+        alertBox.innerHTML = '<i class="fa-solid fa-circle-check"></i> ' + rData.message;
+        alertBox.style.display = 'flex';
+        setTimeout(() => {
+          closeResetModal();
+          switchAuthTab('password');
+          document.getElementById('txtUsername').value = vData.username || '';
+          document.getElementById('txtPassword').focus();
+        }, 1200);
+      } catch (err) {
+        alertBox.className = 'alert-box danger';
+        alertBox.innerHTML = '<i class="fa-solid fa-circle-exclamation"></i> ' + err.message;
+        alertBox.style.display = 'flex';
+      }
+    }
+  </script>
 </body>
 </html>

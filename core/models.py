@@ -149,3 +149,33 @@ class AllowedDomainsRequest(BaseModel):
 
 class AllowlistCheckRequest(BaseModel):
     url: str
+
+
+class SendOTPRequest(BaseModel):
+    mobile: str
+    purpose: str = "login"
+
+
+class VerifyOTPRequest(BaseModel):
+    mobile: str
+    code: str
+    purpose: str = "login"
+    username: Optional[str] = None
+
+
+class ResetPasswordRequest(BaseModel):
+    reset_token: str
+    new_password: str
+
+
+class SMSConfigRequest(BaseModel):
+    otp_auth_enabled: bool = True
+    sms_provider: str = "mock"
+    sms_api_key: Optional[str] = ""
+    sms_sender_line: Optional[str] = ""
+    sms_pattern_code: Optional[str] = ""
+    sms_otp_template: Optional[str] = "کد ورود به ماهان‌بات: {code}\nاعتبار: ۵ دقیقه"
+
+
+class TestSMSRequest(BaseModel):
+    mobile: str
