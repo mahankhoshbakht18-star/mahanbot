@@ -16,6 +16,7 @@ CAPTCHA_SERVICE = None  # will be CaptchaService instance
 
 # ── Job queue (created at startup) ───────────────────────────────────
 JOB_QUEUE = None  # will be JobQueue instance
+LICENSE_WATCHDOG = None
 
 # ── OTP long-poll event store ────────────────────────────────────────
 OTP_EVENTS: Dict[str, asyncio.Event] = {}

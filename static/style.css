@@ -40,7 +40,9 @@
   --white: #FFFFFF;
   --bg: #0A192F;
   --bg-gradient: linear-gradient(135deg, #0A192F 0%, #0D203D 55%, #0A192F 100%);
-  --card: #FFFFFF;
+  --card: #112240;
+  --primary-color: #00BFB3;
+  --primary-color-hover: #39E0D3;
   --card-bg: #112240;
   --card-elevated: #172A45;
   --card-glass: rgba(17, 34, 64, 0.94);
@@ -335,6 +337,9 @@ a {
 
 .topbar-actions {
   display: flex;
+  flex-wrap: wrap;
+  max-width: 100%;
+  min-width: 0;
   align-items: center;
   gap: 12px;
 }
@@ -1079,11 +1084,11 @@ a {
   display: block;
 }
 
-/* ═══════════ Modern Tables ═══════════ */
+/* ═══════════ Modern Dark Ocean Tables ═══════════ */
 .table-responsive {
   border-radius: var(--radius-md);
-  border: 1px solid var(--line);
-  background: #ffffff;
+  border: 1px solid var(--line, #1E3A5F);
+  background: var(--card-bg, #112240) !important;
   overflow-x: auto;
 }
 
@@ -1093,9 +1098,14 @@ a {
   position: sticky;
   right: 0;
   z-index: 2;
-  background: #fff;
+  background: #112240 !important;
+  color: var(--text-main, #F8FAFC) !important;
   min-width: 170px;
   max-width: 210px;
+}
+
+#view-bank-select .modern-table tbody tr:hover td:first-child {
+  background: #172D4F !important;
 }
 
 .bank-row-actions {
@@ -1107,33 +1117,63 @@ a {
 
 .bank-row-actions button { white-space: nowrap; }
 
-.modern-table {
+.modern-table,
+.table,
+table.table {
+  --bs-table-bg: #112240 !important;
+  --bs-table-accent-bg: transparent !important;
+  --bs-table-striped-bg: #0E1D36 !important;
+  --bs-table-hover-bg: #162C4E !important;
+  --bs-table-border-color: #1E3A5F !important;
+  --bs-table-color: #F8FAFC !important;
+  background-color: #112240 !important;
+  color: #F8FAFC !important;
+  border-color: #1E3A5F !important;
   margin: 0;
   vertical-align: middle;
 }
 
-.modern-table > :not(caption) > * > * {
-  padding: 13px 14px;
-  border-color: #f1f5f9;
+.modern-table > :not(caption) > * > *,
+.table > :not(caption) > * > *,
+.modern-table tr td,
+.modern-table tr th,
+.table tr td,
+.table tr th {
+  padding: 13px 14px !important;
+  background-color: #112240 !important;
+  color: #F8FAFC !important;
+  border-color: #1E3A5F !important;
+  box-shadow: none !important;
   transition: background 0.15s;
 }
 
-.modern-table thead th {
-  font-size: 12px;
-  color: #334155;
-  font-weight: 800;
-  background: linear-gradient(180deg, #f8fafc 0%, #f1f5f9 100%);
-  white-space: nowrap;
-  border-bottom: 2px solid rgba(36, 207, 198, 0.28);
+.modern-table thead th,
+.table thead th {
+  font-size: 12.5px !important;
+  color: #38BDF8 !important;
+  font-weight: 800 !important;
+  background: #0A192F !important;
+  white-space: nowrap !important;
+  border-bottom: 2px solid #00BFB3 !important;
+  box-shadow: none !important;
 }
 
-.modern-table tbody tr:hover {
-  background: rgba(36, 207, 198, 0.04);
+.modern-table tbody tr:nth-of-type(even) > *,
+.table tbody tr:nth-of-type(even) > * {
+  background-color: #0E1D36 !important;
 }
 
-.modern-table tbody td {
+.modern-table tbody tr:hover > *,
+.table tbody tr:hover > * {
+  background-color: #162C4E !important;
+  color: #FFFFFF !important;
+}
+
+.modern-table tbody td,
+.table tbody td {
   font-size: 13px;
-  color: var(--text-main);
+  color: var(--text-main, #F8FAFC) !important;
+  border-color: #1E3A5F !important;
 }
 
 /* Table Search & Controls Bar */
@@ -1585,6 +1625,8 @@ label {
 }
 
 @media (max-width: 768px) {
+  /* Hover bubbles can extend beyond a phone viewport even while hidden. */
+  [data-tooltip]::before, [data-tooltip]::after { display: none; }
   .main-content {
     margin-right: 0;
     padding: 16px 14px 90px;
@@ -2440,6 +2482,18 @@ article.bg-light,
 }
 
 /* Live Pulse Radar Animation */
+.license-summary { display: flex; flex-wrap: wrap; gap: 12px 28px; }
+#view-license label { color: var(--text-main); }
+#licenseRuntimeNotice { color: #664d03; }
+.license-actions { display: flex; flex-wrap: wrap; gap: 6px; min-width: 240px; }
+.license-actions input { width: 72px; }
+#licenseInstallId { overflow-wrap: anywhere; }
+@media (max-width: 600px) {
+  .topbar-actions { width: 100%; }
+  #view-license .panel-title { flex-direction: column; align-items: stretch; gap: 12px; }
+  #view-license .license-summary { flex-direction: column; }
+}
+
 .radar-pulse {
   display: inline-block;
   width: 10px;
@@ -2461,4 +2515,92 @@ article.bg-light,
   100% {
     box-shadow: 0 0 0 0 rgba(0, 229, 212, 0);
   }
+}
+
+/* ═══════════ Enhanced Table Contrast & Interactive Elements ═══════════ */
+.applicant-name-link {
+  color: #00E5D4 !important;
+  font-weight: 700 !important;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.applicant-name-link:hover {
+  color: #39E0D3 !important;
+  text-decoration: underline;
+  transform: translateX(-2px);
+}
+
+.btn-outline-success {
+  color: #34D399 !important;
+  border-color: rgba(52, 211, 153, 0.55) !important;
+  background-color: rgba(16, 185, 129, 0.08) !important;
+}
+.btn-outline-success:hover {
+  background-color: #10B981 !important;
+  border-color: #10B981 !important;
+  color: #FFFFFF !important;
+}
+
+.btn-outline-warning {
+  color: #FBBF24 !important;
+  border-color: rgba(251, 191, 36, 0.55) !important;
+  background-color: rgba(245, 158, 11, 0.08) !important;
+}
+.btn-outline-warning:hover {
+  background-color: #E5A900 !important;
+  border-color: #E5A900 !important;
+  color: #0A192F !important;
+}
+
+.btn-outline-danger {
+  color: #F87171 !important;
+  border-color: rgba(248, 113, 113, 0.55) !important;
+  background-color: rgba(239, 68, 68, 0.08) !important;
+}
+.btn-outline-danger:hover {
+  background-color: #EF4444 !important;
+  border-color: #EF4444 !important;
+  color: #FFFFFF !important;
+}
+
+.btn-outline-primary {
+  color: #00E5D4 !important;
+  border-color: rgba(0, 191, 179, 0.55) !important;
+  background-color: rgba(0, 191, 179, 0.08) !important;
+}
+.btn-outline-primary:hover {
+  background-color: #00BFB3 !important;
+  border-color: #00BFB3 !important;
+  color: #0A192F !important;
+}
+
+/* Ensure Terminal, Cards, and Inputs never have stark white backgrounds */
+.terminal-card,
+.support-card {
+  background: #112240 !important;
+  border: 1px solid #1E3A5F !important;
+  color: #F8FAFC !important;
+}
+
+.terminal-box {
+  background: #0A192F !important;
+  color: #38BDF8 !important;
+  border: 1px solid #1E3A5F !important;
+}
+
+.terminal-head,
+.log-filters {
+  background: #0D203D !important;
+  border-color: #1E3A5F !important;
+  color: #F8FAFC !important;
+}
+
+.bank-priority-item {
+  background: #172A45 !important;
+  border: 1px solid #1E3A5F !important;
+  color: #F8FAFC !important;
 }

@@ -229,7 +229,7 @@ def _execute_update_process(download_url: str, target_version: str):
             
             # Extract safely, strictly protecting databases, configs, and active sessions
             protected_exts = {".db", ".db-wal", ".db-shm", ".sqlite", ".log"}
-            protected_files = {"cbi_ultimate.db", ".relay.private.env", ".env", "otp_codes.db"}
+            protected_files = {"cbi_ultimate.db", ".relay.private.env", ".licenses.private.env", ".env", "otp_codes.db"}
 
             with zipfile.ZipFile(local_zip_path, "r") as zf:
                 for member in zf.infolist():

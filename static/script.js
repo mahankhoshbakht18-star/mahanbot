@@ -366,6 +366,10 @@ async function pollApplicants() {
 function switchView(viewId, navEl) {
 
     currentViewId = viewId;
+    if (viewId === 'license' && window.MahanLicense) {
+        window.MahanLicense.refresh();
+        window.MahanLicense.loadManager();
+    }
 
     document.querySelectorAll('.view-section').forEach(el => el.classList.remove('active-view'));
 
@@ -1084,47 +1088,36 @@ function renderStatusList(data) {
 
 
 function renderMainList(data) {
-
     const tbody = document.getElementById('applicantsListBody');
-
-    if(!tbody) return;
-
+    if (!tbody) return;
     tbody.innerHTML = '';
 
     data.forEach((user, idx) => {
-
-        let d = parseUserData(user.data);
-
-        let code = d.tracking_code || '-';
-
-        
+        const d = parseUserData(user.data);
+        const code = d.tracking_code || '-';
+        const hasCode = code && code !== '-';
+        const codeBadge = hasCode
+            ? `<span class="badge bg-success-subtle text-success fw-bold px-2 py-1 font-monospace">${escapeHtml(code)}</span>`
+            : `<span class="text-secondary fw-bold">-</span>`;
 
         tbody.innerHTML += `
-
             <tr>
-
-                <td>${idx+1}</td>
-
-                <td onclick="editUser(${idx})" style="cursor:pointer; color:var(--primary-color); font-weight:bold;">${user.full_name} <i class="fas fa-pen small ms-1 text-muted"></i></td>
-
-                <td class="font-monospace">${formatNid(user.national_id)}</td>
-
-                <td class="font-monospace text-success">${code}</td>
-
-                <td><span class="badge ${getStatusBadge(user.status)}">${translateStatus(user.status)}</span></td>
-
-                <td><button class="btn btn-sm btn-outline-success rounded-pill px-3" onclick="startRegister('${user.national_id}')"><i class="fas fa-play me-1"></i>شروع ثبت‌نام</button></td>
-
-                <td><button class="btn btn-sm btn-outline-warning rounded-pill px-3" onclick="stopBot('${user.national_id}')"><i class="fas fa-stop me-1"></i>توقف</button></td>
-
-                <td><button class="btn btn-sm btn-outline-danger rounded-pill" onclick="deleteApplicant('${user.national_id}')"><i class="fas fa-trash"></i></button></td>
-
+                <td class="text-center fw-bold" style="color: #64748B; font-size: 12px;">${idx + 1}</td>
+                <td onclick="editUser(${idx})" class="applicant-cell" style="cursor:pointer;" title="ویرایش متقاضی">
+                    <span class="applicant-name-link">
+                        ${escapeHtml(user.full_name)}
+                        <i class="fas fa-pen-to-square small ms-1 text-muted opacity-75"></i>
+                    </span>
+                </td>
+                <td class="font-monospace text-center fw-semibold" style="color: #E2E8F0; font-size: 13px; letter-spacing: 0.5px;">${formatNid(user.national_id)}</td>
+                <td class="font-monospace text-center">${codeBadge}</td>
+                <td class="text-center"><span class="badge ${getStatusBadge(user.status)}">${translateStatus(user.status)}</span></td>
+                <td class="text-center"><button class="btn btn-sm btn-outline-success rounded-pill px-3" onclick="startRegister('${user.national_id}')"><i class="fas fa-play me-1"></i>شروع ثبت‌نام</button></td>
+                <td class="text-center"><button class="btn btn-sm btn-outline-warning rounded-pill px-3" onclick="stopBot('${user.national_id}')"><i class="fas fa-stop me-1"></i>توقف</button></td>
+                <td class="text-center"><button class="btn btn-sm btn-outline-danger rounded-circle p-2" title="حذف متقاضی" onclick="deleteApplicant('${user.national_id}')"><i class="fas fa-trash"></i></button></td>
             </tr>
-
         `;
-
     });
-
 }
 
 

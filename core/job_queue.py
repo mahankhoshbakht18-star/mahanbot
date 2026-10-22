@@ -274,6 +274,9 @@ class JobQueue:
             raise err["exc"]
 
     def _run_job(self, job: Job) -> None:
+        from core.licensing import can_run
+        if not can_run(force=True):
+            raise RuntimeError('اعتبار لایسنس تأیید نشد؛ اجرای بات آغاز نشد.')
         settings = DBHandler.get_config()
         applicant = DBHandler.get_applicant(job.nid)
         target_bank = ""

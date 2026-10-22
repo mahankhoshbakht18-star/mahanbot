@@ -1,12 +1,12 @@
 <!doctype html>
-<html lang="fa" dir="rtl" data-theme="scheme-c">
+<html lang="fa" dir="rtl" data-theme="scheme-c" data-bs-theme="dark">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>MAHANBOT | دستیار هوشمند مدیریت تسهیلات ازدواج و فرزندآوری</title>
   <link rel="stylesheet" href="/static/vendor/bootstrap.rtl.min.css">
   <link rel="stylesheet" href="/static/vendor/all.min.css">
-  <link rel="stylesheet" href="/static/style.css?v=20261021-1">
+  <link rel="stylesheet" href="/static/style.css?v=20261022-dark-ocean-table-contrast">
   <link rel="stylesheet" href="/static/browser-preview.css">
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Vazirmatn:wght@400;500;600;700;800;900&display=swap" media="print" onload="this.media='all'">
 </head>
@@ -63,6 +63,7 @@
     </div>
 
     <nav class="sidebar-nav">
+      <div onclick="switchView('license',this)"><button class="nav-link" aria-label="لایسنس ماهان" data-tooltip="فعال‌سازی و مدیریت مرکزی لایسنس"><i class="fa-solid fa-key"></i><span>لایسنس ماهان</span></button></div>
       <div onclick="switchView('dashboard',this)"><button class="nav-link active" data-tooltip="داشبورد عملیات: مشاهده وضعیت آنلاین بات‌ها، آمار کلی و مانیتور زنده"><i class="fa-solid fa-chart-pie"></i><span>داشبورد</span></button></div>
       <div onclick="switchView('list',this)"><button class="nav-link" data-tooltip="مدیریت متقاضیان: فهرست پرونده‌ها، جستجو، فیلتر و ویرایش مشخصات"><i class="fa-solid fa-users"></i><span>متقاضیان</span></button></div>
       <div onclick="switchView('add',this)"><button class="nav-link" data-tooltip="ثبت‌نام اولیه: تشکیل پرونده وام ازدواج یا فرزندآوری و بارگذاری اکسل"><i class="fa-solid fa-user-plus"></i><span>ثبت‌نام اولیه</span></button></div>
@@ -90,6 +91,7 @@
         <h1>مدیریت ثبت‌نام تسهیلات ازدواج و فرزندآوری</h1>
       </div>
       <div class="topbar-actions">
+        <button id="licenseQuickStatus" class="btn btn-outline-primary" onclick="switchView('license')">لایسنس</button>
         <button class="btn btn-outline-primary action-pill" onclick="switchView('support'); setTimeout(() => { document.getElementById('updateCenterCard')?.scrollIntoView({behavior:'smooth'}); checkForUpdates(); }, 300);" data-tooltip="مرکز به‌روزرسانی هوشمند نسخه ۲.۰">
           <i class="fa-solid fa-cloud-arrow-down"></i>
           <span id="topbarVersionText">نسخه ۲.۰.۱</span>
@@ -1462,6 +1464,31 @@
       </details>
     </section>
   
+    <section id="view-license" class="view-section">
+      <div class="page-heading"><div><span class="section-kicker">MAHANBOT · مدیریت مرکزی</span><h2>لایسنس بات وام ماهان</h2><p>فعال‌سازی دستگاه و مدیریت اعتبار از سرور اختصاصی ماهان</p></div><span id="licenseState" class="badge bg-secondary">در حال بررسی</span></div>
+      <article class="panel">
+        <div class="license-summary"><span>مشتری: <strong id="licenseCustomer">—</strong></span><span>اعتبار تا: <strong id="licenseExpiry">—</strong></span><span>شناسه نصب: <code id="licenseInstallId" dir="ltr">—</code></span></div>
+        <p id="licenseRuntimeNotice" class="alert alert-warning mt-3" hidden>اعتبار لایسنس تأیید نشده است. اجرای جدید و ثبت درخواست متوقف‌اند؛ اطلاعات شما حفظ می‌شوند. پس از فعال‌سازی، ادامه هر متقاضی را جداگانه انتخاب کنید.</p>
+        <form id="licenseActivationForm" class="mt-3" hidden>
+          <label class="w-100" for="licenseActivationKey">کلید لایسنس<input id="licenseActivationKey" class="form-control mt-1" type="password" dir="ltr" autocomplete="off" required minlength="10" maxlength="160" placeholder="MHN-MARR-…"></label>
+          <button id="activateLicenseButton" class="btn btn-primary mt-2" type="submit">فعال‌سازی این دستگاه</button>
+        </form>
+        <button id="licenseCheckButton" class="btn btn-outline-primary mt-3" type="button">بررسی دوباره اعتبار</button>
+        <p id="licenseMessage" class="mt-3 mb-0" role="status" aria-live="polite"></p>
+      </article>
+      <article id="centralLicenseManager" class="panel mt-4" hidden>
+        <div class="panel-title"><div><h3>مدیریت لایسنس مشتریان</h3><p>صدور، تمدید، قطع دسترسی و مدیریت دستگاه‌ها روی otp.mahanvip.ir</p></div><button id="licenseManagerRefresh" class="btn btn-light" type="button">به‌روزرسانی فهرست</button></div>
+        <form id="licenseIssueForm" class="mt-3">
+          <div class="form-grid compact"><label for="licenseIssueCustomer">نام مشتری<input id="licenseIssueCustomer" class="form-control" maxlength="120" required></label><label for="licenseIssueDays">اعتبار (روز)<input id="licenseIssueDays" class="form-control" type="number" min="1" max="3650" value="30" required></label><label for="licenseIssueDevices">تعداد دستگاه مجاز<input id="licenseIssueDevices" class="form-control" type="number" min="1" max="50" value="1" required></label></div>
+          <button id="issueLicenseButton" class="btn btn-primary mt-3" type="submit">صدور لایسنس جدید</button>
+        </form>
+        <div id="licenseIssuedBox" class="alert alert-success mt-3" hidden><label for="licenseIssuedKey">کلید کامل فقط همین‌جا نمایش داده می‌شود؛ آن را نگهداری و به مشتری تحویل دهید.</label><div class="d-flex gap-2 mt-2"><input id="licenseIssuedKey" class="form-control" dir="ltr" readonly><button id="licenseCopyKey" class="btn btn-success" type="button">کپی</button></div></div>
+        <p id="licenseManagerStatus" role="status" class="mt-3">در حال دریافت فهرست…</p>
+        <div class="table-responsive"><table class="table modern-table"><thead><tr><th>مشتری</th><th>شناسه کلید</th><th>اعتبار تا</th><th>وضعیت</th><th>دستگاه‌ها</th><th>عملیات</th></tr></thead><tbody id="licenseRows"></tbody></table></div>
+        <div id="licenseDevices" class="mt-3" hidden></div>
+      </article>
+    </section>
+
     <!-- ════════════════ VIEW: SUPPORT (پشتیبانی و ارتباطات) ════════════════ -->
     <section id="view-support" class="view-section">
       <div class="page-heading">
@@ -1953,6 +1980,7 @@
   <!-- Scripts -->
   <script src="/static/vendor/bootstrap.bundle.min.js"></script>
   <script src="/static/messages_fa.js?v=20261016-2"></script>
-  <script src="/static/script.js?v=20261021-1"></script>
+  <script src="/static/script.js?v=20261022-license-1"></script>
+  <script src="/static/licensing.js?v=20261022-1"></script>
 </body>
 </html>

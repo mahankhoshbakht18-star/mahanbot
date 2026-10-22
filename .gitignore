@@ -27,6 +27,7 @@ bot.db
 .env.*
 !.env.example
 .relay.private.env
+.licenses.private.env
 venv/
 .venv/
 env/

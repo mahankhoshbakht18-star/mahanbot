@@ -118,6 +118,8 @@ def _current_user(request: Request):
 
 
 def _admin_user(request: Request):
+    if os.getenv('MAHANBOT_EDITION', 'ADMIN').strip().upper() == 'CLIENT':
+        raise HTTPException(status_code=403, detail='نسخه مشتری دسترسی مدیریت ندارد')
     user = _current_user(request)
     if not user.get("is_admin"):
         raise HTTPException(status_code=403, detail="این بخش فقط برای مدیر است")

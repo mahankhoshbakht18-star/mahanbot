@@ -15,9 +15,13 @@ class DashboardUiTests(unittest.TestCase):
     def setUp(self):
         from playwright.sync_api import sync_playwright
         self.pw = sync_playwright().start()
+        self.addCleanup(self.pw.stop)
         self.browser = self.pw.chromium.launch(headless=True)
+        self.addCleanup(self.browser.close)
         self.context = self.browser.new_context(viewport={'width': 720, 'height': 850})
         self.context.set_default_timeout(4000)
+        # Browser startup/asset parsing is not an interaction performance assertion.
+        self.context.set_default_navigation_timeout(15000)
         self.page = self.context.new_page()
         self.users = [
             {'id': 1, 'national_id': '0012345678', 'full_name': 'متقاضی اول', 'status': 'ظرفیت تکمیل', 'data': {},
@@ -46,7 +50,7 @@ class DashboardUiTests(unittest.TestCase):
             request_route.fulfill(json=payload, status=self.manual_status if parsed.path == '/manual_otp' else 200)
         self.context.route('**/*', route)
         self.page.add_init_script("window.WebSocket = class { static OPEN=1; readyState=0; send(){} close(){} }; window.maskSensitiveData=true;")
-        self.page.goto('http://mahan.test/')
+        self.page.goto('http://mahan.test/',wait_until='domcontentloaded')
         self.page.add_style_tag(content='* { transition: none !important; animation: none !important; }')
         self.page.wait_for_function('typeof renderDashboard === "function"')
         self.page.evaluate('''users => {
@@ -56,8 +60,7 @@ class DashboardUiTests(unittest.TestCase):
         }''', self.users)
 
     def tearDown(self):
-        self.browser.close()
-        self.pw.stop()
+        pass  # addCleanup also runs when fixture setup fails.
 
     def test_manual_code_targets_second_waiter_while_first_monitors_bank(self):
         self.page.locator('#manualOtpInput').fill('۱۲۳۴۵۶')

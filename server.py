@@ -12,6 +12,9 @@ from fastapi.staticfiles import StaticFiles
 
 from core.config import load_dotenv, get_csv_env, get_bool_env, snapshot_public_config
 load_dotenv()
+if os.getenv('MAHANBOT_EDITION', 'ADMIN').strip().upper() != 'CLIENT':
+    from pathlib import Path
+    load_dotenv(Path(__file__).resolve().parent / '.licenses.private.env')
 
 import core.state as _state
 from core.state import STATIC_DIR, AUTH_SESSIONS, AUTH_COOKIE
@@ -38,6 +41,8 @@ async def _startup():
     if _state.JOB_QUEUE is None:
         _state.JOB_QUEUE = JobQueue(max_concurrency=get_max_concurrency())
         _state.JOB_QUEUE.start()
+    from core.licensing import start_watchdog
+    _state.LICENSE_WATCHDOG = start_watchdog(_state.JOB_QUEUE)
     
     logger.info("Startup config: %s", snapshot_public_config())
     
@@ -61,6 +66,8 @@ async def _lifespan(application: FastAPI):
             _state.STARTUP_DONE = True
             await _startup()
     yield
+    if _state.LICENSE_WATCHDOG is not None:
+        _state.LICENSE_WATCHDOG.set()
     try:
         if _state.JOB_QUEUE is not None:
             _state.JOB_QUEUE.stop()
@@ -93,7 +100,7 @@ async def require_subscription_login(request: Request, call_next):
         path == "/sms/webhook" or 
         path == "/api/sms/webhook" or 
         path.startswith("/wait_otp/") or 
-        path == "/health"
+        path == "/health" or path.startswith('/api/license/')
     )
     user = _session_user(request.cookies.get(AUTH_COOKIE))
     if not public and not user:
@@ -101,8 +108,20 @@ async def require_subscription_login(request: Request, call_next):
             return RedirectResponse("/login", status_code=303)
         return JSONResponse({"detail": "اشتراک شما معتبر نیست یا وارد نشده‌اید"}, status_code=401)
     
+    from core.licensing import can_run, license_required
+    safety_action = (path.startswith(('/jobs/cancel/', '/bot/stop/', '/api/capacity/pause/'))
+                     or path in {'/api/capacity/stop-all', '/logout', '/login', '/receive_sms', '/sms/webhook', '/api/sms/webhook'}
+                     or path.startswith('/api/license/'))
+    if license_required() and request.method in {'POST', 'PUT', 'PATCH', 'DELETE'} and not safety_action:
+        fresh = path in {'/jobs/start', '/jobs/restart', '/api/capacity/start-all'}
+        if not await asyncio.to_thread(can_run, force=fresh):
+            return JSONResponse({'detail': 'لایسنس معتبر نیست؛ بخش فعال‌سازی لایسنس را بررسی کنید.',
+                                 'code': 'LICENSE_REQUIRED'}, status_code=402)
+
     response = await call_next(request)
     response.headers.setdefault("X-Content-Type-Options", "nosniff")
+    if path.startswith('/api/license/'):
+        response.headers['Cache-Control'] = 'no-store'
 
     # If user is authenticated (e.g. local desktop access) and cookie is not yet in browser,
     # set the session cookie so WebSocket and all frontend requests maintain connection seamlessly
@@ -140,8 +159,10 @@ from routes.diagnostic import router as diagnostic_router
 from routes.capacity import router as capacity_router
 from routes.database_admin import router as database_admin_router
 from routes.system_update import router as system_update_router
+from routes.licenses import router as licenses_router
 
 app.include_router(auth_router)
+app.include_router(licenses_router)
 app.include_router(applicants_router)
 app.include_router(otp_router)
 app.include_router(settings_router)

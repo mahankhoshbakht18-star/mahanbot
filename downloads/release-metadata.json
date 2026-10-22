@@ -1,1 +1,9 @@
-{'version': '2.0.1', 'release_date': '2026-10-22', 'archive': 'mahanbot-2.0.1.zip', 'size_mb': 34.47, 'sha256': 'd768f42765085104ab8179c199d6f90d6910b1a10d872065ca054ed8b75c7c8f', 'total_files': 333}
+{
+  "version": "2.0.1-license",
+  "release_date": "2026-10-22",
+  "archive": "mahanbot-2.0.1-license.zip",
+  "size_mb": 24.81,
+  "sha256": "c2585f41bf6603d25de0d863090bfc353c315f67a919de97889286ad12cb4e5a",
+  "total_files": 104,
+  "edition": "CLIENT"
+}

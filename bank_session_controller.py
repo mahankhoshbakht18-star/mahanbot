@@ -188,7 +188,8 @@ class BankSelectionSessionController:
         return json.loads(prefs) if isinstance(prefs, str) else (prefs or {})
 
     def _submission_allowed(self):
-        return submission_policy(normalize_config(DBHandler.get_config()), self._preferences())[0]
+        from core.licensing import can_run
+        return submission_policy(normalize_config(DBHandler.get_config()), self._preferences())[0] and can_run()
 
     def _sniping_tick(self, cfg):
         from bank_quota_sniper import submit_quota_attempt, form_ready
@@ -205,6 +206,11 @@ class BankSelectionSessionController:
         if not form_ready(owner.page, expected_mode):
             self._prepared = self._submission_ready = False
             self.transition(State.BANK_OPTIONS_READY, 'reapplying_applicant_selections')
+            return 'waiting'
+        from core.licensing import can_run
+        if not can_run(force=True):
+            owner.paused = True
+            self.transition(State.PAUSED, 'license_not_valid')
             return 'waiting'
         self._submitting = True
         self._attempt_serial = self._response_serial
