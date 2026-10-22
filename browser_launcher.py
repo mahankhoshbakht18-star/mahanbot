@@ -535,6 +535,26 @@ def safe_goto(page, url: str, *, allowed_domains: Optional[Iterable[str]] = None
                 log_callback(f"❌ URL Blocked: {exc.message}", "error")
         raise
     except Exception as exc:
+        # Check if page is already at target URL or target DOM elements are present despite timeout
+        if "timeout" in str(exc).lower() and page is not None:
+            try:
+                curr_url = page.url or ""
+                if curr_url and ("ve.cbi.ir" in curr_url or "SelectBnk" in curr_url or "Register" in curr_url):
+                    has_elements = False
+                    for sel in ("#ctl00_ContentPlaceHolder1_tbIDNo", "input[name$='tbIDNo']", "#ctl00_ContentPlaceHolder1_ddlBankName", "#ans", ".BDC_CaptchaImage"):
+                        if page.locator(sel).count() > 0:
+                            has_elements = True
+                            break
+                    if has_elements:
+                        if log_callback:
+                            try:
+                                log_callback("⚠️ تاخیر در پایان بارگذاری، اما المان‌های فرم در صفحه مستقر شدند؛ ادامه فرآیند.", "info", page)
+                            except Exception:
+                                pass
+                        check_rejection(page)
+                        return None
+            except Exception:
+                pass
         if log_callback:
             try:
                 log_callback(f"⚠️ Navigation error: {exc}", "warning")
@@ -748,6 +768,15 @@ def launch_browser(profile: Dict[str, Any]) -> Tuple[Any, Any, Any, Any]:
 
 
 def close_browser(playwright, browser, context, page) -> None:
+    try:
+        if page:
+            setattr(page, "_mahan_closing_intentionally", True)
+        if context:
+            setattr(context, "_mahan_closing_intentionally", True)
+        if browser:
+            setattr(browser, "_mahan_closing_intentionally", True)
+    except Exception:
+        pass
     try:
         _remember_window_bounds_before_close(page, context)
     except Exception:

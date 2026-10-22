@@ -373,14 +373,14 @@ class BankSelectionBot(BotCore):
                     self._safe_goto_guarded(
                         page,
                         adapter.target_select_url,
-                        timeout=int(self.settings.get("navigation_timeout_ms", 15000)),
+                        timeout=int(self.settings.get("navigation_timeout_ms", 35000)),
                         wait_until="domcontentloaded",
                         log_callback=self.log,
                     )
                 except SiteRejectedError:
                     raise
                 except Exception as exc:
-                    if handle_partial_navigation_error(exc) and page_has_target_selectors():
+                    if (handle_partial_navigation_error(exc) or "timeout" in str(exc).lower()) and page_has_target_selectors():
                         pass
                     else:
                         if sleep_with_stop(stop_event, 3.0, step=0.05):
@@ -389,17 +389,20 @@ class BankSelectionBot(BotCore):
                             self._safe_goto_guarded(
                                 page,
                                 adapter.target_select_url,
-                                timeout=int(self.settings.get("navigation_timeout_ms", 15000)),
-                                wait_until="domcontentloaded",
+                                timeout=int(self.settings.get("navigation_timeout_ms", 35000)),
+                                wait_until="commit",
                                 log_callback=self.log,
                             )
                         except SiteRejectedError:
                             raise
                         except Exception as exc_retry:
-                            if handle_partial_navigation_error(exc_retry) and page_has_target_selectors():
+                            if (handle_partial_navigation_error(exc_retry) or "timeout" in str(exc_retry).lower()) and page_has_target_selectors():
                                 pass
                             else:
-                                return
+                                self.log(f"⚠️ تاخیر در پاسخ سامانه مرکزی؛ تلاش مجدد در دور {attempt + 1}...", "warning", page)
+                                if sleep_with_stop(stop_event, 2.0):
+                                    return
+                                continue
                 page_loaded_ts = time.time()
                 self.record_metric("page_load_ms", navigation_started)
 
@@ -518,7 +521,7 @@ class BankSelectionBot(BotCore):
                         self._safe_goto_guarded(
                             page,
                             adapter.target_select_url,
-                            timeout=int(self.settings.get("navigation_timeout_ms", 15000)),
+                            timeout=int(self.settings.get("navigation_timeout_ms", 35000)),
                             wait_until="domcontentloaded",
                             log_callback=self.log,
                         )
@@ -551,7 +554,7 @@ class BankSelectionBot(BotCore):
                         self._safe_goto_guarded(
                             page,
                             adapter.target_select_url,
-                            timeout=int(self.settings.get("navigation_timeout_ms", 15000)),
+                            timeout=int(self.settings.get("navigation_timeout_ms", 35000)),
                             wait_until="domcontentloaded",
                             log_callback=self.log,
                         )
@@ -690,7 +693,7 @@ class BankSelectionBot(BotCore):
                             self._safe_goto_guarded(
                                 page,
                                 adapter.target_select_url,
-                                timeout=int(self.settings.get("navigation_timeout_ms", 15000)),
+                                timeout=int(self.settings.get("navigation_timeout_ms", 35000)),
                                 wait_until="domcontentloaded",
                                 log_callback=self.log,
                             )
@@ -805,6 +808,7 @@ class BankSelectionBot(BotCore):
                         self.log("🛑 Stop detected - closing browser now.", "warning")
                     except Exception:
                         pass
+                self._closing_intentionally = True
                 close_browser(playwright, browser, context, page)
 
             if not stop_event.is_set():

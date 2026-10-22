@@ -313,6 +313,7 @@ class BotCore:
         self.clear_otp_backend()
 
     def setup_browser(self, stop_event=None):
+        self._closing_intentionally = False
         launch_started = time.perf_counter()
         profile = dict(self.browser_profile)
         if "user_data_dir" in profile and profile["user_data_dir"]:
@@ -372,7 +373,12 @@ class BotCore:
                 session_done.set()
             if state["fired"] or stop_event.is_set():
                 return
-            if getattr(self, "_closing_intentionally", False):
+            if (
+                getattr(self, "_closing_intentionally", False)
+                or getattr(page, "_mahan_closing_intentionally", False)
+                or getattr(context, "_mahan_closing_intentionally", False)
+                or getattr(browser, "_mahan_closing_intentionally", False)
+            ):
                 return
             state["fired"] = True
             if getattr(self, "reopen_browser_on_close", False):

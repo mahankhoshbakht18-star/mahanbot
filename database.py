@@ -23,7 +23,7 @@ DB_PATH = resource_path("cbi_ultimate.db")
 DEFAULT_CONFIG = {
     "automation_mode": "normal",
     "default_timeout_ms": 5000,
-    "navigation_timeout_ms": 15000,
+    "navigation_timeout_ms": 35000,
     "retry_count": 5,
     "retry_delay": 0.25,
     "browser_display_mode": "external",
@@ -135,9 +135,10 @@ def normalize_config(stored: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     merged["default_timeout_ms"] = _bounded(
         merged.get("default_timeout_ms"), 5000, 250, 60000, int
     )
-    merged["navigation_timeout_ms"] = _bounded(
-        merged.get("navigation_timeout_ms"), 15000, 1000, 120000, int
-    )
+    nav_to = merged.get("navigation_timeout_ms")
+    if nav_to == 15000 or nav_to is None:
+        nav_to = 35000
+    merged["navigation_timeout_ms"] = _bounded(nav_to, 35000, 1000, 120000, int)
     # Synchronize auto_final_submit and final_submit (default False)
     if "auto_final_submit" in (stored or {}):
         auto_sub = bool(stored.get("auto_final_submit"))
