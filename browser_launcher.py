@@ -518,7 +518,10 @@ def safe_goto(page, url: str, *, allowed_domains: Optional[Iterable[str]] = None
         normalized = _normalize_url(url)
         goto = getattr(page, "_original_goto", page.goto)
         response = goto(normalized, **kwargs)
-        page.wait_for_load_state("domcontentloaded")
+        try:
+            page.wait_for_load_state("domcontentloaded", timeout=12000)
+        except Exception:
+            pass
         current_zoom = getattr(page, "_mahan_page_zoom", None)
         if current_zoom is None:
             current_zoom = 1.0
@@ -539,18 +542,39 @@ def safe_goto(page, url: str, *, allowed_domains: Optional[Iterable[str]] = None
         if "timeout" in str(exc).lower() and page is not None:
             try:
                 curr_url = page.url or ""
-                if curr_url and ("ve.cbi.ir" in curr_url or "SelectBnk" in curr_url or "Register" in curr_url):
+                if curr_url and ("ve.cbi.ir" in curr_url or "SelectBnk" in curr_url or "Register" in curr_url or "Trace" in curr_url or "Delete" in curr_url):
                     has_elements = False
-                    for sel in ("#ctl00_ContentPlaceHolder1_tbIDNo", "input[name$='tbIDNo']", "#ctl00_ContentPlaceHolder1_ddlBankName", "#ans", ".BDC_CaptchaImage"):
+                    cbi_selectors = (
+                        "#ctl00_ContentPlaceHolder1_tbIDNo",
+                        "input[name$='tbIDNo']",
+                        "#ctl00_ContentPlaceHolder1_ddlBankName",
+                        "#ans",
+                        ".BDC_CaptchaImage",
+                        "#ctl00_ContentPlaceHolder1_tbTraceCD",
+                        "input[name$='tbTraceCD']",
+                        "#ctl00_ContentPlaceHolder1_tbMobile",
+                        "input[name$='tbMobile']",
+                        "#ctl00_ContentPlaceHolder1_btnNext",
+                        "#ctl00_ContentPlaceHolder1_btnSendPass",
+                        "#ctl00_ContentPlaceHolder1_btnDel",
+                        "input[name$='btnDel']",
+                        "form#form1",
+                        "#ctl00_ContentPlaceHolder1_UpdatePanel2",
+                        "input[type='submit']",
+                        "select",
+                    )
+                    for sel in cbi_selectors:
                         if page.locator(sel).count() > 0:
                             has_elements = True
                             break
                     if has_elements:
                         if log_callback:
                             try:
-                                log_callback("⚠️ تاخیر در پایان بارگذاری، اما المان‌های فرم در صفحه مستقر شدند؛ ادامه فرآیند.", "info", page)
+                                log_callback("⚠️ تاخیر در پایان بارگذاری منابع فرعی، اما فرم سامانه در دسترس است؛ ادامه فرآیند بدون بستن مرورگر.", "info", page)
                             except Exception:
                                 pass
+                        current_zoom = getattr(page, "_mahan_page_zoom", None) or 1.0
+                        apply_page_zoom(page, current_zoom)
                         check_rejection(page)
                         return None
             except Exception:

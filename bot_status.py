@@ -384,13 +384,41 @@ class StatusBot:
             def open_target_browser():
                 new_playwright, new_browser, new_context, new_page = launch_browser(self.browser_profile)
                 self._wrap_page_navigation(new_page)
-                new_page.set_default_timeout(3000)
-                new_page.set_default_navigation_timeout(15000)
-                try:
-                    new_page.goto(TARGET_URL, timeout=15000, wait_until="commit")
-                except Exception:
+                new_page.set_default_timeout(8000)
+                new_page.set_default_navigation_timeout(45000)
+                loaded = False
+                for attempt_nav in range(1, 6):
+                    if stop_event.is_set():
+                        break
+                    try:
+                        self.log_msg(f"در حال بارگذاری سامانه استعلام وضعیت (تلاش {attempt_nav} از 5)...", "info")
+                        new_page.goto(TARGET_URL, timeout=45000, wait_until="commit")
+                        try:
+                            new_page.wait_for_load_state("domcontentloaded", timeout=12000)
+                        except Exception:
+                            pass
+                        loaded = True
+                        break
+                    except Exception as e_nav:
+                        # Check if target form elements are already present despite timeout
+                        try:
+                            if new_page.locator("input[name$='tbTraceCD'], input[name$='tbIDNo'], .BDC_CaptchaImage").count() > 0:
+                                loaded = True
+                                break
+                        except Exception:
+                            pass
+                        self.log_msg(f"⚠️ تاخیر در پاسخ سرور استعلام ({e_nav})؛ شکیبایی و تلاش مجدد بدون بستن مرورگر...", "warning")
+                        if sleep_with_stop(stop_event, 2.0, step=0.1):
+                            break
+                if not loaded and not stop_event.is_set():
+                    try:
+                        if new_page.locator("input[name$='tbTraceCD'], input[name$='tbIDNo']").count() > 0:
+                            loaded = True
+                    except Exception:
+                        pass
+                if not loaded and not stop_event.is_set():
                     close_browser(new_playwright, new_browser, new_context, new_page)
-                    raise
+                    raise RuntimeError("عدم پاسخ‌دهی سامانه استعلام بانک مرکزی پس از چند تلاش")
                 return new_playwright, new_browser, new_context, new_page
 
             def reopen_target_browser(reason):

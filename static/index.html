@@ -540,7 +540,10 @@
             </select>
           </label>
           <label>کد رهگیری فعلی (در صورت وجود)
-            <input id="inpTrackingCode" class="form-control" placeholder="اختیاری">
+            <div class="input-group">
+              <input id="inpTrackingCode" class="form-control" placeholder="اختیاری">
+              <button class="btn btn-outline-secondary" type="button" onclick="document.getElementById('inpTrackingCode').value=''; if (typeof showToast === 'function') showToast('کد رهگیری پاک شد. برای اعمال، فرم را ذخیره کنید.', 'info');" title="پاکسازی کد رهگیری جهت ثبت مجدد"><i class="fas fa-eraser"></i></button>
+            </div>
           </label>
         </div>
 

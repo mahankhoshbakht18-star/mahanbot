@@ -368,41 +368,34 @@ class BankSelectionBot(BotCore):
                             continue
                     return False
 
-                try:
-                    navigation_started = time.perf_counter()
-                    self._safe_goto_guarded(
-                        page,
-                        adapter.target_select_url,
-                        timeout=int(self.settings.get("navigation_timeout_ms", 35000)),
-                        wait_until="domcontentloaded",
-                        log_callback=self.log,
-                    )
-                except SiteRejectedError:
-                    raise
-                except Exception as exc:
-                    if (handle_partial_navigation_error(exc) or "timeout" in str(exc).lower()) and page_has_target_selectors():
-                        pass
-                    else:
-                        if sleep_with_stop(stop_event, 3.0, step=0.05):
-                            return
+                nav_success = False
+                for nav_att in range(1, 5):
+                    if stop_event.is_set() or getattr(page, "is_closed", lambda: False)():
+                        break
+                    try:
+                        navigation_started = time.perf_counter()
+                        self._safe_goto_guarded(
+                            page,
+                            adapter.target_select_url,
+                            timeout=int(self.settings.get("navigation_timeout_ms", 45000)),
+                            wait_until="commit",
+                            log_callback=self.log,
+                        )
                         try:
-                            self._safe_goto_guarded(
-                                page,
-                                adapter.target_select_url,
-                                timeout=int(self.settings.get("navigation_timeout_ms", 35000)),
-                                wait_until="commit",
-                                log_callback=self.log,
-                            )
-                        except SiteRejectedError:
-                            raise
-                        except Exception as exc_retry:
-                            if (handle_partial_navigation_error(exc_retry) or "timeout" in str(exc_retry).lower()) and page_has_target_selectors():
-                                pass
-                            else:
-                                self.log(f"⚠️ تاخیر در پاسخ سامانه مرکزی؛ تلاش مجدد در دور {attempt + 1}...", "warning", page)
-                                if sleep_with_stop(stop_event, 2.0):
-                                    return
-                                continue
+                            page.wait_for_load_state("domcontentloaded", timeout=12000)
+                        except Exception:
+                            pass
+                        nav_success = True
+                        break
+                    except SiteRejectedError:
+                        raise
+                    except Exception as exc:
+                        if (handle_partial_navigation_error(exc) or "timeout" in str(exc).lower()) and page_has_target_selectors():
+                            nav_success = True
+                            break
+                        self.log(f"⚠️ تاخیر در پاسخ سامانه بانک مرکزی ({exc})؛ شکیبایی و تلاش مجدد در همان پنجره ({nav_att}/4)...", "warning", page)
+                        if sleep_with_stop(stop_event, 2.0, step=0.05):
+                            return
                 page_loaded_ts = time.time()
                 self.record_metric("page_load_ms", navigation_started)
 

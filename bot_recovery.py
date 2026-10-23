@@ -37,7 +37,30 @@ class RecoveryBot(BotCore):
                 return None
 
             self.log("شروع بازیابی کد رهگیری.", "info", page)
-            safe_goto(page, TARGET_URL, timeout=60000, wait_until="domcontentloaded", log_callback=self.log)
+            nav_ok = False
+            for attempt_nav in range(1, 6):
+                if stop_event.is_set() or self._page_closed(page):
+                    break
+                try:
+                    self.log(f"در حال بارگذاری سامانه بازیابی کد رهگیری (تلاش {attempt_nav} از 5)...", "info", page)
+                    safe_goto(page, TARGET_URL, timeout=45000, wait_until="commit", log_callback=self.log)
+                    try:
+                        page.wait_for_load_state("domcontentloaded", timeout=12000)
+                    except Exception:
+                        pass
+                    nav_ok = True
+                    break
+                except Exception as exc_nav:
+                    if self._tracking_page_ready(page):
+                        nav_ok = True
+                        break
+                    self.log(f"⚠️ تاخیر در پاسخ سامانه بازیابی ({exc_nav})؛ تلاش مجدد بارگذاری بدون بستن مرورگر...", "warning", page)
+                    if sleep_with_stop(stop_event, 2.0):
+                        break
+
+            if not nav_ok and not self._tracking_page_ready(page):
+                self.log("عدم دریافت پاسخ از سامانه بازیابی پس از چند تلاش متوالی.", "error", page)
+                return None
 
             while not stop_event.is_set():
                 if self._page_closed(page):

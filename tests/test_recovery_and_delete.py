@@ -21,7 +21,10 @@ import server
 class RecoveryAndDeleteTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.client = TestClient(server.app)
+        os.environ["MAHANBOT_DISABLE_AUTH"] = "true"
+        cls.client = TestClient(server.app, cookies={"mahan_session": "test_token"})
+        from core.deps import require_api_key
+        server.app.dependency_overrides[require_api_key] = lambda: True
 
     def setUp(self):
         from core import state as _state
@@ -132,17 +135,30 @@ class RecoveryAndDeleteTests(unittest.TestCase):
 
     def test_06_delete_request_api_endpoint(self):
         """Verify POST /bot/action/delete-request/{nid} queues deletion job."""
-        resp = self.client.post(f"/bot/action/delete-request/{self.test_nid}")
+        headers = {"X-API-Key": os.getenv("MAHANBOT_API_KEY", "test-key")}
+        resp = self.client.post(f"/bot/action/delete-request/{self.test_nid}", headers=headers)
         self.assertEqual(resp.status_code, 200)
         data = resp.json()
         self.assertIn(data.get("status"), ("queued", "already_running"))
 
     def test_07_recovery_start_api_endpoint(self):
         """Verify POST /jobs/start with bot_name='recovery' queues recovery job."""
-        resp = self.client.post("/jobs/start", json={"bot_name": "recovery", "nid": self.test_nid})
+        headers = {"X-API-Key": os.getenv("MAHANBOT_API_KEY", "test-key")}
+        resp = self.client.post("/jobs/start", json={"bot_name": "recovery", "nid": self.test_nid}, headers=headers)
         self.assertEqual(resp.status_code, 200)
         data = resp.json()
         self.assertIn(data.get("status"), ("queued", "already_running"))
+
+    def test_09_clear_tracking_api_endpoint(self):
+        """Verify POST /applicants/{nid}/clear-tracking resets tracking code and DB state."""
+        headers = {"X-API-Key": os.getenv("MAHANBOT_API_KEY", "test-key")}
+        resp = self.client.post(f"/applicants/{self.test_nid}/clear-tracking", headers=headers)
+        self.assertEqual(resp.status_code, 200)
+        app = dict(DBHandler.get_applicant(self.test_nid))
+        import json
+        d = json.loads(app.get("data") or "{}")
+        self.assertEqual(d.get("tracking_code"), "")
+        self.assertIsNone(DBHandler.has_final_submission(self.test_nid))
 
 
     def test_08_save_recovered_tracking_code_persists_and_emits(self):

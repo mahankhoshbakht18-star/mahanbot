@@ -286,6 +286,16 @@ def update_favorite_banks(nid: str, req: FavoriteBanksRequest, _: bool = Depends
     return {"status": "ok", "banks": req.banks}
 
 
+@router.post("/applicants/{nid}/clear-tracking")
+def clear_applicant_tracking(nid: str, _: bool = Depends(require_api_key)):
+    cleared = DBHandler.clear_request_data(nid, "کد رهگیری و وضعیت قبلی جهت ثبت‌نام مجدد پاکسازی شد")
+    if not cleared:
+        raise HTTPException(status_code=404, detail="Applicant not found")
+    log_event(nid, None, "سوابق ثبت‌نام و کد رهگیری قبلی پاکسازی شد؛ متقاضی آماده ثبت‌نام مجدد است.", "info")
+    _emit_applicants_snapshot()
+    return {"status": "ok", "nid": nid}
+
+
 @router.delete("/applicants/{nid}")
 async def delete_applicant(nid: str, _: bool = Depends(require_api_key)):
     async with _open_aiosqlite() as conn:

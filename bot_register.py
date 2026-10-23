@@ -61,18 +61,14 @@ class RegistrationBot(BotCore):
         context = None
         page = None
 
-        # Prevent duplicate registration if already confirmed
-        existing_tracking = DBHandler.has_final_submission(self.nid)
-        if existing_tracking:
-            self.emit_event(
-                "FINAL_SUBMIT_CONFIRMED",
-                step="DONE",
-                reason="already_registered",
-                result=f"tracking={self._mask(existing_tracking)}",
-                message=f"ثبت‌نام این متقاضی قبلاً انجام شده است (کد پیگیری: {self._mask(existing_tracking)}).",
-                level="success",
-            )
-            return
+        # Only block if applicant explicitly marked completed in active DB state
+        user_rec = DBHandler.get_applicant(self.nid)
+        user_st = str(dict(user_rec).get("status") if user_rec else "").lower()
+        if user_st in {"success", "completed", "registered"}:
+            existing_tracking = DBHandler.has_final_submission(self.nid)
+            if existing_tracking:
+                self.log(f"این متقاضی با کد پیگیری {self._mask(existing_tracking)} قبلاً در سامانه ثبت شده است. برای ثبت مجدد، پاکسازی کد رهگیری را انجام دهید.", "info")
+                return
 
         adapter = RegistrationLoanAdapter(loan_type=loan_type, user_data=getattr(self, "user_data", {}))
         valid, err_msg = adapter.validate_data(self.nid, getattr(self, "user_data", {}))
@@ -89,15 +85,39 @@ class RegistrationBot(BotCore):
             if not page or stop_event.is_set():
                 return
 
-            try:
-                safe_goto(page, target_url, timeout=60000, wait_until="domcontentloaded", log_callback=self.log)
-            except Exception:
-                if sleep_with_stop(stop_event, 1.0):
-                    return
+            nav_ok = False
+            for attempt_nav in range(1, 6):
+                if stop_event.is_set() or getattr(page, "is_closed", lambda: False)():
+                    break
                 try:
-                    safe_goto(page, target_url, timeout=60000, wait_until="domcontentloaded", log_callback=self.log)
+                    self.log(f"در حال بارگذاری سامانه ثبت‌نام ({adapter.kind} - تلاش {attempt_nav} از 5)...", "info", page)
+                    safe_goto(page, target_url, timeout=45000, wait_until="commit", log_callback=self.log)
+                    try:
+                        page.wait_for_load_state("domcontentloaded", timeout=12000)
+                    except Exception:
+                        pass
+                    nav_ok = True
+                    break
+                except Exception as exc_nav:
+                    try:
+                        if page.locator("#ctl00_ContentPlaceHolder1_tbIDNo, input[name$='tbIDNo'], .BDC_CaptchaImage").count() > 0:
+                            nav_ok = True
+                            break
+                    except Exception:
+                        pass
+                    self.log(f"⚠️ تاخیر در پاسخ سامانه ثبت‌نام ({exc_nav})؛ تلاش مجدد بارگذاری بدون بستن مرورگر...", "warning", page)
+                    if sleep_with_stop(stop_event, 2.0):
+                        break
+
+            if not nav_ok:
+                try:
+                    if page.locator("#ctl00_ContentPlaceHolder1_tbIDNo, input[name$='tbIDNo']").count() > 0:
+                        nav_ok = True
                 except Exception:
-                    return
+                    pass
+            if not nav_ok:
+                self.log("عدم دریافت پاسخ از سامانه ثبت‌نام پس از چند تلاش متوالی.", "error", page)
+                return
 
             self.log(f"🚀 ربات ثبت‌نام ({adapter.kind}) شروع شد.", "info", page)
             captcha_mode = "model"

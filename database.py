@@ -1181,6 +1181,7 @@ class DBHandler:
         try:
             with DBHandler._connect() as conn:
                 conn.execute("DELETE FROM checkpoints WHERE nid=?", (nid,))
+                conn.execute("DELETE FROM automation_runtime WHERE nid=?", (nid,))
                 conn.commit()
         except Exception:
             pass
@@ -1253,18 +1254,17 @@ class DBHandler:
                 u_dict = dict(user)
                 d = json.loads(u_dict.get("data") or "{}")
                 tc = str(d.get("tracking_code") or "").strip()
-                if tc and tc != "-":
-                    return tc
-                if str(u_dict.get("status") or "").lower() == "success" and d.get("final_submitted"):
+                status = str(u_dict.get("status") or "").lower()
+                # An applicant only has an active final submission if final_submitted is explicitly True
+                # and status is a successful terminal state
+                if d.get("final_submitted") and status in {"success", "completed", "registered"}:
                     return tc or "CONFIRMED"
             except Exception:
                 pass
         cp = DBHandler.get_checkpoint(nid)
         if cp:
-            tc = str(cp.get("tracking_code") or "").strip()
-            if tc and tc != "-":
-                return tc
-            if cp.get("last_verified_step") == "DONE" and cp.get("last_operation_result") == "FINAL_SUBMIT_CONFIRMED":
+            if cp.get("final_submit_status") == "confirmed" and cp.get("last_verified_step") == "DONE":
+                tc = str(cp.get("tracking_code") or "").strip()
                 return tc or "CONFIRMED"
         return None
 
@@ -1442,6 +1442,7 @@ class DBHandler:
                     (json.dumps(d, ensure_ascii=False), note, nid),
                 )
                 conn.execute("DELETE FROM checkpoints WHERE nid=?", (nid,))
+                conn.execute("DELETE FROM automation_runtime WHERE nid=?", (nid,))
                 conn.commit()
             return True
         except Exception as e:

@@ -40,14 +40,15 @@ def start_job(req: JobStartRequest, _: bool = Depends(require_api_key)):
     if req.browser_profile_override:
         payload["browser_profile_override"] = normalize_browser_profile(req.browser_profile_override)
 
-    cp = DBHandler.get_checkpoint(req.nid)
-    if cp.get("final_submit_status") == "pending" and (
-        cp.get("bank_state") == "CAPACITY_FULL"
-        or cp.get("last_operation_result") in ("CAPACITY_FULL", "BANK_CAPACITY_FULL")
-        or "تکمیل" in str(cp.get("last_error_reason", ""))
-        or cp.get("browser_closed_by_user")
-    ):
-        DBHandler.release_final_submission_claim(req.nid)
+    # Clear previous claims and runtime state so re-starting applicant runs cleanly
+    DBHandler.release_final_submission_claim(req.nid)
+    DBHandler.update_runtime(
+        req.nid,
+        status="RUNNING",
+        current_step="INITIALIZING",
+        browser_status="STARTING",
+        last_error="",
+    )
 
     job = _state.JOB_QUEUE.enqueue(bot_name, req.nid, payload)
     if job is None:
@@ -61,18 +62,15 @@ def start_job(req: JobStartRequest, _: bool = Depends(require_api_key)):
 def restart_job(req: JobStartRequest, _: bool = Depends(require_api_key)):
     if not _state.JOB_QUEUE:
         raise HTTPException(status_code=500, detail="Job queue not ready")
-    cp = DBHandler.get_checkpoint(req.nid)
-    final_status = cp.get("final_submit_status")
-    if final_status == "pending" and (
-        cp.get("bank_state") == "CAPACITY_FULL"
-        or cp.get("last_operation_result") in ("CAPACITY_FULL", "BANK_CAPACITY_FULL")
-        or "تکمیل" in str(cp.get("last_error_reason", ""))
-        or cp.get("browser_closed_by_user")
-    ):
-        DBHandler.release_final_submission_claim(req.nid)
-        final_status = None
-    if final_status:
-        raise HTTPException(status_code=409, detail="Previous submission requires reconciliation before restart")
+    # Release prior claims and reset runtime on restart so re-registration is allowed
+    DBHandler.release_final_submission_claim(req.nid)
+    DBHandler.update_runtime(
+        req.nid,
+        status="RUNNING",
+        current_step="INITIALIZING",
+        browser_status="STARTING",
+        last_error="",
+    )
     existing = _state.JOB_QUEUE.find_active(req.bot_name.lower(), req.nid)
     if existing:
         _state.JOB_QUEUE.cancel(existing.id)

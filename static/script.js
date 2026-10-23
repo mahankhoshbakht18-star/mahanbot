@@ -1210,7 +1210,7 @@ function renderMainList(data) {
         const code = d.tracking_code || '-';
         const hasCode = code && code !== '-';
         const codeBadge = hasCode
-            ? `<span class="badge bg-success-subtle text-success fw-bold px-2 py-1 font-monospace">${escapeHtml(code)}</span>`
+            ? `<span class="badge bg-success-subtle text-success fw-bold px-2 py-1 font-monospace">${escapeHtml(code)}</span><button class="btn btn-link btn-sm p-0 ms-1 text-danger" title="پاکسازی کد رهگیری و ثبت مجدد" onclick="clearApplicantTracking('${user.national_id}')"><i class="fas fa-rotate-left small"></i></button>`
             : `<span class="text-secondary fw-bold">-</span>`;
 
         tbody.innerHTML += `
@@ -4805,5 +4805,25 @@ async function actionDeleteReq(nid) {
         }
     } catch (e) {
         alert(e.message || 'خطا در شروع بات حذف ثبت‌نام');
+    }
+}
+
+
+async function clearApplicantTracking(nid) {
+    if (!confirm('آیا از پاکسازی کد رهگیری و بازنشانی پرونده این متقاضی برای ثبت‌نام مجدد اطمینان دارید؟')) return;
+    try {
+        const res = await fetch(`/applicants/${nid}/clear-tracking`, {
+            method: 'POST',
+            headers: { 'X-API-Key': API_KEY, 'Content-Type': 'application/json' }
+        });
+        if (res.ok) {
+            showToast('کد رهگیری پاکسازی شد و متقاضی برای ثبت مجدد آماده گردید.', 'success');
+            if (typeof loadApplicants === 'function') loadApplicants();
+        } else {
+            const err = await res.json().catch(() => ({}));
+            showToast(err.detail || 'خطا در پاکسازی کد رهگیری', 'error');
+        }
+    } catch (e) {
+        showToast('خطا در ارتباط با سرور: ' + e, 'error');
     }
 }

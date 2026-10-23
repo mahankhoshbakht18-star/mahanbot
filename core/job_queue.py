@@ -203,7 +203,10 @@ class JobQueue:
             try:
                 self._run_job_isolated(job)
                 current_runtime = DBHandler.get_runtime(job.nid)
-                is_success = current_runtime.get("status") == "SUCCESS" or DBHandler.has_final_submission(job.nid)
+                is_success = (
+                    current_runtime.get("status") == "SUCCESS"
+                    and current_runtime.get("current_step") in {"DONE", "REGISTRATION_CONFIRMED", "SUCCESS"}
+                )
                 if is_success:
                     job.status = "completed"
                     log_event(job.nid, job.id, "🎉 ثبت نام متقاضی با موفقیت قطعی انجام شد و کد رهگیری دریافت گردید.", "success")
@@ -221,7 +224,10 @@ class JobQueue:
             finally:
                 job.finished_at = time.time()
                 current_runtime = DBHandler.get_runtime(job.nid)
-                is_success = current_runtime.get("status") == "SUCCESS" or DBHandler.has_final_submission(job.nid)
+                is_success = (
+                    current_runtime.get("status") == "SUCCESS"
+                    and current_runtime.get("current_step") in {"DONE", "REGISTRATION_CONFIRMED", "SUCCESS"}
+                )
                 runtime_status = "SUCCESS" if is_success else ("STOPPED" if job.status in {"stopped", "cancelled", "completed"} else "ERROR")
                 if not is_success:
                     DBHandler.update_runtime(
