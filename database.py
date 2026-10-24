@@ -138,6 +138,16 @@ def normalize_config(stored: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     merged["otp_retry_limit"] = _bounded(
         merged.get("otp_retry_limit"), 5, 1, 20, int
     )
+    merged["sms_poll_interval_seconds"] = _bounded(
+        merged.get("sms_poll_interval_seconds"), 5, 1, 60, int
+    )
+    merged["otp_wait_timeout_seconds"] = _bounded(
+        merged.get("otp_wait_timeout_seconds"), 120, 10, 600, int
+    )
+    merged["max_otp_attempts"] = _bounded(
+        merged.get("max_otp_attempts"), 3, 1, 10, int
+    )
+    merged["auto_chain_on_success"] = bool(merged.get("auto_chain_on_success", True))
     merged["default_timeout_ms"] = _bounded(
         merged.get("default_timeout_ms"), 5000, 250, 60000, int
     )
@@ -344,6 +354,71 @@ class DBHandler:
                         created_at REAL NOT NULL
                     )"""
                 )
+
+                # Persistent Applicant Queue Table
+                c.execute(
+                    """CREATE TABLE IF NOT EXISTS applicant_queue (
+                        queue_id TEXT PRIMARY KEY,
+                        applicant_id TEXT NOT NULL UNIQUE,
+                        applicant_display_name TEXT,
+                        masked_national_id TEXT,
+                        loan_type TEXT DEFAULT 'marriage',
+                        priority TEXT DEFAULT 'NORMAL',
+                        queue_position INTEGER NOT NULL DEFAULT 0,
+                        queue_status TEXT DEFAULT 'WAITING',
+                        bot_state TEXT DEFAULT 'QUEUED',
+                        assigned_worker TEXT,
+                        worker_lease_until REAL DEFAULT 0,
+                        requested_bank TEXT,
+                        selected_city TEXT,
+                        preferred_mode TEXT,
+                        current_stage TEXT DEFAULT 'QUEUED',
+                        retry_count INTEGER DEFAULT 0,
+                        last_error TEXT DEFAULT '',
+                        created_at REAL NOT NULL,
+                        started_at REAL,
+                        updated_at REAL NOT NULL,
+                        last_activity_at REAL,
+                        next_action_at REAL,
+                        checkpoint_reference TEXT
+                    )"""
+                )
+                c.execute("CREATE INDEX IF NOT EXISTS idx_applicant_queue_pos ON applicant_queue(priority, queue_position, queue_status)")
+
+                # Independent OTP Requests Queue Table
+                c.execute(
+                    """CREATE TABLE IF NOT EXISTS otp_requests (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        otp_request_id TEXT UNIQUE NOT NULL,
+                        applicant_id TEXT NOT NULL,
+                        session_id TEXT,
+                        phone_reference TEXT,
+                        request_started_at REAL NOT NULL,
+                        sms_received_at REAL,
+                        expires_at REAL NOT NULL,
+                        sms_source TEXT DEFAULT 'android',
+                        otp_code TEXT,
+                        delivery_status TEXT NOT NULL DEFAULT 'CREATED',
+                        attempt_count INTEGER DEFAULT 0,
+                        verification_status TEXT DEFAULT 'pending',
+                        created_at REAL NOT NULL,
+                        updated_at REAL NOT NULL
+                    )"""
+                )
+                c.execute("CREATE INDEX IF NOT EXISTS idx_otp_requests_active ON otp_requests(applicant_id, delivery_status, expires_at)")
+
+                # State Machine Transition Audit History
+                c.execute(
+                    """CREATE TABLE IF NOT EXISTS applicant_state_history (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        applicant_id TEXT NOT NULL,
+                        from_state TEXT NOT NULL,
+                        to_state TEXT NOT NULL,
+                        reason TEXT,
+                        timestamp REAL NOT NULL
+                    )"""
+                )
+                c.execute("CREATE INDEX IF NOT EXISTS idx_state_history_nid ON applicant_state_history(applicant_id, timestamp)")
 
                 default_config = json.dumps(DEFAULT_CONFIG, ensure_ascii=False)
                 c.execute("INSERT OR IGNORE INTO settings (key, value) VALUES ('config', ?)", (default_config,))

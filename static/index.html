@@ -65,6 +65,7 @@
     <nav class="sidebar-nav">
       <div onclick="switchView('license',this)"><button class="nav-link" aria-label="لایسنس ماهان" data-tooltip="فعال‌سازی و مدیریت مرکزی لایسنس"><i class="fa-solid fa-key"></i><span>لایسنس ماهان</span></button></div>
       <div onclick="switchView('dashboard',this)"><button class="nav-link active" data-tooltip="داشبورد عملیات: مشاهده وضعیت آنلاین بات‌ها، آمار کلی و مانیتور زنده"><i class="fa-solid fa-chart-pie"></i><span>داشبورد</span></button></div>
+      <div onclick="switchView('queue',this)"><button class="nav-link" data-tooltip="مدیریت صف متقاضیان: اولویت‌بندی هوشمند، نظارت زنده بر ماشین حالت و کدهای پیامک"><i class="fa-solid fa-list-ol"></i><span>مدیریت صف</span></button></div>
       <div onclick="switchView('list',this)"><button class="nav-link" data-tooltip="مدیریت متقاضیان: فهرست پرونده‌ها، جستجو، فیلتر و ویرایش مشخصات"><i class="fa-solid fa-users"></i><span>متقاضیان</span></button></div>
       <div onclick="switchView('add',this)"><button class="nav-link" data-tooltip="ثبت‌نام اولیه: تشکیل پرونده وام ازدواج یا فرزندآوری و بارگذاری اکسل"><i class="fa-solid fa-user-plus"></i><span>ثبت‌نام اولیه</span></button></div>
       <div onclick="switchView('bank-select',this)"><button class="nav-link" data-tooltip="پایش ظرفیت: شکار هوشمند سهمیه بانکی و کنترل چرخه ثبت"><i class="fa-solid fa-crosshairs"></i><span>پایش ظرفیت</span></button></div>
@@ -239,6 +240,9 @@
 
       <!-- Quick Action Buttons (Deep Ocean Dark Luxury) -->
       <div class="quick-actions" style="display:flex;gap:12px;margin:8px 0 20px;flex-wrap:wrap">
+        <button class="btn btn-sm action-pill" style="background:rgba(59,130,246,0.18);color:#60A5FA;border:1px solid rgba(59,130,246,0.5);font-weight:700;" onclick="switchView('queue')">
+          <i class="fa-solid fa-list-ol ms-1"></i> مدیریت صف متقاضیان
+        </button>
         <button class="btn btn-sm action-pill" style="background:rgba(0,191,179,0.18);color:#00E5D4;border:1px solid rgba(0,191,179,0.5);font-weight:700;" onclick="switchView('add')">
           <i class="fa-solid fa-user-plus ms-1"></i> ثبت سریع متقاضی
         </button>
@@ -395,6 +399,200 @@
             <tbody id="stage3BankStatusBody">
               <tr>
                 <td colspan="8" class="text-center text-muted py-3">در حال حاضر پرونده‌ای در مرحله سوم (انتخاب بانک) قرار ندارد.</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </article>
+    </section>
+
+    <!-- ════════════════ VIEW: QUEUE MANAGEMENT (مدیریت صف متقاضیان) ════════════════ -->
+    <section id="view-queue" class="view-section">
+      <div class="page-heading">
+        <div>
+          <span class="section-kicker">سامانه مدیریت صف و ماشین حالت هوشمند</span>
+          <h2>مدیریت صف متقاضیان (Queue & State Control)</h2>
+          <p>ترتیب اجرای بات‌ها، اولویت‌بندی پرونده‌ها، وضعیت ماشین حالت (FSM) و مانیتورینگ زنده پیامک‌ها.</p>
+        </div>
+        <div class="d-flex align-items-center gap-2">
+          <button class="btn btn-success action-pill" onclick="startAllQueue()" title="شروع کلیه متقاضیان در حالت انتظار صف">
+            <i class="fa-solid fa-play"></i>
+            <span>شروع همه</span>
+          </button>
+          <button class="btn btn-warning action-pill" onclick="pauseAllQueue()" title="توقف موقت تمامی بات‌های صف">
+            <i class="fa-solid fa-pause"></i>
+            <span>توقف همه</span>
+          </button>
+          <button class="btn btn-outline-primary action-pill" onclick="loadQueueData()">
+            <i class="fa-solid fa-arrows-rotate"></i>
+            <span>بازخوانی صف</span>
+          </button>
+        </div>
+      </div>
+
+      <!-- 8 Real-time Stat Cards for Queue -->
+      <div class="stats-grid" style="grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); margin-bottom: 20px;">
+        <article class="stat-card">
+          <span class="stat-icon indigo"><i class="fa-solid fa-users"></i></span>
+          <div>
+            <small>کل در صف</small>
+            <strong id="queue-stat-total">۰</strong>
+          </div>
+        </article>
+        <article class="stat-card">
+          <span class="stat-icon cyan"><i class="fa-solid fa-hourglass-half"></i></span>
+          <div>
+            <small>در انتظار</small>
+            <strong id="queue-stat-waiting">۰</strong>
+          </div>
+        </article>
+        <article class="stat-card">
+          <span class="stat-icon amber"><i class="fa-solid fa-robot"></i></span>
+          <div>
+            <small>در حال اجرا</small>
+            <strong id="queue-stat-running">۰</strong>
+          </div>
+        </article>
+        <article class="stat-card">
+          <span class="stat-icon pink"><i class="fa-solid fa-comment-sms"></i></span>
+          <div>
+            <small>انتظار پیامک</small>
+            <strong id="queue-stat-waiting-sms">۰</strong>
+          </div>
+        </article>
+        <article class="stat-card">
+          <span class="stat-icon cyan"><i class="fa-solid fa-file-shield"></i></span>
+          <div>
+            <small>آماده مرحله ۳</small>
+            <strong id="queue-stat-step-3">۰</strong>
+          </div>
+        </article>
+        <article class="stat-card">
+          <span class="stat-icon amber"><i class="fa-solid fa-building-columns"></i></span>
+          <div>
+            <small>انتظار بانک</small>
+            <strong id="queue-stat-waiting-bank">۰</strong>
+          </div>
+        </article>
+        <article class="stat-card">
+          <span class="stat-icon green"><i class="fa-solid fa-circle-check"></i></span>
+          <div>
+            <small>ثبت موفق</small>
+            <strong id="queue-stat-completed">۰</strong>
+          </div>
+        </article>
+        <article class="stat-card">
+          <span class="stat-icon pink"><i class="fa-solid fa-triangle-exclamation"></i></span>
+          <div>
+            <small>خطا / متوقف</small>
+            <strong id="queue-stat-failed">۰</strong>
+          </div>
+        </article>
+      </div>
+
+      <!-- Quick OTP Monitor & Status Grid -->
+      <div style="display:grid; grid-template-columns: 2fr 1fr; gap:16px; margin-bottom: 20px;">
+        <article class="panel">
+          <div class="panel-heading" style="display:flex; justify-content:space-between; align-items:center;">
+            <div>
+              <span class="section-kicker">پایش لحظه‌ای پیامک</span>
+              <h3 style="margin:0;"><i class="fa-solid fa-key text-primary ms-1"></i> صف درخواست‌های فعال پیامک (OTP)</h3>
+            </div>
+            <button class="btn btn-sm btn-outline-primary" onclick="loadOtpQueueData()">
+              <i class="fa-solid fa-arrows-rotate ms-1"></i> بازخوانی
+            </button>
+          </div>
+          <div class="table-responsive mt-2">
+            <table class="table modern-table" style="font-size:0.85rem;">
+              <thead>
+                <tr>
+                  <th>متقاضی</th>
+                  <th>شماره موبایل</th>
+                  <th>مرحله</th>
+                  <th>زمان باقیمانده</th>
+                  <th>وضعیت دریافت</th>
+                  <th>ورود دستی سریع</th>
+                </tr>
+              </thead>
+              <tbody id="otpQueueBody">
+                <tr><td colspan="6" class="text-center text-muted py-3">درخواستی در انتظار پیامک نیست.</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </article>
+
+        <article class="panel">
+          <div class="panel-heading">
+            <span class="section-kicker">درگاه دریافت پیامک</span>
+            <h3 style="margin:0;"><i class="fa-solid fa-tower-broadcast text-primary ms-1"></i> اتصال اندروید و وب‌هوک</h3>
+          </div>
+          <div style="padding:10px 0; font-size:0.85rem; line-height:1.7;">
+            <div style="display:flex; justify-content:space-between; padding:6px 0; border-bottom:1px solid var(--line);">
+              <span>سامانه پیامک‌خوان اندروید:</span>
+              <span id="androidAppStatusBadge" class="badge bg-success">آماده دریافت</span>
+            </div>
+            <div style="display:flex; justify-content:space-between; padding:6px 0; border-bottom:1px solid var(--line);">
+              <span>آدرس وب‌هوک پیامک:</span>
+              <code style="direction:ltr; font-size:0.75rem;">/api/otp/webhook</code>
+            </div>
+            <div style="display:flex; justify-content:space-between; padding:6px 0; border-bottom:1px solid var(--line);">
+              <span>قانون عدم بازگشت به مرحله ۱:</span>
+              <span class="badge bg-info">فعال (ایزولاسیون کامل)</span>
+            </div>
+            <div style="margin-top:12px;">
+              <small class="text-muted">پیامک‌های دریافتی از اپ اندروید یا وب‌هوک به‌صورت اتمیک با متقاضی منطبق شده و از انقضا یا جابجایی کدها جلوگیری می‌شود.</small>
+            </div>
+          </div>
+        </article>
+      </div>
+
+      <!-- Queue Table Panel -->
+      <article class="panel">
+        <div class="table-filter-bar" style="display:flex; flex-wrap:wrap; gap:10px; align-items:center; justify-content:space-between;">
+          <div style="display:flex; gap:10px; flex:1; min-width:280px;">
+            <div class="table-search-input" style="flex:1;">
+              <i class="fa-solid fa-magnifying-glass"></i>
+              <input id="queueSearchInput" class="form-control form-control-sm" placeholder="جستجوی نام یا کد ملی در صف..." oninput="filterQueueTable()">
+            </div>
+            <select id="queueStatusFilter" class="form-select form-select-sm" style="width:160px;" onchange="filterQueueTable()">
+              <option value="">همه وضعیت‌ها</option>
+              <option value="WAITING">در صف انتظار</option>
+              <option value="RUNNING">در حال پردازش</option>
+              <option value="WAITING_SMS">منتظر پیامک</option>
+              <option value="WAITING_BANK">منتظر سهمیه بانک</option>
+              <option value="PAUSED">متوقف شده</option>
+              <option value="COMPLETED">ثبت موفق</option>
+              <option value="FAILED">ناموفق / خطا</option>
+            </select>
+            <select id="queuePriorityFilter" class="form-select form-select-sm" style="width:140px;" onchange="filterQueueTable()">
+              <option value="">همه اولویت‌ها</option>
+              <option value="HIGH">بالا (HIGH)</option>
+              <option value="NORMAL">عادی (NORMAL)</option>
+              <option value="LOW">پایین (LOW)</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="table-responsive mt-3">
+          <table class="table modern-table" id="queueMainTable">
+            <thead>
+              <tr>
+                <th style="width:50px;">رتبه</th>
+                <th style="width:110px;">اولویت</th>
+                <th>نام متقاضی</th>
+                <th>کد ملی</th>
+                <th>نوع تسهیلات</th>
+                <th>بانک / شهر</th>
+                <th>ماشین حالت (FSM)</th>
+                <th>وضعیت OTP</th>
+                <th>نشست مرورگر</th>
+                <th>آخرین فعالیت</th>
+                <th style="width:200px;">عملیات صف</th>
+              </tr>
+            </thead>
+            <tbody id="queueTableBody">
+              <tr>
+                <td colspan="11" class="text-center text-muted py-4">در حال بارگذاری صف متقاضیان…</td>
               </tr>
             </tbody>
           </table>

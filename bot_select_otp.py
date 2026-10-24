@@ -390,6 +390,11 @@ def fast_otp_sync_and_inject(bot, page, stop_event, sleep_with_stop_fn):
     receive_deadline = time.monotonic() + max(1, int(bot.settings.get("otp_receive_timeout", effective_ttl)))
     manual_required = False
 
+    from core.state_machine import transition_state, BotState
+    from core.otp_queue import OTPQueueManager
+    transition_state(bot.nid, BotState.WAITING_OTP.value, f"otp_required_ttl={effective_ttl}s")
+    OTPQueueManager.create_request(applicant_id=bot.nid, ttl_seconds=effective_ttl)
+
     bot.emit_event(
         "OTP_REQUIRED",
         step="STEP_2_OTP",

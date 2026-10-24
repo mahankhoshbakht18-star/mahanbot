@@ -490,6 +490,11 @@ function switchView(viewId, navEl) {
     }
 
 
+        if(viewId === 'queue') {
+        loadQueueData();
+        loadOtpQueueData();
+    }
+
     if(viewId === 'list') fetchApplicants('list');
 
     if(viewId === 'bank-select') {
@@ -3081,6 +3086,22 @@ function handleSocketEvent(payload) {
     trackJobForNid(payload);
     applyApplicantUpdate(payload);
 
+    if (payload.type === 'queue_snapshot') {
+        if (payload.stats) renderQueueStats(payload.stats);
+        if (Array.isArray(payload.items)) {
+            window.cachedQueueItems = payload.items;
+            if (typeof filterQueueTable === 'function') filterQueueTable();
+        }
+    } else if (payload.type === 'fsm_state_changed') {
+        if (typeof currentViewId !== 'undefined' && currentViewId === 'queue') {
+            loadQueueData();
+        }
+    } else if (payload.type === 'otp_request_created' || payload.type === 'otp_delivered') {
+        if (typeof currentViewId !== 'undefined' && currentViewId === 'queue') {
+            loadOtpQueueData();
+        }
+    }
+
     logEvents.push(payload);
     if (logEvents.length > LOG_BUFFER_LIMIT) {
         logEvents.shift();
@@ -4825,5 +4846,328 @@ async function clearApplicantTracking(nid) {
         }
     } catch (e) {
         showToast('خطا در ارتباط با سرور: ' + e, 'error');
+    }
+}
+
+
+/* ══════════════════════════════════════════════════════════════════
+   MAHANBOT 2.0 — QUEUE & STATE MACHINE DASHBOARD MANAGEMENT (PHASE 7)
+   ══════════════════════════════════════════════════════════════════ */
+
+window.cachedQueueItems = [];
+window.cachedOtpQueueItems = [];
+
+const FSM_STATE_LABELS = {
+    'QUEUED': { text: 'در صف انتظار', cls: 'badge bg-secondary' },
+    'PREPARING': { text: 'آماده‌سازی', cls: 'badge bg-info text-dark' },
+    'STARTING': { text: 'آغاز فرایند', cls: 'badge bg-primary' },
+    'REQUESTING_OTP': { text: 'ارسال درخواست OTP', cls: 'badge bg-warning text-dark' },
+    'WAITING_OTP': { text: 'در انتظار پیامک', cls: 'badge bg-warning text-dark' },
+    'OTP_RECEIVED': { text: 'دریافت کد پیامک', cls: 'badge bg-info text-dark' },
+    'VERIFYING_OTP': { text: 'تایید کد پیامک', cls: 'badge bg-info text-dark' },
+    'AUTHENTICATED': { text: 'ورود موفق', cls: 'badge bg-success' },
+    'STEP_3_READY': { text: 'مرحله ۳ آماده', cls: 'badge bg-primary' },
+    'SELECTING_BANK': { text: 'بررسی بانک‌ها', cls: 'badge bg-primary' },
+    'CAPACITY_FULL': { text: 'ظرفیت تکمیل', cls: 'badge bg-warning text-dark' },
+    'WAITING_AVAILABILITY': { text: 'انتظار سهمیه', cls: 'badge bg-warning text-dark' },
+    'READY_TO_SUBMIT': { text: 'آماده ثبت نهایی', cls: 'badge bg-success' },
+    'SUBMITTING': { text: 'ارسال نهایی', cls: 'badge bg-primary' },
+    'CONFIRMED': { text: 'ثبت قطعی موفق', cls: 'badge bg-success' },
+    'SESSION_EXPIRED': { text: 'انقضای نشست', cls: 'badge bg-danger' },
+    'PAUSED': { text: 'متوقف شده', cls: 'badge bg-secondary' },
+    'BLOCKED': { text: 'نیازمند اقدام', cls: 'badge bg-danger' },
+    'FAILED': { text: 'خطا', cls: 'badge bg-danger' }
+};
+
+async function loadQueueData() {
+    try {
+        const res = await apiCall('/api/queue', 'GET');
+        if (res && res.status === 'success') {
+            window.cachedQueueItems = res.data || [];
+            filterQueueTable();
+        }
+        const statsRes = await apiCall('/api/queue/stats', 'GET');
+        if (statsRes && statsRes.stats) {
+            renderQueueStats(statsRes.stats);
+        }
+    } catch (e) {
+        console.warn('loadQueueData error:', e);
+    }
+}
+
+async function loadOtpQueueData() {
+    try {
+        const res = await apiCall('/api/otp-queue', 'GET');
+        if (res && res.status === 'success') {
+            window.cachedOtpQueueItems = res.data || [];
+            renderOtpQueueTable(window.cachedOtpQueueItems);
+        }
+    } catch (e) {
+        console.warn('loadOtpQueueData error:', e);
+    }
+}
+
+function renderQueueStats(stats) {
+    if (!stats) return;
+    const setVal = (id, val) => {
+        const el = document.getElementById(id);
+        if (el) el.innerText = toPersianNum(val ?? 0);
+    };
+    setVal('queue-stat-total', stats.total);
+    setVal('queue-stat-waiting', stats.waiting);
+    setVal('queue-stat-running', stats.running);
+    setVal('queue-stat-waiting-sms', stats.waiting_sms);
+    setVal('queue-stat-step-3', stats.step_3);
+    setVal('queue-stat-waiting-bank', stats.waiting_bank);
+    setVal('queue-stat-completed', stats.completed);
+    setVal('queue-stat-failed', (stats.failed || 0) + (stats.paused || 0));
+}
+
+function filterQueueTable() {
+    const search = (document.getElementById('queueSearchInput')?.value || '').trim().toLowerCase();
+    const status = (document.getElementById('queueStatusFilter')?.value || '').trim();
+    const priority = (document.getElementById('queuePriorityFilter')?.value || '').trim();
+
+    let items = window.cachedQueueItems || [];
+
+    if (search) {
+        items = items.filter(it =>
+            (it.applicant_name || '').toLowerCase().includes(search) ||
+            (it.applicant_id || '').includes(search)
+        );
+    }
+    if (status) {
+        items = items.filter(it => (it.queue_status || '') === status);
+    }
+    if (priority) {
+        items = items.filter(it => (it.priority || '') === priority);
+    }
+
+    renderQueueTable(items);
+}
+
+function renderQueueTable(items) {
+    const tbody = document.getElementById('queueTableBody');
+    if (!tbody) return;
+
+    if (!items || items.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="11" class="text-center text-muted py-4">هیچ متقاضی در این دسته یافت نشد.</td></tr>';
+        return;
+    }
+
+    let html = '';
+    items.forEach((it, idx) => {
+        const rank = it.rank || (idx + 1);
+        const p = (it.priority || 'NORMAL').toUpperCase();
+        const pBadgeCls = p === 'HIGH' ? 'bg-danger' : (p === 'LOW' ? 'bg-secondary' : 'bg-info text-dark');
+        const pText = p === 'HIGH' ? 'بالا (HIGH)' : (p === 'LOW' ? 'پایین (LOW)' : 'عادی');
+
+        const nidDisplay = (typeof sensitiveMasked !== 'undefined' && sensitiveMasked)
+            ? (it.applicant_id ? it.applicant_id.substring(0, 3) + '****' + it.applicant_id.slice(-3) : '---')
+            : (it.applicant_id || '---');
+
+        const fsmInfo = FSM_STATE_LABELS[it.bot_state] || { text: it.bot_state || 'نامشخص', cls: 'badge bg-secondary' };
+
+        const sessionDot = it.session_active
+            ? '<span class="badge bg-success" title="مرورگر فعال و متصل"><i class="fa-solid fa-circle-dot me-1"></i> متصل</span>'
+            : '<span class="badge bg-secondary" title="مرورگر غیرفعال"><i class="fa-regular fa-circle me-1"></i> غیرفعال</span>';
+
+        let lastAct = '---';
+        if (it.last_activity_at) {
+            const secAgo = Math.max(0, Math.round(Date.now() / 1000 - it.last_activity_at));
+            lastAct = secAgo < 60 ? `${secAgo} ثانیه پیش` : `${Math.round(secAgo / 60)} دقیقه پیش`;
+        }
+
+        const isRunning = it.queue_status === 'RUNNING';
+        const isPaused = it.queue_status === 'PAUSED';
+
+        html += `
+        <tr>
+            <td class="fw-bold text-center">
+                <div class="d-flex flex-column align-items-center gap-1">
+                    <span>${toPersianNum(rank)}</span>
+                    <div class="btn-group btn-group-sm">
+                        <button class="btn btn-outline-secondary py-0 px-1" title="افزایش اولویت در صف" onclick="reorderQueueItem('${it.queue_id}', ${rank - 1})" ${rank <= 1 ? 'disabled' : ''}>▲</button>
+                        <button class="btn btn-outline-secondary py-0 px-1" title="کاهش اولویت در صف" onclick="reorderQueueItem('${it.queue_id}', ${rank + 1})">▼</button>
+                    </div>
+                </div>
+            </td>
+            <td>
+                <select class="form-select form-select-sm fw-bold" style="font-size:0.8rem; width:95px;" onchange="setQueuePriority('${it.applicant_id}', this.value)">
+                    <option value="HIGH" ${p === 'HIGH' ? 'selected' : ''}>بالا (HIGH)</option>
+                    <option value="NORMAL" ${p === 'NORMAL' ? 'selected' : ''}>عادی</option>
+                    <option value="LOW" ${p === 'LOW' ? 'selected' : ''}>پایین (LOW)</option>
+                </select>
+            </td>
+            <td><strong>${it.applicant_name || 'بدون نام'}</strong></td>
+            <td><code>${toPersianNum(nidDisplay)}</code></td>
+            <td><small class="badge bg-light text-dark border">${it.loan_type === 'CHILD' ? 'فرزندآوری' : 'ازدواج'}</small></td>
+            <td><small>${it.requested_bank || 'همه بانک‌ها'}</small></td>
+            <td><span class="${fsmInfo.cls}">${fsmInfo.text}</span></td>
+            <td><small>${it.otp_state || '-'}</small></td>
+            <td>${sessionDot}</td>
+            <td><small class="text-muted">${lastAct}</small></td>
+            <td>
+                <div class="d-flex gap-1">
+                    ${!isRunning ? `
+                    <button class="btn btn-sm btn-success py-0 px-2" title="شروع پردازش متقاضی" onclick="startQueuedUser('${it.applicant_id}')">
+                        <i class="fa-solid fa-play"></i>
+                    </button>` : `
+                    <button class="btn btn-sm btn-warning py-0 px-2" title="توقف موقت" onclick="pauseQueuedUser('${it.applicant_id}')">
+                        <i class="fa-solid fa-pause"></i>
+                    </button>`}
+                    ${isPaused ? `
+                    <button class="btn btn-sm btn-info py-0 px-2" title="ادامه پردازش" onclick="resumeQueuedUser('${it.applicant_id}')">
+                        <i class="fa-solid fa-rotate-right"></i>
+                    </button>` : ''}
+                    <button class="btn btn-sm btn-outline-danger py-0 px-2" title="خروج از صف فعال" onclick="removeQueueItem('${it.applicant_id}')">
+                        <i class="fa-solid fa-xmark"></i>
+                    </button>
+                </div>
+            </td>
+        </tr>`;
+    });
+
+    tbody.innerHTML = html;
+}
+
+function renderOtpQueueTable(items) {
+    const tbody = document.getElementById('otpQueueBody');
+    if (!tbody) return;
+
+    if (!items || items.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="6" class="text-center text-muted py-3">درخواستی در انتظار پیامک نیست.</td></tr>';
+        return;
+    }
+
+    let html = '';
+    const now = Math.floor(Date.now() / 1000);
+
+    items.forEach(it => {
+        const rem = Math.max(0, (it.expires_at || 0) - now);
+        const remText = rem > 0 ? `${rem} ثانیه` : '<span class="text-danger">منقضی شد</span>';
+        const stBadge = it.status === 'PENDING' ? 'bg-warning text-dark' : (it.status === 'DELIVERED' ? 'bg-success' : 'bg-secondary');
+
+        html += `
+        <tr>
+            <td><strong>${it.applicant_id}</strong></td>
+            <td><code>${toPersianNum(it.phone_number || '-')}</code></td>
+            <td><small class="badge bg-light text-dark">${it.step || 'STEP_1'}</small></td>
+            <td>${remText}</td>
+            <td><span class="badge ${stBadge}">${it.status}</span></td>
+            <td>
+                <div class="input-group input-group-sm" style="width:170px;">
+                    <input id="otp_in_${it.request_id}" class="form-control form-control-sm" placeholder="کد ۶ رقمی" maxlength="8">
+                    <button class="btn btn-primary btn-sm" onclick="deliverManualOtpQueue('${it.request_id}', '${it.applicant_id}')">ارسال</button>
+                </div>
+            </td>
+        </tr>`;
+    });
+
+    tbody.innerHTML = html;
+}
+
+async function deliverManualOtpQueue(requestId, nid) {
+    const input = document.getElementById(`otp_in_${requestId}`);
+    const code = (input?.value || '').trim();
+    if (!code) {
+        showMahanToast('خطا', 'لطفاً کد پیامک را وارد کنید.', 'warning');
+        return;
+    }
+    try {
+        const res = await apiCall('/api/otp', 'POST', {
+            request_id: requestId,
+            applicant_id: nid,
+            national_id: nid,
+            code: code,
+            otp: code,
+            source: 'DASHBOARD_QUEUE'
+        });
+        showMahanToast('موفق', 'کد پیامک با موفقیت تحویل داده شد.', 'success');
+        loadOtpQueueData();
+        loadQueueData();
+    } catch (e) {
+        showMahanToast('خطا در ارسال کد', e.message, 'error');
+    }
+}
+
+async function startQueuedUser(nid) {
+    try {
+        await apiCall(`/api/queue/${nid}/start`, 'POST');
+        showMahanToast('آغاز پردازش', `بات متقاضی ${nid} در اولویت اجرا قرار گرفت.`, 'info');
+        loadQueueData();
+    } catch (e) {
+        showMahanToast('خطا در شروع بات', e.message, 'error');
+    }
+}
+
+async function pauseQueuedUser(nid) {
+    try {
+        await apiCall(`/api/queue/${nid}/pause`, 'POST');
+        showMahanToast('توقف متقاضی', `متقاضی ${nid} موقتاً متوقف شد.`, 'warning');
+        loadQueueData();
+    } catch (e) {
+        showMahanToast('خطا', e.message, 'error');
+    }
+}
+
+async function resumeQueuedUser(nid) {
+    try {
+        await apiCall(`/api/queue/${nid}/resume`, 'POST');
+        showMahanToast('ادامه پردازش', `متقاضی ${nid} به صف انتظار بازگشت.`, 'success');
+        loadQueueData();
+    } catch (e) {
+        showMahanToast('خطا', e.message, 'error');
+    }
+}
+
+async function setQueuePriority(nid, priority) {
+    try {
+        await apiCall(`/api/queue/${nid}/priority`, 'POST', { priority: priority });
+        showMahanToast('تغییر اولویت', `اولویت متقاضی به ${priority} تغییر کرد.`, 'success');
+        loadQueueData();
+    } catch (e) {
+        showMahanToast('خطا', e.message, 'error');
+    }
+}
+
+async function reorderQueueItem(queueId, targetPos) {
+    if (targetPos < 1) return;
+    try {
+        await apiCall(`/api/queue/${queueId}/reorder`, 'POST', { position: targetPos });
+        loadQueueData();
+    } catch (e) {
+        showMahanToast('خطا', e.message, 'error');
+    }
+}
+
+async function removeQueueItem(nid) {
+    if (!confirm(`آیا از خروج متقاضی ${nid} از صف پردازش اطمینان دارید؟`)) return;
+    try {
+        await apiCall(`/api/queue/${nid}/remove`, 'POST');
+        showMahanToast('لغو از صف', 'متقاضی از صف فعال حذف گردید.', 'info');
+        loadQueueData();
+    } catch (e) {
+        showMahanToast('خطا', e.message, 'error');
+    }
+}
+
+async function startAllQueue() {
+    try {
+        const res = await apiCall('/api/queue/start-all', 'POST');
+        showMahanToast('شروع همه', `${res.started || 0} متقاضی در صف آغاز به کار نمودند.`, 'success');
+        loadQueueData();
+    } catch (e) {
+        showMahanToast('خطا', e.message, 'error');
+    }
+}
+
+async function pauseAllQueue() {
+    try {
+        const res = await apiCall('/api/queue/pause-all', 'POST');
+        showMahanToast('توقف همه', `${res.paused || 0} متقاضی متوقف شدند.`, 'warning');
+        loadQueueData();
+    } catch (e) {
+        showMahanToast('خطا', e.message, 'error');
     }
 }

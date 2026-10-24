@@ -199,6 +199,14 @@ class JobQueue:
 
             job_status_event(job.nid, job.id, "running")
             log_event(job.nid, job.id, f"Job started ({job.bot_name})", "info")
+            try:
+                from core.state_machine import transition_state, BotState
+                from core.queue_manager import QueueManager
+                transition_state(job.nid, BotState.STARTING.value, f"worker_{worker_id}_started")
+                QueueManager.heartbeat(job.nid, f"worker_{worker_id}")
+                QueueManager.emit_snapshot()
+            except Exception:
+                pass
 
             try:
                 self._run_job_isolated(job)
@@ -238,6 +246,18 @@ class JobQueue:
                         last_error=str(job.error or current_runtime.get("last_error") or "")[:300],
                     )
                 job_status_event(job.nid, job.id, job.status)
+                try:
+                    from core.state_machine import transition_state, BotState
+                    from core.queue_manager import QueueManager
+                    if is_success:
+                        transition_state(job.nid, BotState.CONFIRMED.value, "final_submit_confirmed")
+                    elif job.status == "failed":
+                        transition_state(job.nid, BotState.FAILED.value, str(job.error or "failed"))
+                    else:
+                        transition_state(job.nid, BotState.PAUSED.value, f"job_{job.status}")
+                    QueueManager.emit_snapshot()
+                except Exception:
+                    pass
                 with self._lock:
                     finished = sorted(
                         (item for item in self._jobs.values() if item.finished_at),

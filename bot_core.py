@@ -684,14 +684,16 @@ class BotCore:
         if any(token in msg_norm for token in ("کد امنیتی", "کپچا", "CAPTCHA", "captcha")):
             return "captcha_invalid"
 
-        # 4) Session expired
+        # 4) Session expired (strictly genuine session expiration only, never generic timing or capacity alerts)
         session_markers = (
-            "نشست شما",
-            "مهلت زمانی",
-            "زمان مجاز",
-            "مجددا وارد",
-            "مجدداً وارد",
-            "session",
+            "نشست شما منقضی",
+            "انقضای نشست",
+            "مدت زمان نشست شما به پایان رسیده",
+            "مجددا وارد سامانه شوید",
+            "مجدداً وارد سامانه شوید",
+            "مجددا وارد شوید",
+            "لطفا مجددا وارد شوید",
+            "session expired",
         )
         if any(m in msg_norm.lower() for m in session_markers):
             return "session_expired"
@@ -1196,3 +1198,12 @@ class BotCore:
             return any(marker in body_text for marker in challenge_markers)
         except Exception:
             return False
+
+
+def classify_page_error(message: str) -> str:
+    """Classify dialog or page alerts (e.g. bank_capacity_full, session_expired, otp_expired, etc.)."""
+    bot = BotCore.__new__(BotCore)
+    res = bot._classify_dialog(message)
+    if res == "bank_capacity_full":
+        return "capacity_full"
+    return res or "generic_error"

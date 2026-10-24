@@ -58,6 +58,13 @@ async def _startup():
     except Exception as e:
         logger.warning("DB startup reset failed: %s", e)
 
+    # بازیابی خودکار صف متقاضیان و آزاد کردن قفل‌های تصادفی ناشی از کرش قبلی
+    try:
+        from core.queue_manager import QueueManager
+        QueueManager.recover_on_startup()
+    except Exception as e:
+        logger.warning("QueueManager startup crash recovery failed: %s", e)
+
 @asynccontextmanager
 async def _lifespan(application: FastAPI):
     async with _state.STARTUP_LOCK:
@@ -111,7 +118,7 @@ async def require_subscription_login(request: Request, call_next):
         return JSONResponse({"detail": "اشتراک شما معتبر نیست یا وارد نشده‌اید"}, status_code=401)
     
     from core.licensing import can_run, license_required
-    safety_action = (path.startswith(('/jobs/cancel/', '/bot/stop/', '/api/capacity/pause/'))
+    safety_action = (path.startswith(('/jobs/cancel/', '/bot/stop/', '/api/capacity/pause/', '/api/queue/'))
                      or path in {'/api/capacity/stop-all', '/logout', '/login', '/receive_sms', '/sms/webhook', '/api/sms/webhook'}
                      or path.startswith('/api/license/'))
     if license_required() and request.method in {'POST', 'PUT', 'PATCH', 'DELETE'} and not safety_action:
@@ -150,6 +157,7 @@ from routes.capacity import router as capacity_router
 from routes.database_admin import router as database_admin_router
 from routes.system_update import router as system_update_router
 from routes.licenses import router as licenses_router
+from routes.queue import router as queue_router
 
 app.include_router(auth_router)
 app.include_router(licenses_router)
@@ -163,6 +171,7 @@ app.include_router(diagnostic_router)
 app.include_router(capacity_router)
 app.include_router(database_admin_router)
 app.include_router(system_update_router)
+app.include_router(queue_router)
 
 if __name__ == "__main__":
     import uvicorn

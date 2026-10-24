@@ -171,9 +171,12 @@ class BankSelectionSessionController:
             self.owner.bank_page_active = True
             self.owner.validated_at = time.time()
         elif stage in {"STEP_1_ENTRY_FORM", "STEP_2_OTP"}:
-            self.owner.bank_page_active = False
-            self.owner.validated_at = 0
-            return State.SESSION_EXPIRED, data
+            # Only declare SESSION_EXPIRED if the page truly navigated away from SelectBnk URL
+            curr_url = str(getattr(page, "url", "") or "")
+            if "SelectBnk" not in curr_url:
+                self.owner.bank_page_active = False
+                self.owner.validated_at = 0
+                return State.SESSION_EXPIRED, data
         return stage, data
 
     @staticmethod

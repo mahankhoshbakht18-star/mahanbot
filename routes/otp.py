@@ -57,8 +57,10 @@ def _handle_receive_sms(nid: str, code: str, status_label: str = "received", ts:
         # Forwarder retries must not turn a stale/consumed message into a fresh code.
         return True
     request_id = DBHandler.get_runtime(nid).get("otp_request_id")
+    from core.otp_queue import OTPQueueManager
+    ok, _ = OTPQueueManager.deliver_otp(code, source=status_label, explicit_nid=nid, request_id=request_id)
     success = DBHandler.set_otp(nid, code, ts=otp_ts, status=status_label, request_id=request_id)
-    if not success:
+    if not success and not ok:
         return False
     DBHandler.update_runtime(nid, otp_state="SMS_RECEIVED")
     log_event(nid, None, "OTP received", "success")
