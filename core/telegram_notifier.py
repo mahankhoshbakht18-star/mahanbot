@@ -194,11 +194,19 @@ class TelegramNotifierService:
                     bridge_url = f"https://api.allorigins.win/raw?url={urllib.parse.quote(tg_url)}"
 
                     b_req = urllib.request.Request(bridge_url, headers={"User-Agent": "Mozilla/5.0"})
-                    with urllib.request.urlopen(b_req, timeout=15) as b_resp:
-                        b_data = json.loads(b_resp.read().decode("utf-8"))
-                        if b_data.get("ok"):
-                            return True, "OK (via Smart Bridge)"
-                        return False, b_data.get("description", "Bridge Error")
+                    last_bridge_err = None
+                    for _ in range(2):
+                        try:
+                            with urllib.request.urlopen(b_req, timeout=25) as b_resp:
+                                b_data = json.loads(b_resp.read().decode("utf-8"))
+                                if b_data.get("ok"):
+                                    return True, "OK (via Smart Bridge)"
+                                return False, b_data.get("description", "Bridge Error")
+                        except Exception as b_err:
+                            last_bridge_err = b_err
+                            time.sleep(1.5)
+                    if last_bridge_err:
+                        raise last_bridge_err
                 except Exception as bridge_err:
                     return False, f"Connection error: {req_err} (Bridge: {bridge_err})"
 
@@ -303,16 +311,23 @@ class TelegramNotifierService:
     @staticmethod
     def format_beautiful_radar_message(
         province_name: str,
-        city_name: str,
-        active_banks: List[Dict[str, Any]],
-        reserve_banks: List[Dict[str, Any]],
+        city_name: str = "",
+        active_banks: Optional[List[Dict[str, Any]]] = None,
+        reserve_banks: Optional[List[Dict[str, Any]]] = None,
         applicant_nid: str = "",
         action_status: str = "پایش فعال ظرفیت",
+        provincial_only: bool = True,
     ) -> str:
         """
         Piece 3: Format a beautiful, structured capacity radar message for Telegram.
-        Distinguishes active quota (green ✅) from reserve (yellow ⏳) and shows queue counts.
+        Unified broadcast:
+        - Mentions ONLY the province name (no applicant NID or city when provincial_only=True)
+        - Groups active capacity banks (green ✅) and reserve banks (yellow ⏳) into one single stylish message
+        - Uses beautiful separators and Persian digits
         """
+        active_banks = active_banks or []
+        reserve_banks = reserve_banks or []
+
         def _to_persian_digits(n: Any) -> str:
             if n is None or n == "":
                 return "۰"
@@ -325,49 +340,63 @@ class TelegramNotifierService:
                 formatted = formatted.replace(str(i), p_digits[i])
             return formatted
 
-        masked_nid = ""
-        if applicant_nid:
-            s_nid = str(applicant_nid).strip()
-            masked_nid = f"{s_nid[:2]}******{s_nid[-2:]}" if len(s_nid) >= 8 else s_nid
-
         time_str = datetime.now().strftime("%H:%M:%S")
         lines = [
-            "📡 <b>رادار لحظه‌ای سهمیه تسهیلات بانک مرکزی | MAHANBOT</b>",
-            f"📍 <b>استان:</b> {province_name or 'نامشخص'} | 🏙 <b>شهر:</b> {city_name or 'کل استان'}",
-            f"⏰ <b>ساعت استعلام:</b> {time_str}\n",
+            "📡 <b>رادار لحظه‌ای سهمیه وام ازدواج | MAHANBOT</b>",
+            f"📍 <b>استان:</b> {province_name or 'نامشخص'}",
+            f"⏰ <b>ساعت استعلام:</b> {time_str}",
+            "━━━━━━━━━━━━━━━━━━━",
         ]
 
-        # 1. Active Banks
-        lines.append("🟢 <b>بانک‌های دارای ظرفیت قطعی ثبت‌نام:</b>")
+        if not provincial_only and city_name:
+            lines.insert(2, f"🏙 <b>شهر:</b> {city_name}")
+
+        # 1. Active Quota Banks
+        active_count = len(active_banks)
+        lines.append(f"🟢 <b>بانک‌های دارای ظرفیت قطعی ({_to_persian_digits(active_count)} بانک):</b>")
         if not active_banks:
             lines.append("<i>در حال حاضر سهمیه قطعی بازی در این استان یافت نشد.</i>")
         else:
             for b in active_banks:
                 b_name = b.get("bank_name") or b.get("clean_title") or "بانک"
                 w_count = b.get("waiting_count", 0)
-                q_text = f" (متقاضی در صف: {_to_persian_digits(w_count)} نفر)" if w_count > 0 else ""
+                q_text = f" (صف: {_to_persian_digits(w_count)} نفر)" if w_count > 0 else ""
                 lines.append(f"  ✅ <b>{b_name}</b>{q_text}")
 
-        # 2. Reserve Banks
-        lines.append("\n🟡 <b>بانک‌های در انتظار تخصیص سهمیه جدید (رزرو):</b>")
+        # 2. Reserve Banks (Unified single message, grouped cleanly)
+        reserve_count = len(reserve_banks)
+        lines.append(f"\n🟡 <b>بانک‌های دارای سهمیه رزرو ({_to_persian_digits(reserve_count)} بانک):</b>")
         if not reserve_banks:
             lines.append("<i>هیچ بانکی در حالت رزرو قرار ندارد.</i>")
         else:
+            reserve_items = []
             for b in reserve_banks:
                 b_name = b.get("bank_name") or b.get("clean_title") or "بانک"
                 w_count = b.get("waiting_count", 0)
-                q_text = f" (متقاضی در صف: {_to_persian_digits(w_count)} نفر)" if w_count > 0 else ""
-                lines.append(f"  ⏳ <b>{b_name}</b>{q_text}")
+                q_text = f" ({_to_persian_digits(w_count)})" if w_count > 0 else ""
+                reserve_items.append(f"{b_name}{q_text}")
 
-        # 3. Action Status
-        nid_line = f" ({masked_nid})" if masked_nid else ""
+            chunk_size = 3
+            for i in range(0, len(reserve_items), chunk_size):
+                chunk = reserve_items[i : i + chunk_size]
+                lines.append("  ⏳ " + " • ".join(chunk))
+
+        if not provincial_only:
+            masked_nid = ""
+            if applicant_nid:
+                s_nid = str(applicant_nid).strip()
+                masked_nid = f"{s_nid[:2]}******{s_nid[-2:]}" if len(s_nid) >= 8 else s_nid
+            nid_line = f" ({masked_nid})" if masked_nid else ""
+            lines.extend([
+                f"\n🎯 <b>وضعیت اقدام متقاضی{nid_line}:</b>",
+                f"<code>[{action_status}]</code>",
+            ])
+
         lines.extend([
-            f"\n🎯 <b>وضعیت اقدام متقاضی{nid_line}:</b>",
-            f"<code>[{action_status}]</code>",
-            "\n📢 @Mahanvpn3 | 🤖 @MahanVPN_Shop_Bot",
+            "━━━━━━━━━━━━━━━━━━━",
+            "📢 @Mahanvpn3 | 🤖 @MahanVPN_Shop_Bot",
         ])
         return "\n".join(lines)
-
     @staticmethod
     def format_channel_post(
         title: str = "🚀 ظرفیت جدید سرویس‌های MahanBot و سهمیه‌های بانکی",

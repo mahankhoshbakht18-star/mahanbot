@@ -91,7 +91,7 @@ def run_test():
     print(f"📍 موقعیت: استان {province} | شهر {city}")
     print(f"📊 بانک‌های استخراج‌شده: {len(active_banks)} سهمیه فعال | {len(reserve_banks)} در صف رزرو")
 
-    # 3. Format Beautiful Radar Message
+    # 3. Format Beautiful Radar Message (Provincial broadcast: Only province, all 13 banks unified)
     message_text = TELEGRAM_NOTIFIER.format_beautiful_radar_message(
         province_name=province,
         city_name=city,
@@ -99,6 +99,7 @@ def run_test():
         reserve_banks=reserve_banks,
         applicant_nid="0012345678",
         action_status="پایش سهمیه صفحه ۳ (تست سیو پیج)",
+        provincial_only=True,
     )
 
     print("\n" + "─" * 60)
