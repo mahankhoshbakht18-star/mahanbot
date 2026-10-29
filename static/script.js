@@ -2020,17 +2020,16 @@ async function loadSettings() {
 
         //  
 
-        document.getElementById('set_captcha').value = s.captcha_delay || 0.1;
-
-        document.getElementById('set_retry').value = s.retry_count || 5;
-        document.getElementById('set_automation_mode').value = s.automation_mode || 'normal';
-        document.getElementById('set_default_timeout').value = s.default_timeout_ms ?? 5000;
-        document.getElementById('set_navigation_timeout').value = s.navigation_timeout_ms ?? 15000;
-        document.getElementById('set_retry_delay').value = s.retry_delay ?? 0.25;
-        document.getElementById('set_captcha_poll').value = s.captcha_poll_interval ?? 0.1;
-        document.getElementById('set_captcha_retry_delay').value = s.captcha_retry_delay ?? 0.25;
-        document.getElementById('set_captcha_max').value = s.captcha_max_retries ?? 3;
-        document.getElementById('set_bank_refresh').value = s.bank_list_refresh_seconds ?? s.bank_refresh_interval ?? 5;
+        if (document.getElementById('set_captcha')) document.getElementById('set_captcha').value = s.captcha_delay || 0.1;
+        if (document.getElementById('set_retry')) document.getElementById('set_retry').value = s.retry_count || 5;
+        if (document.getElementById('set_automation_mode')) document.getElementById('set_automation_mode').value = s.automation_mode || 'normal';
+        if (document.getElementById('set_default_timeout')) document.getElementById('set_default_timeout').value = s.default_timeout_ms ?? 5000;
+        if (document.getElementById('set_navigation_timeout')) document.getElementById('set_navigation_timeout').value = s.navigation_timeout_ms ?? 15000;
+        if (document.getElementById('set_retry_delay')) document.getElementById('set_retry_delay').value = s.retry_delay ?? 0.25;
+        if (document.getElementById('set_captcha_poll')) document.getElementById('set_captcha_poll').value = s.captcha_poll_interval ?? 0.1;
+        if (document.getElementById('set_captcha_retry_delay')) document.getElementById('set_captcha_retry_delay').value = s.captcha_retry_delay ?? 0.25;
+        if (document.getElementById('set_captcha_max')) document.getElementById('set_captcha_max').value = s.captcha_max_retries ?? 3;
+        if (document.getElementById('set_bank_refresh')) document.getElementById('set_bank_refresh').value = s.bank_list_refresh_seconds ?? s.bank_refresh_interval ?? 5;
         if (document.getElementById('set_bank_capacity_recheck')) document.getElementById('set_bank_capacity_recheck').value = s.bank_capacity_recheck_seconds ?? 20;
         if (document.getElementById('set_otp_validity')) document.getElementById('set_otp_validity').value = s.otp_validity_seconds ?? 120;
         if (document.getElementById('set_resume_checkpoint')) document.getElementById('set_resume_checkpoint').checked = s.resume_from_checkpoint !== false;
@@ -2039,28 +2038,24 @@ async function loadSettings() {
         if (document.getElementById('set_pause_manual_otp')) document.getElementById('set_pause_manual_otp').checked = s.pause_for_manual_otp !== false;
         if (document.getElementById('set_allow_reserve_bank')) document.getElementById('set_allow_reserve_bank').checked = s.allow_reserve_bank !== false;
         if (document.getElementById('set_diagnostic_logging')) document.getElementById('set_diagnostic_logging').checked = s.diagnostic_logging_enabled !== false;
-        document.getElementById('set_bank_monitor').checked = s.bank_monitor_enabled !== false;
-        document.getElementById('set_save_page').checked = s.save_page_enabled !== false;
-        document.getElementById('set_save_html').checked = s.save_html !== false;
-        document.getElementById('set_save_screenshot').checked = s.save_screenshot !== false;
-        document.getElementById('set_save_change_only').checked = s.save_only_on_bank_change !== false;
-        document.getElementById('set_auto_repair').checked = s.auto_repair_saved_pages === true;
+        if (document.getElementById('set_bank_monitor')) document.getElementById('set_bank_monitor').checked = s.bank_monitor_enabled !== false;
+        if (document.getElementById('set_save_page')) document.getElementById('set_save_page').checked = s.save_page_enabled !== false;
+        if (document.getElementById('set_save_html')) document.getElementById('set_save_html').checked = s.save_html !== false;
+        if (document.getElementById('set_save_screenshot')) document.getElementById('set_save_screenshot').checked = s.save_screenshot !== false;
+        if (document.getElementById('set_save_change_only')) document.getElementById('set_save_change_only').checked = s.save_only_on_bank_change !== false;
+        if (document.getElementById('set_auto_repair')) document.getElementById('set_auto_repair').checked = s.auto_repair_saved_pages === true;
 
-        document.getElementById('set_headless').checked = s.headless || false;
-        document.getElementById('set_browser_display_mode').value = s.browser_display_mode || 'external';
+        if (document.getElementById('set_headless')) document.getElementById('set_headless').checked = s.headless || false;
+        if (document.getElementById('set_browser_display_mode')) document.getElementById('set_browser_display_mode').value = s.browser_display_mode || 'external';
         if (document.getElementById('set_default_bank_mode')) document.getElementById('set_default_bank_mode').value = s.default_bank_mode || 'online';
         if (document.getElementById('set_browser_page_zoom')) document.getElementById('set_browser_page_zoom').value = String(s.browser_page_zoom || '1.25');
         if (document.getElementById('set_focus_view_enabled')) document.getElementById('set_focus_view_enabled').checked = s.focus_view_enabled !== false;
         applyBrowserDisplayMode(s.browser_display_mode || 'external');
 
-        
-
-        //  
-
-        document.getElementById('set_captcha_mode').value = s.captcha_mode || 'model'; 
+        if (document.getElementById('set_captcha_mode')) document.getElementById('set_captcha_mode').value = s.captcha_mode || 'model'; 
 
         setSubmissionDefaults(s);
-        document.getElementById('set_final_submit').checked = Boolean(s.auto_final_submit ?? s.final_submit ?? false);
+        if (document.getElementById('set_final_submit')) document.getElementById('set_final_submit').checked = Boolean(s.auto_final_submit ?? s.final_submit ?? false);
 
         
 
@@ -2278,18 +2273,18 @@ async function saveSettings() {
 
     const payload = {
 
-        captcha_delay: document.getElementById('set_captcha').value,
+        captcha_delay: document.getElementById('set_captcha')?.value || 0.1,
 
-        retry_count: document.getElementById('set_retry').value,
-        automation_mode: document.getElementById('set_automation_mode').value,
-        default_timeout_ms: Number(document.getElementById('set_default_timeout').value),
-        navigation_timeout_ms: Number(document.getElementById('set_navigation_timeout').value),
-        retry_delay: Number(document.getElementById('set_retry_delay').value),
-        captcha_poll_interval: Number(document.getElementById('set_captcha_poll').value),
-        captcha_retry_delay: Number(document.getElementById('set_captcha_retry_delay').value),
-        captcha_max_retries: Number(document.getElementById('set_captcha_max').value),
-        bank_refresh_interval: Number(document.getElementById('set_bank_refresh').value || 5),
-        bank_list_refresh_seconds: Number(document.getElementById('set_bank_refresh').value || 5),
+        retry_count: Number(document.getElementById('set_retry')?.value || 5),
+        automation_mode: document.getElementById('set_automation_mode')?.value || 'normal',
+        default_timeout_ms: Number(document.getElementById('set_default_timeout')?.value || 5000),
+        navigation_timeout_ms: Number(document.getElementById('set_navigation_timeout')?.value || 15000),
+        retry_delay: Number(document.getElementById('set_retry_delay')?.value || 0.25),
+        captcha_poll_interval: Number(document.getElementById('set_captcha_poll')?.value || 0.1),
+        captcha_retry_delay: Number(document.getElementById('set_captcha_retry_delay')?.value || 0.25),
+        captcha_max_retries: Number(document.getElementById('set_captcha_max')?.value || 3),
+        bank_refresh_interval: Number(document.getElementById('set_bank_refresh')?.value || 5),
+        bank_list_refresh_seconds: Number(document.getElementById('set_bank_refresh')?.value || 5),
         bank_capacity_recheck_seconds: Number(document.getElementById('set_bank_capacity_recheck')?.value || 20),
         otp_validity_seconds: Number(document.getElementById('set_otp_validity')?.value || 120),
         resume_from_checkpoint: document.getElementById('set_resume_checkpoint') ? document.getElementById('set_resume_checkpoint').checked : true,
@@ -2299,13 +2294,13 @@ async function saveSettings() {
         allow_reserve_bank: document.getElementById('set_allow_reserve_bank') ? document.getElementById('set_allow_reserve_bank').checked : false,
         default_bank_mode: document.getElementById('set_default_bank_mode') ? document.getElementById('set_default_bank_mode').value : 'online',
         diagnostic_logging_enabled: document.getElementById('set_diagnostic_logging') ? document.getElementById('set_diagnostic_logging').checked : true,
-        auto_final_submit: document.getElementById('set_final_submit').checked,
-        bank_monitor_enabled: document.getElementById('set_bank_monitor').checked,
-        save_page_enabled: document.getElementById('set_save_page').checked,
-        save_html: document.getElementById('set_save_html').checked,
-        save_screenshot: document.getElementById('set_save_screenshot').checked,
-        save_only_on_bank_change: document.getElementById('set_save_change_only').checked,
-        auto_repair_saved_pages: document.getElementById('set_auto_repair').checked,
+        auto_final_submit: document.getElementById('set_final_submit') ? document.getElementById('set_final_submit').checked : false,
+        bank_monitor_enabled: document.getElementById('set_bank_monitor') ? document.getElementById('set_bank_monitor').checked : true,
+        save_page_enabled: document.getElementById('set_save_page') ? document.getElementById('set_save_page').checked : true,
+        save_html: document.getElementById('set_save_html') ? document.getElementById('set_save_html').checked : true,
+        save_screenshot: document.getElementById('set_save_screenshot') ? document.getElementById('set_save_screenshot').checked : true,
+        save_only_on_bank_change: document.getElementById('set_save_change_only') ? document.getElementById('set_save_change_only').checked : true,
+        auto_repair_saved_pages: document.getElementById('set_auto_repair') ? document.getElementById('set_auto_repair').checked : false,
 
         headless: document.getElementById('set_headless').checked,
         browser_headless: document.getElementById('set_headless').checked,
@@ -2321,7 +2316,7 @@ async function saveSettings() {
 
         captcha_mode: 'model',
 
-        final_submit: document.getElementById('set_final_submit').checked,
+        final_submit: document.getElementById('set_final_submit') ? document.getElementById('set_final_submit').checked : false,
 
         
 

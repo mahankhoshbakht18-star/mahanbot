@@ -1291,13 +1291,6 @@
                 <option value="embedded">داخل داشبورد</option>
               </select>
             </label>
-            <label>روش پیش‌فرض پذیرش بانک
-              <select id="set_default_bank_mode" class="form-select">
-                <option value="online">غیرحضوری (پیش‌فرض)</option>
-                <option value="prefer_online">ترجیحاً غیرحضوری با سوئیچ به حضوری</option>
-                <option value="in_person">حضوری</option>
-              </select>
-            </label>
             <label>بزرگ‌نمایی صفحه مرورگر (Zoom)
               <select id="set_browser_page_zoom" class="form-select">
                 <option value="1.0">۱۰۰٪ (عادی)</option>
@@ -1318,70 +1311,35 @@
                 <option value="fast">Fast (سریع)</option>
               </select>
             </label>
-            <label>فاصله تلاش مجدد ثبت نهایی (ثانیه)
-              <input id="set_bank_capacity_recheck" type="number" step="0.1" min="1" max="600" value="20" class="form-control">
-            </label>
             <label>فاصله بررسی فهرست بانک (ثانیه)
               <input id="set_bank_refresh" type="number" min="1" max="300" value="5" class="form-control">
             </label>
-            <label>اعتبار تخمینی OTP (ثانیه)
+            <label>اعتبار تخمینی پیامک / OTP (ثانیه)
               <input id="set_otp_validity" type="number" min="30" max="600" value="120" class="form-control">
             </label>
-            <label>مهلت عملیات (میلی‌ثانیه)
-              <input id="set_default_timeout" type="number" min="250" max="60000" class="form-control">
-            </label>
-            <label>مهلت ناوبری (میلی‌ثانیه)
-              <input id="set_navigation_timeout" type="number" min="1000" max="120000" class="form-control">
-            </label>
-            <label>تعداد تلاش مجدد
-              <input id="set_retry" type="number" min="1" max="20" class="form-control">
-            </label>
-            <label>تأخیر تلاش (ثانیه)
-              <input id="set_retry_delay" type="number" step="0.05" min="0" class="form-control">
-            </label>
-            <label>فاصله بررسی کپچا
-              <input id="set_captcha_poll" type="number" step="0.05" min="0.05" class="form-control">
-            </label>
-            <label>تأخیر تلاش کپچا
-              <input id="set_captcha_retry_delay" type="number" step="0.05" min="0" class="form-control">
+            <label>تعداد تلاش مجدد ورود
+              <input id="set_retry" type="number" min="1" max="20" value="5" class="form-control">
             </label>
             <label>حداکثر تلاش کپچا
-              <input id="set_captcha_max" type="number" min="1" max="10" class="form-control">
+              <input id="set_captcha_max" type="number" min="1" max="10" value="3" class="form-control">
             </label>
+            <label class="check-card"><input id="set_bank_monitor" type="checkbox" checked> پایش خودکار بانک فعال</label>
             <label class="check-card"><input id="set_resume_checkpoint" type="checkbox" checked> ادامه از آخرین Checkpoint</label>
-            <label class="check-card"><input id="set_save_page" type="checkbox" checked> Save Page فعال</label>
-            <label class="check-card"><input id="set_repair_page" type="checkbox" checked> Repair Page فعال</label>
-            <label class="check-card"><input id="set_pause_manual_captcha" type="checkbox" checked> توقف برای ورود دستی CAPTCHA</label>
-            <label class="check-card"><input id="set_pause_manual_otp" type="checkbox" checked> توقف برای ورود دستی OTP</label>
-            <label class="check-card"><input id="set_final_submit" type="checkbox"> ثبت نهایی خودکار برای متقاضیان تابع تنظیم عمومی</label>
-            <label class="check-card"><input id="set_allow_reserve_bank" type="checkbox" checked> پذیرش بانک رزرو</label>
-            <label class="check-card"><input id="set_diagnostic_logging" type="checkbox" checked> ثبت لاگ تشخیصی</label>
-            <label class="check-card"><input id="set_bank_monitor" type="checkbox" checked> پایش بانک فعال</label>
+            <label class="check-card"><input id="set_save_page" type="checkbox" checked> ذخیره صفحات (Save Page)</label>
+            <label class="check-card"><input id="set_save_change_only" type="checkbox" checked> ذخیره فقط هنگام تغییر وضعیت</label>
             <label class="check-card"><input id="set_save_html" type="checkbox" checked> ذخیره فایل HTML</label>
             <label class="check-card"><input id="set_save_screenshot" type="checkbox" checked> ذخیره تصویر صفحه</label>
-            <label class="check-card"><input id="set_save_change_only" type="checkbox" checked> فقط هنگام تغییر وضعیت</label>
-            <label class="check-card"><input id="set_auto_repair" type="checkbox"> تعمیر خودکار snapshot</label>
-            <div hidden style="display:none">
-            <label class="check-card text-danger fw-bold" style="background:#FFF1F2; border-color:#FECDD3;">
-              <input id="set_sniper_mode" type="checkbox">
-              <i class="fa-solid fa-crosshairs ms-1 text-danger"></i> شکار سهمیه غیرحضوری برای همه متقاضیان در حال اجرا
-            </label>
-            <label>فاصله ارسال درخواست شکار سهمیه (ثانیه؛ حداقل ۵)
-              <input id="set_sniper_interval" type="number" min="5" max="600" step="1" value="5" class="form-control">
-              <small>با ثبت نهایی خودکار فعال، پس از رد صریح تکمیل ظرفیت دوباره درخواست ارسال می‌شود. بانک و غیرحضوری حفظ می‌شوند؛ تغییر به حضوری در این حالت انجام نمی‌شود.</small>
-            </label>
-            </div>
+            <label class="check-card"><input id="set_pause_manual_captcha" type="checkbox" checked> توقف برای ورود دستی CAPTCHA</label>
+            <label class="check-card"><input id="set_pause_manual_otp" type="checkbox" checked> توقف برای ورود دستی OTP</label>
             <label class="check-card text-primary fw-bold" style="background:#EEF2FF; border-color:#C7D2FE;">
               <input id="set_auto_switch_bank" type="checkbox" checked>
               <i class="fa-solid fa-water ms-1 text-primary"></i> سوییچ خودکار آبشاری به اولویت بعدی (Waterfall)
             </label>
-            <label class="check-card text-warning-emphasis" style="background:#FFFBEB; border-color:#FDE68A;">
-              <input id="set_fallback_in_person" type="checkbox">
-              <i class="fa-solid fa-building-columns ms-1 text-warning"></i> تغییر به حضوری در صورت اتمام سهمیه غیرحضوری
-            </label>
+            <label class="check-card"><input id="set_allow_reserve_bank" type="checkbox" checked> پذیرش بانک‌های دارای سهمیه رزرو</label>
             <label>مدت زمان کول‌داون بانک پرشده (ثانیه)
               <input id="set_bank_cooldown" type="number" min="5" max="300" value="30" class="form-control">
             </label>
+            <label class="check-card"><input id="set_diagnostic_logging" type="checkbox" checked> ثبت لاگ تشخیصی</label>
             <label class="check-card"><input id="set_headless" type="checkbox"> اجرای مرورگر مخفی</label>
             <label class="check-card"><input id="set_useproxy" type="checkbox"> استفاده از پروکسی</label>
             <label class="check-card text-success fw-bold" style="background:#ECFDF5; border-color:#A7F3D0;">
@@ -1517,7 +1475,7 @@
       </article>
 
       <!-- ════════════════ PANEL: AUTOMATED SMS & GSM DONGLE ════════════════ -->
-      <article class="panel mt-4" admin-only" id="smsGatewayPanel style="border-top:4px solid var(--gold, #E9BD63)">
+      <article class="panel mt-4 admin-only" id="automatedSmsPanel" style="border-top:4px solid var(--gold, #E9BD63)">
         <div class="panel-title">
           <div>
             <h3><i class="fa-solid fa-tower-broadcast ms-2 text-primary"></i> دریافت خودکار پیامک و وب‌هوک (SMS & GSM)</h3><!-- admin-panel -->
@@ -1642,52 +1600,6 @@
             <tbody id="subscriptionUsers"></tbody>
           </table>
         </div>
-      </article>
-
-      <!-- SMS Gateway & OTP Auth Panel (Admin Only) -->
-      <article id="smsGatewayPanel" class="panel mt-4" style="border-top:4px solid var(--primary)" hidden>
-        <div class="panel-title">
-          <div>
-            <h3><i class="fa-solid fa-mobile-screen-button ms-2 text-primary"></i> ?????? ????? ????? ? ????? ???? OTP</h3>
-            <p>???????? ??????? ?????? (?????????? ???? ????????? ?????? SMS.ir ?? ????? ??????? ??????) ??? ???? ?????? ???????</p>
-          </div>
-          <span id="smsGatewayStatusBadge" class="badge bg-info-subtle text-info border px-3 py-2">
-            <i class="fa-solid fa-shield-halved ms-1"></i> ????? ???? OTP
-          </span>
-        </div>
-
-        <div class="form-grid compact mt-3">
-          <label class="check-card">
-            <input id="sms_otp_enabled" type="checkbox" checked> ????????? ???? ? ????? ???? ?? OTP
-          </label>
-          <label>??????????? ?????
-            <select id="sms_provider_select" class="form-select">
-              <option value="mock">????? ??????? ? ???????? (???? ????? / ??? ????)</option>
-              <option value="kavenegar">????????? (Kavenegar)</option>
-              <option value="ippanel">???? ???????? / IPPanel</option>
-              <option value="ghasedak">????? (Ghasedak)</option>
-              <option value="sms_ir">?????? ?????? SMS.ir</option>
-            </select>
-          </label>
-          <label>???? ???????? / API Key
-            <input id="sms_api_key_input" type="password" class="form-control" placeholder="???? ??????? ????????">
-          </label>
-          <label>?? ??????? / ????? ???????
-            <input id="sms_sender_line_input" type="text" dir="ltr" class="form-control" placeholder="3000505...">
-          </label>
-          <label>?? ???? / ???? ????? ???? (???????)
-            <input id="sms_pattern_code_input" type="text" dir="ltr" class="form-control" placeholder="????? ????? ????? ?????">
-          </label>
-          <label style="grid-column: 1 / -1;">???? ??? ????? ????
-            <input id="sms_otp_template_input" type="text" class="form-control" value="?? ???? ?? ?????????: {code}&#10;??????: ? ?????">
-          </label>
-        </div>
-
-        <div class="form-actions mt-3 d-flex flex-wrap gap-2">
-          <button class="btn btn-primary" onclick="saveSmsGatewayConfig()"><i class="fa-solid fa-floppy-disk ms-1"></i> ????? ??????? ??? ?????</button>
-          <button class="btn btn-outline-info" onclick="testSendSmsPrompt()"><i class="fa-solid fa-paper-plane ms-1"></i> ????? ????? ???</button>
-        </div>
-        <div id="smsGatewayAlert" class="small mt-2" style="display:none"></div>
       </article>
 
       <!-- Technical Debug Panel -->
