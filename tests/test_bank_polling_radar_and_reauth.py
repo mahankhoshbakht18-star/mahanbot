@@ -40,23 +40,22 @@ class MockOwner:
 
 class TestBankPollingRadarAndReauth(unittest.TestCase):
     def test_preferred_bank_not_found_clean_wait(self):
-        """Verify that when state is PREFERRED_BANK_NOT_FOUND, tick returns 'waiting' until poll time."""
+        """Verify that when state is PREFERRED_BANK_NOT_FOUND, tick immediately triggers cycle_otp."""
         mock_bot = MagicMock()
         mock_bot.nid = "1234567890"
+        mock_bot._otp_entry_time = time.time()  # Active OTP
         mock_bot.consume_recovery_flag.return_value = False
-        mock_bot.settings = {"bank_refresh_interval": 5.0, "bank_monitoring_cycle_seconds": 60.0}
+        mock_bot.settings = {"bank_refresh_interval": 5.0, "otp_validity_seconds": 115.0}
         mock_bot.user_data = {"bank_name": "بانک صادرات ایران"}
         mock_owner = MockOwner()
 
         ctrl = BankSelectionSessionController(mock_bot, mock_owner)
         ctrl.observe = MagicMock(return_value=("STEP_3_BANK_SELECT", {"is_bank_page": True, "applicant_nid": "1234567890"}))
         ctrl.state = State.PREFERRED_BANK_NOT_FOUND
-        ctrl._next_bank_poll = time.monotonic() + 10.0  # In future
 
-        # Should return 'waiting' without calling process_bank_selection_v2
         with patch("bank_session_controller.process_bank_selection_v2") as mock_proc:
             res = ctrl.tick()
-            self.assertEqual(res, "waiting")
+            self.assertEqual(res, "cycle_otp")
             mock_proc.assert_not_called()
 
     def test_cycle_timeout_triggers_reauthentication(self):

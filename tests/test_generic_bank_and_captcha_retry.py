@@ -113,9 +113,8 @@ class TestGenericBankAndCaptchaRetry(unittest.TestCase):
         with patch("bank_session_controller.process_bank_selection_v2", return_value="no_match"), \
              patch("bot_select_bank.trigger_bank_capacity_refresh"):
             res = ctrl.tick()
-            self.assertEqual(res, "waiting")
-            # Bank poll scheduled in future (5s)
-            self.assertGreater(ctrl._next_bank_poll, now)
+            # Under zero-camping architecture, missing bank immediately cycles back to OTP/Captcha
+            self.assertEqual(res, "cycle_otp")
 
 
 if __name__ == "__main__":

@@ -309,6 +309,13 @@ class BankSelectionSessionController:
                                         bank_state=self.state, session_id=owner.session_id,
                                         session_active=owner.bank_page_active)
 
+            # Neutralize CBI unload logout trap immediately upon entering Step 3
+            try:
+                from core.step3_bank_page import Step3BankPage
+                Step3BankPage().disable_logout_trap(owner.page)
+            except Exception:
+                pass
+
             # Always pump/validate the current page, even while paused.
             stage, data = self.observe()
             if stage == "closed":
@@ -423,81 +430,58 @@ class BankSelectionSessionController:
             if self._prepared and observation != getattr(self, '_last_selection', None):
                 self._prepared = False
             if self.state == State.PREFERRED_BANK_NOT_FOUND:
-                now = self._monotonic()
-                if now < getattr(self, "_next_bank_poll", 0):
-                    # Clean wait; do NOT spam DOM inspections or log spam
-                    return 'waiting'
+                # ZERO CAMPING ON STEP 3:
+                # As proven by CBI server field tests and HTML analysis, bank quotas are provincial
+                # and cached in __VIEWSTATE on initial page entry (!IsPostBack). Staying on Step 3
+                # never fetches new bank quotas from the database.
+                # When priority bank is not available, we immediately disarm the unload trap
+                # and cycle back to the OTP/Captcha form to force the CBI server to reload
+                # the fresh provincial quota list from database.
 
-                # Time to poll / cycle: every 5 seconds (as requested by user)
-                poll_interval = max(3.0, float(bot.settings.get("bank_list_refresh_seconds", bot.settings.get("bank_refresh_interval", 5.0))))
-                self._next_bank_poll = now + poll_interval
-
-                # Dynamic target bank names for any selected bank (not just Saderat!)
                 target_names = self._get_target_bank_names()
                 target_display = " / ".join(target_names) or "بانک اولویت‌دار متقاضی"
 
-                # Check if OTP has genuinely expired (120s from entry or explicit alert dialog)
+                try:
+                    from core.step3_bank_page import Step3BankPage
+                    Step3BankPage().disable_logout_trap(owner.page)
+                except Exception:
+                    pass
+
+                # Check if OTP has genuinely expired (> 115s from entry)
                 try:
                     otp_entry_time = float(getattr(bot, "_otp_entry_time", 0) or 0)
                 except Exception:
                     otp_entry_time = 0.0
                 try:
-                    otp_validity = float(bot.settings.get("otp_validity_seconds", 120))
+                    otp_validity = float(bot.settings.get("otp_validity_seconds", 115))
                 except Exception:
-                    otp_validity = 120.0
+                    otp_validity = 115.0
+
                 otp_expired_by_time = otp_entry_time > 0 and (time.time() - otp_entry_time) >= otp_validity
                 has_otp_expired_flag = bot.consume_recovery_flag("otp_expired") or bot.consume_recovery_flag("session_expired")
 
                 if otp_expired_by_time or has_otp_expired_flag:
-                    bot.log(f"⏱️ مهلت پیامک جاری ({int(otp_validity)} ثانیه) به پایان رسید؛ بازگشت خودکار به مرحله ۱ جهت اخذ کد جدید و شروع چرخه تازه...", "warning", owner.page)
-                    self._bank_not_found_since = 0
+                    bot.log(f"⏱️ مهلت پیامک جاری ({int(otp_validity)} ثانیه) به پایان رسید؛ بازگشت به مرحله ۱ جهت اخذ پیامک جدید...", "warning", owner.page)
                     owner.bank_page_active = False
                     self.transition(State.SESSION_EXPIRED, "otp_expired_refresh")
                     return "reauthenticate"
 
                 elapsed_sec = int(time.time() - otp_entry_time) if otp_entry_time > 0 else 0
                 rem_sec = max(0, int(otp_validity - elapsed_sec))
-                bot.log(f"🔄 بانک ({target_display}) در فهرست ظرفیت فعلی نیست؛ استعلام مجدد ظرفیت (فاصله ۵ ثانیه - اعتبار پیامک: {rem_sec} ثانیه باقی‌مانده)...", "info", owner.page)
+                bot.log(f"⚡ بانک ({target_display}) در سهمیه فعلی استان نیست؛ رفرش فوری و بازگشت به مرحله پیامک/کپچا (اعتبار پیامک: {rem_sec} ثانیه) جهت کوئری تازه دیتابیس سرور...", "info", owner.page)
 
-                # 1. Trigger native ASP.NET PostBack on city dropdown to fetch fresh capacities without resetting session
+                # Disarm trap and reload page to go to OTP stage
                 try:
-                    from bot_select_bank import trigger_bank_capacity_refresh
-                    trigger_bank_capacity_refresh(bot, owner.page)
-                except Exception:
-                    pass
-
-                try:
-                    owner.page.wait_for_timeout(400)
-                except Exception:
-                    pass
-
-                current_stage = bot.detect_actual_page_stage(owner.page)
-
-                # If routed back to Step 2 (OTP code + CAPTCHA)
-                if current_stage == "STEP_2_OTP" or (isinstance(owner.page.locator("input[name$='tbMobileConfCode']").count(), int) and owner.page.locator("input[name$='tbMobileConfCode']").count() > 0):
+                    from core.step3_bank_page import Step3BankPage
+                    Step3BankPage().disable_logout_trap(owner.page)
                     owner.bank_page_active = False
-                    self.transition(State.BANK_OPTIONS_LOADING, "cycled_back_to_otp")
-                    return "cycle_otp"
-
-                # If reverted to Step 1 (National ID + Captcha)
-                if current_stage == "STEP_1_ENTRY_FORM":
-                    owner.bank_page_active = False
-                    self.transition(State.SESSION_EXPIRED, "reloaded_to_step1")
-                    return "reauthenticate"
-
-                # If on Step 3 and a CAPTCHA input is visible, solve it
-                try:
-                    from browser_actions import BrowserActions
-                    captcha_in = BrowserActions.find_captcha_input(owner.page)
-                    if captcha_in and captcha_in.is_visible():
-                        bot.log("🤖 تصویر کپچای جدید در صفحه شناسایی شد؛ حل فوری با مدل هوشمند...", "info", owner.page)
-                        btn_sel = "#ctl00_ContentPlaceHolder1_btnSave, input[type='submit']"
-                        bot.solve_captcha_with_model(owner.page, captcha_in, btn_sel)
-                        owner.page.wait_for_timeout(350)
-                except Exception:
-                    pass
+                    owner.page.reload()
+                except Exception as e:
+                    logger.warning(f"Reload failed: {e}")
 
                 self._prepared = False
+                self.transition(State.BANK_OPTIONS_LOADING, "cycled_back_to_otp")
+                return "cycle_otp"
 
             if not self._prepared:
                 self.transition(State.BANK_OPTIONS_READY)
