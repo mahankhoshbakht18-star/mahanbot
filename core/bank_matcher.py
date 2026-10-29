@@ -141,7 +141,7 @@ class PersianBankMatcher:
 
     @classmethod
     def clean_bank_title(cls, text: str) -> str:
-        """Extract bank name without capacity status brackets or queue counts."""
+        """Extract bank name without capacity status brackets, queue counts, or trailing hyphens."""
         normalized = cls.normalize(text)
         # Remove queue count if present (e.g. متقاضی در صف : 1,450 نفر)
         cleaned = re.sub(r"متقاضی\s*در\s*صف.*", "", normalized).strip()
@@ -149,6 +149,8 @@ class PersianBankMatcher:
         cleaned = re.sub(r"\[.*?\]|\(.*?\)", "", cleaned).strip()
         # Remove prefixes
         cleaned = re.sub(r"^(بانک\s+|موسسه\s+اعتباری\s+|پست\s+بانک\s+)", "", cleaned).strip()
+        # Strip trailing hyphens, colons, or punctuation
+        cleaned = re.sub(r"[\s\-_:]+$", "", cleaned).strip()
         # If 'پست بانک' was stripped to empty, keep 'پست بانک'
         if not cleaned and "پست بانک" in normalized:
             return "پست بانک"

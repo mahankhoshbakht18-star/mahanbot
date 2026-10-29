@@ -7,6 +7,7 @@ import os
 import re
 import sys
 import unittest
+from unittest.mock import patch
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
@@ -34,7 +35,8 @@ class TestSmartCapacityRadarAndTelegram(unittest.TestCase):
         self.assertIn("telegram_subscribers", tables)
         self.assertIn("telegram_notification_queue", tables)
 
-    def test_radar_observation_deduplication(self):
+    @patch.object(TELEGRAM_NOTIFIER, "send_raw_telegram", return_value=(True, "OK"))
+    def test_radar_observation_deduplication(self, mock_send):
         """Verify duplicate observations don't emit new change events."""
         import uuid
         test_prov = "سیستان و بلوچستان"

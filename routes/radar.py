@@ -22,6 +22,8 @@ class TelegramConfigRequest(BaseModel):
     admin_chat_id: Optional[str] = Field(None, description="Admin Chat ID or Channel ID")
     channel_id: Optional[str] = Field(None, description="Optional public/private broadcast channel ID")
     notifications_enabled: Optional[bool] = Field(None, description="Enable or disable automated alerts")
+    proxy: Optional[str] = Field(None, description="Optional HTTP/SOCKS5 proxy e.g. http://127.0.0.1:10809")
+    api_base_url: Optional[str] = Field(None, description="Optional custom Telegram API mirror/base URL")
 
 
 class TelegramTestRequest(BaseModel):
@@ -162,6 +164,8 @@ def get_telegram_config(_: bool = Depends(require_api_key)):
         "telegram_admin_chat_id": cfg.get("telegram_admin_chat_id", ""),
         "telegram_channel_id": cfg.get("telegram_channel_id", ""),
         "telegram_notifications_enabled": cfg.get("telegram_notifications_enabled", True),
+        "telegram_proxy": cfg.get("telegram_proxy", ""),
+        "telegram_api_base_url": cfg.get("telegram_api_base_url", ""),
     }
 
 
@@ -180,6 +184,10 @@ def update_telegram_config(
         updates["telegram_channel_id"] = req.channel_id.strip()
     if req.notifications_enabled is not None:
         updates["telegram_notifications_enabled"] = bool(req.notifications_enabled)
+    if req.proxy is not None:
+        updates["telegram_proxy"] = req.proxy.strip()
+    if req.api_base_url is not None:
+        updates["telegram_api_base_url"] = req.api_base_url.strip()
 
     if updates:
         DBHandler.update_config(updates)

@@ -75,6 +75,34 @@ class TelegramNotifierService:
         cfg = DBHandler.get_config()
         return str(cfg.get("telegram_channel_id", "") or cfg.get("telegram_admin_chat_id", "")).strip()
 
+    @staticmethod
+    def _detect_effective_proxy() -> Optional[str]:
+        """Detect configured or active local proxy."""
+        cfg = DBHandler.get_config()
+        configured = (
+            cfg.get("telegram_proxy")
+            or os.environ.get("TELEGRAM_PROXY")
+            or os.environ.get("HTTPS_PROXY")
+            or os.environ.get("HTTP_PROXY")
+            or os.environ.get("ALL_PROXY")
+        )
+        if configured:
+            return str(configured).strip()
+        
+        # Check standard local proxy ports (V2Ray, Clash, Nekoray, etc.)
+        import socket
+        for p in [10809, 20811, 7890, 8080, 8889, 10808]:
+            try:
+                s = socket.socket()
+                s.settimeout(0.15)
+                if s.connect_ex(("127.0.0.1", p)) == 0:
+                    s.close()
+                    return f"http://127.0.0.1:{p}"
+                s.close()
+            except Exception:
+                pass
+        return None
+
     def send_raw_telegram(
         self,
         chat_id: str,
@@ -82,7 +110,7 @@ class TelegramNotifierService:
         parse_mode: str = "HTML",
         reply_markup: Optional[Dict[str, Any]] = None,
     ) -> Tuple[bool, str]:
-        """Send message directly via Telegram Bot API using urllib with optional proxy and inline markup."""
+        """Send message directly via Telegram Bot API with proxy support and rate limiting."""
         token = self.get_token()
         if not token:
             return False, "توکن ربات تلگرام تنظیم نشده است."
@@ -91,7 +119,10 @@ class TelegramNotifierService:
         if not clean_cid:
             return False, "شناسه چت (chat_id) نامعتبر است."
 
-        url = f"https://api.telegram.org/bot{token}/sendMessage"
+        cfg = DBHandler.get_config()
+        base_url = (cfg.get("telegram_api_base_url") or os.environ.get("TELEGRAM_API_BASE_URL") or "https://api.telegram.org").rstrip("/")
+        url = f"{base_url}/bot{token}/sendMessage"
+
         payload = {
             "chat_id": clean_cid,
             "text": text,
@@ -108,41 +139,46 @@ class TelegramNotifierService:
                 time.sleep(self._min_send_interval - elapsed)
             self._last_send_ts = time.time()
 
+        proxy = self._detect_effective_proxy()
+
+        # Try with requests first (better proxy and error handling)
         try:
-            req_data = json.dumps(payload).encode("utf-8")
-            req = urllib.request.Request(
-                url,
-                data=req_data,
-                headers={"Content-Type": "application/json; charset=utf-8"},
-                method="POST",
-            )
-
-            # Check proxy
-            cfg = DBHandler.get_config()
-            proxy = cfg.get("telegram_proxy") or os.environ.get("HTTPS_PROXY") or os.environ.get("HTTP_PROXY")
-            if proxy:
-                proxy_handler = urllib.request.ProxyHandler({"http": proxy, "https": proxy})
-                opener = urllib.request.build_opener(proxy_handler)
-            else:
-                opener = urllib.request.build_opener()
-
-            with opener.open(req, timeout=12) as response:
-                resp_bytes = response.read()
-                resp_json = json.loads(resp_bytes.decode("utf-8"))
-                if resp_json.get("ok"):
-                    return True, "OK"
-                else:
-                    return False, resp_json.get("description", "Telegram API Error")
-        except urllib.error.HTTPError as e:
+            import requests
+            proxies_dict = {"http": proxy, "https": proxy} if proxy else None
+            resp = requests.post(url, json=payload, proxies=proxies_dict, timeout=12)
             try:
-                err_body = e.read().decode("utf-8")
-                err_json = json.loads(err_body)
-                desc = err_json.get("description", str(e))
-                return False, f"HTTP {e.code}: {desc}"
+                data = resp.json()
             except Exception:
-                return False, f"HTTP Error {e.code}: {e.reason}"
-        except Exception as e:
-            return False, str(e)
+                data = {}
+            if resp.status_code == 200 and data.get("ok"):
+                return True, "OK"
+            desc = data.get("description", f"HTTP {resp.status_code}")
+            return False, desc
+        except Exception as req_err:
+            # Fallback to urllib if requests failed
+            try:
+                req_data = json.dumps(payload).encode("utf-8")
+                req = urllib.request.Request(
+                    url,
+                    data=req_data,
+                    headers={"Content-Type": "application/json; charset=utf-8"},
+                    method="POST",
+                )
+                if proxy:
+                    proxy_handler = urllib.request.ProxyHandler({"http": proxy, "https": proxy})
+                    opener = urllib.request.build_opener(proxy_handler)
+                else:
+                    opener = urllib.request.build_opener()
+
+                with opener.open(req, timeout=12) as response:
+                    resp_bytes = response.read()
+                    resp_json = json.loads(resp_bytes.decode("utf-8"))
+                    if resp_json.get("ok"):
+                        return True, "OK"
+                    else:
+                        return False, resp_json.get("description", "Telegram API Error")
+            except Exception as e:
+                return False, f"Connection error: {req_err}"
 
     # ── MESSAGE BUILDERS (Persian Formatting / Phase 6) ───────────────
     @staticmethod
