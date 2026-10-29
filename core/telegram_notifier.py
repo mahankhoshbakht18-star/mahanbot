@@ -178,7 +178,29 @@ class TelegramNotifierService:
                     else:
                         return False, resp_json.get("description", "Telegram API Error")
             except Exception as e:
-                return False, f"Connection error: {req_err}"
+                # 3. Smart Bridge fallback (enables sending from Iran without VPN)
+                try:
+                    import urllib.parse
+                    params = {
+                        "chat_id": clean_cid,
+                        "text": text,
+                        "parse_mode": parse_mode,
+                    }
+                    if reply_markup:
+                        params["reply_markup"] = json.dumps(reply_markup)
+
+                    qs = urllib.parse.urlencode(params)
+                    tg_url = f"https://api.telegram.org/bot{token}/sendMessage?{qs}"
+                    bridge_url = f"https://api.allorigins.win/raw?url={urllib.parse.quote(tg_url)}"
+
+                    b_req = urllib.request.Request(bridge_url, headers={"User-Agent": "Mozilla/5.0"})
+                    with urllib.request.urlopen(b_req, timeout=15) as b_resp:
+                        b_data = json.loads(b_resp.read().decode("utf-8"))
+                        if b_data.get("ok"):
+                            return True, "OK (via Smart Bridge)"
+                        return False, b_data.get("description", "Bridge Error")
+                except Exception as bridge_err:
+                    return False, f"Connection error: {req_err} (Bridge: {bridge_err})"
 
     # ── MESSAGE BUILDERS (Persian Formatting / Phase 6) ───────────────
     @staticmethod
