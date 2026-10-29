@@ -349,6 +349,11 @@ class BankSelectionSessionController:
                 self.transition(State.MANUAL_ACTION_REQUIRED, "unrecognized_live_dom")
                 return "waiting"
 
+            # ── UNIFIED 7-PIECE STEP 3 EXECUTION ──────────────────────────
+            res = self.evaluate_and_execute_bank_logic(owner.page)
+            if res in {"confirmed", "cycle_otp", "reauthenticate", "stopped"}:
+                return res
+
             bot.clear_otp_locks()
             bot.consume_recovery_flag("otp_expired")
             bot.consume_recovery_flag("captcha_invalid")
@@ -527,6 +532,216 @@ class BankSelectionSessionController:
             if self.state != State.PREFERRED_BANK_NOT_FOUND:
                 DBHandler.update_runtime(bot.nid, next_refresh=0, check_method='live_dom_only')
             return 'waiting' 
+
+    def perform_warm_tab_handover(self) -> bool:
+        """
+        Piece 6: Zero-Downtime Warm Tab Handover.
+        When OTP expires or session times out:
+        1. Opens new tab in browser context (context.new_page())
+        2. Navigates to SelTasCase.aspx (Step 1)
+        3. Fills National ID, solves primary captcha, requests fresh OTP
+        4. Closes old expired tab safely
+        5. Re-binds owner.page and bot.page to new_page
+        """
+        bot, owner = self.bot, self.owner
+        old_page = owner.page
+        try:
+            context = getattr(owner, "context", None)
+            if context is None:
+                context = getattr(old_page, "context", None)
+            if context is None:
+                return False
+            new_page = context.new_page()
+            bot.log("🌐 باز کردن تب جدید موازی جهت تمدید سشن و اخذ پیامک تازه (Warm Tab Handover)...", "info", new_page)
+
+            entry_url = getattr(bot, "entry_url", "https://ve.cbi.ir/SelTasCase.aspx")
+            new_page.goto(entry_url, wait_until="commit", timeout=15000)
+
+            from browser_actions import BrowserActions
+            BrowserActions.fast_fill(new_page, "#ctl00_ContentPlaceHolder1_tbIDNo, input[name$='tbIDNo']", str(bot.nid))
+
+            from bot_select_captcha import solve_captcha_step
+            captcha_in = BrowserActions.find_captcha_input(new_page)
+            btn_sel = "#ctl00_ContentPlaceHolder1_btnCheck, input[type='submit']"
+            if captcha_in and captcha_in.is_visible():
+                solve_captcha_step(bot, new_page, captcha_in, btn_sel)
+                new_page.wait_for_timeout(500)
+
+            bot.log("📨 درخواست پیامک جدید در تب تازه با موفقیت ارسال شد؛ بستن تب منقضی‌شده قبلی...", "success", new_page)
+            try:
+                old_page.close()
+            except Exception:
+                pass
+
+            owner.page = new_page
+            bot.page = new_page
+            owner.bank_page_active = False
+            return True
+        except Exception as e:
+            logger.warning(f"Warm tab handover failed: {e}")
+            return False
+
+    def evaluate_and_execute_bank_logic(self, page) -> str:
+        """
+        Piece 2, 3, 4, 5:
+        1. Read all options from ddlBankName via Step3BankPage
+        2. Differentiate active quota, reserve quota, and waiting count
+        3. Smart deduplication: check if banks changed before saving snapshot & updating banks_seen.json
+        4. Broadcast formatted radar notification to Telegram
+        5. Match applicant priority banks using PersianBankMatcher
+        6. Check auto_final_submit & allow_reserve rules:
+           - Active quota:
+             - If auto_final_submit is True -> select bank, wait for UpdatePanel2, click btnSave -> return 'confirmed'
+             - If auto_final_submit is False -> do NOT submit, reload & return 'cycle_otp'
+           - Reserve quota:
+             - If allow_reserve is True AND auto_final_submit is True -> select bank, wait for UpdatePanel2, click btnSave -> return 'confirmed'
+             - Else -> do NOT submit, reload & return 'cycle_otp'
+           - No match:
+             - reload & return 'cycle_otp' (or 'reauthenticate' if OTP expired)
+        """
+        bot, owner = self.bot, self.owner
+        from core.step3_bank_page import Step3BankPage
+        from core.bank_matcher import PersianBankMatcher, BankOptionInfo
+        from core.telegram_notifier import TelegramNotifierService
+        from database import DBHandler
+
+        step3 = Step3BankPage()
+        step3.disable_logout_trap(page)
+
+        # 1. Read live options
+        options = step3.read_live_bank_options(page)
+        prov, city = step3.get_location_names(page)
+
+        active_banks = [
+            {"bank_name": o.clean_title or o.text, "waiting_count": o.waiting_count, "value": o.value}
+            for o in options if o.has_active_quota
+        ]
+        reserve_banks = [
+            {"bank_name": o.clean_title or o.text, "waiting_count": o.waiting_count, "value": o.value}
+            for o in options if o.is_reserve
+        ]
+
+        # 2. Smart deduplicated archive (Piece 2)
+        if step3.should_save_page(bot, options):
+            step3.archive_banks_seen_nonblocking(bot, options, page=page)
+            # 3. Format and dispatch beautiful radar notification (Piece 3)
+            try:
+                notifier = TelegramNotifierService()
+                msg = notifier.format_beautiful_radar_message(
+                    province_name=prov,
+                    city_name=city,
+                    active_banks=active_banks,
+                    reserve_banks=reserve_banks,
+                    applicant_nid=str(bot.nid),
+                    action_status="پایش فعال ظرفیت"
+                )
+                admin_cid = notifier.get_admin_chat_id()
+                if admin_cid:
+                    notifier.send_raw_telegram(admin_cid, msg)
+                channel_cid = notifier.get_channel_id()
+                if channel_cid and channel_cid != admin_cid:
+                    notifier.send_raw_telegram(channel_cid, msg)
+            except Exception as e:
+                logger.warning(f"Radar telegram dispatch failed: {e}")
+
+        # 4. Check applicant priorities and toggles (Piece 4)
+        cfg = DBHandler.get_config()
+        auto_final_submit = bool(cfg.get("auto_final_submit", bot.settings.get("auto_final_submit", True)))
+        prefs = self._preferences()
+        p_banks = prefs.get("priority_banks") or prefs.get("banks") or []
+
+        matched_option = None
+        target_allow_reserve = False
+        target_display = ""
+
+        if isinstance(p_banks, list) and p_banks:
+            for item in p_banks:
+                p_name = ""
+                allow_res = False
+                if isinstance(item, dict):
+                    p_name = item.get("name") or item.get("bank_name") or ""
+                    allow_res = bool(item.get("allow_reserve", False))
+                elif isinstance(item, str):
+                    p_name = item
+                if not p_name:
+                    continue
+                match = PersianBankMatcher.match_best_bank(p_name, options, allow_reserve=allow_res)
+                if match:
+                    matched_option = match
+                    target_allow_reserve = allow_res
+                    target_display = p_name
+                    break
+
+        if not matched_option:
+            fallback = prefs.get("primary_bank") or prefs.get("bank_name") or (bot.user_data or {}).get("bank_name") or ""
+            if fallback:
+                target_allow_reserve = bool(prefs.get("allow_reserve", False))
+                matched_option = PersianBankMatcher.match_best_bank(fallback, options, allow_reserve=target_allow_reserve)
+                target_display = fallback
+
+        # Active Quota branch
+        if matched_option and matched_option.has_active_quota:
+            bot.log(f"🎯 بانک اولویت‌دار ({target_display}) با ظرفیت قطعی شناسایی شد!", "success", page)
+            if auto_final_submit:
+                bot.log(f"🚀 تیک ثبت نهایی فعال است؛ انتخاب بانک ({target_display}) و ارسال فرم نهایی...", "info", page)
+                step3.select_bank_option(page, matched_option.value)
+                step3.click_submit_btn(page)
+                res = step3.extract_tracking_or_error(page)
+                if res.get("is_success") and res.get("tracking_code"):
+                    code = res["tracking_code"]
+                    DBHandler.save_success_data(bot.nid, code)
+                    self.transition(State.REGISTRATION_CONFIRMED)
+                    bot.set_runtime_state("SUCCESS", State.REGISTRATION_CONFIRMED, browser_status="OPEN")
+                    bot.log(f"🎉 ثبت نهایی با موفقیت انجام شد! کد رهگیری: {code}", "success", page)
+                    return "confirmed"
+            else:
+                bot.log(f"⏸️ بانک اولویت‌دار ({target_display}) دارای ظرفیت است اما تیک «ثبت نهایی» غیرفعال است؛ ثبت انجام نشد (ادامه پایش)...", "warning", page)
+
+        # Reserve Quota branch
+        elif matched_option and matched_option.is_reserve:
+            if target_allow_reserve and auto_final_submit:
+                bot.log(f"📝 بانک اولویت‌دار ({target_display}) در حالت رزرو است و هر دو تیک (رزرو و ثبت نهایی) فعال هستند؛ ثبت درخواست رزرو...", "info", page)
+                step3.select_bank_option(page, matched_option.value)
+                step3.click_submit_btn(page)
+                res = step3.extract_tracking_or_error(page)
+                if res.get("is_success") and res.get("tracking_code"):
+                    code = res["tracking_code"]
+                    DBHandler.save_success_data(bot.nid, code)
+                    self.transition(State.REGISTRATION_CONFIRMED)
+                    bot.set_runtime_state("SUCCESS", State.REGISTRATION_CONFIRMED, browser_status="OPEN")
+                    bot.log(f"🎉 ثبت رزرو با موفقیت تایید شد! کد رهگیری: {code}", "success", page)
+                    return "confirmed"
+            else:
+                bot.log(f"⏸️ بانک ({target_display}) در حالت رزرو است اما شرایط ثبت (تیک رزرو و ثبت نهایی) برقرار نیست؛ ادامه پایش...", "info", page)
+
+        # Piece 5: Zero-camping OTP Cycle or Warm Handover
+        try:
+            otp_entry_time = float(getattr(bot, "_otp_entry_time", 0) or 0)
+        except Exception:
+            otp_entry_time = 0.0
+        try:
+            otp_validity = float(bot.settings.get("otp_validity_seconds", 115))
+        except Exception:
+            otp_validity = 115.0
+
+        otp_expired = (otp_entry_time > 0 and (time.time() - otp_entry_time) >= otp_validity) or bot.consume_recovery_flag("otp_expired")
+        if otp_expired:
+            bot.log(f"⏱️ مهلت پیامک جاری ({int(otp_validity)} ثانیه) به پایان رسید؛ انتقال به تب تازه (Warm Handover)...", "warning", page)
+            self.perform_warm_tab_handover()
+            self.transition(State.SESSION_EXPIRED, "otp_expired_warm_handover")
+            return "reauthenticate"
+
+        elapsed_sec = int(time.time() - otp_entry_time) if otp_entry_time > 0 else 0
+        rem_sec = max(0, int(otp_validity - elapsed_sec))
+        bot.log(f"🔄 بانک مدنظر در سهمیه فعلی نیست یا ثبت غیرفعال است؛ رفرش فوری و ورود مجدد از مرحله پیامک/کپچا (اعتبار پیامک: {rem_sec} ثانیه)...", "info", page)
+        step3.disable_logout_trap(page)
+        owner.bank_page_active = False
+        try:
+            page.reload()
+        except Exception:
+            pass
+        self.transition(State.BANK_OPTIONS_LOADING, "cycled_back_to_otp")
+        return "cycle_otp"
 
     def run(self):
         self.owner.bank_page_active = True

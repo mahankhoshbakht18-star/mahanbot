@@ -91,6 +91,8 @@ class BankOptionInfo:
     clean_title: str = ""
     has_active_quota: bool = False
     is_reserve: bool = False
+    waiting_count: int = 0
+    raw_waiting_text: str = ""
 
 
 class PersianBankMatcher:
@@ -139,10 +141,12 @@ class PersianBankMatcher:
 
     @classmethod
     def clean_bank_title(cls, text: str) -> str:
-        """Extract bank name without capacity status brackets."""
+        """Extract bank name without capacity status brackets or queue counts."""
         normalized = cls.normalize(text)
+        # Remove queue count if present (e.g. متقاضی در صف : 1,450 نفر)
+        cleaned = re.sub(r"متقاضی\s*در\s*صف.*", "", normalized).strip()
         # Remove brackets like [دارای ظرفیت...] or (ذخیره)
-        cleaned = re.sub(r"\[.*?\]|\(.*?\)", "", normalized).strip()
+        cleaned = re.sub(r"\[.*?\]|\(.*?\)", "", cleaned).strip()
         # Remove prefixes
         cleaned = re.sub(r"^(بانک\s+|موسسه\s+اعتباری\s+|پست\s+بانک\s+)", "", cleaned).strip()
         # If 'پست بانک' was stripped to empty, keep 'پست بانک'
@@ -152,9 +156,20 @@ class PersianBankMatcher:
 
     @classmethod
     def parse_option_text(cls, text: str) -> BankOptionInfo:
-        """Parse raw dropdown text and classify its active vs reserve quota."""
+        """Parse raw dropdown text, extract waiting queue count, and classify active vs reserve quota."""
         normalized = cls.normalize(text)
         clean_title = cls.clean_bank_title(normalized)
+
+        # Extract waiting queue count: متقاضی در صف : 1,450 نفر
+        waiting_match = re.search(r"متقاضی\s*در\s*صف\s*:\s*([\d,]+)", normalized)
+        waiting_count = 0
+        raw_waiting = ""
+        if waiting_match:
+            raw_waiting = waiting_match.group(1).strip()
+            try:
+                waiting_count = int(raw_waiting.replace(",", "").replace("،", ""))
+            except Exception:
+                waiting_count = 0
 
         is_reserve = bool(
             "ذخیره" in normalized
@@ -172,6 +187,8 @@ class PersianBankMatcher:
             clean_title=clean_title,
             has_active_quota=has_active,
             is_reserve=is_reserve,
+            waiting_count=waiting_count,
+            raw_waiting_text=raw_waiting,
         )
 
     @classmethod

@@ -12,7 +12,7 @@ import os
 import re
 import time
 import threading
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from core.bank_matcher import BankOptionInfo, PersianBankMatcher
 
@@ -279,15 +279,81 @@ class Step3BankPage:
             logger.warning(f"Failed to extract tracking or error: {e}")
             return {"is_success": False, "tracking_code": None, "error_msg": str(e)}
 
-    def archive_banks_seen_nonblocking(self, bot, options: List[BankOptionInfo], page=None):
-        """Asynchronously archive banks_seen.json and snapshot without blocking execution."""
+    @staticmethod
+    def calculate_bank_signature(options: List[BankOptionInfo]) -> str:
+        """
+        Structural signature of (clean_title, quota_status).
+        Differentiates active capacity (1) vs reserve (2).
+        """
+        items = []
+        for o in options:
+            title = o.clean_title or o.text
+            status = "1" if o.has_active_quota else ("2" if o.is_reserve else "0")
+            items.append(f"{title}:{status}")
+        return "|".join(sorted(items))
+
+    def get_location_names(self, page) -> Tuple[str, str]:
+        """Extract current province (labStateName) and city (ddlCity) names from page."""
+        try:
+            res = page.evaluate("""(citySel) => {
+                const provEl = document.querySelector('#ctl00_ContentPlaceHolder1_labStateName');
+                const prov = provEl ? (provEl.innerText || '').trim() : '';
+                const cityEl = document.querySelector(citySel);
+                const city = (cityEl && cityEl.selectedIndex >= 0 && cityEl.options[cityEl.selectedIndex])
+                    ? (cityEl.options[cityEl.selectedIndex].text || '').trim()
+                    : '';
+                return [prov, city];
+            }""", self.CITY_SELECTOR)
+            if isinstance(res, (list, tuple)) and len(res) >= 2:
+                return (str(res[0]), str(res[1]))
+            return ("", "")
+        except Exception:
+            return ("", "")
+        except Exception:
+            return ("", "")
+
+    def should_save_page(self, bot, options: List[BankOptionInfo]) -> bool:
+        """
+        Smart Deduplication Rule (Piece 2):
+        Returns True ONLY if a new bank appeared or a bank transitioned from reserve to active.
+        If identical to banks_seen.json, returns False to avoid spamming disk.
+        """
         if not options:
-            return
-        names = [opt.clean_title or opt.text for opt in options]
-        sig = "|".join(sorted(names))
+            return False
+        sig = self.calculate_bank_signature(options)
         if sig == self._last_archived_sig:
+            return False
+        base_dir = getattr(bot, "data_dir", os.path.join("static", "saved_pages"))
+        json_path = os.path.join(base_dir, "banks_seen.json")
+        if os.path.exists(json_path):
+            try:
+                with open(json_path, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                    if data.get("signature") == sig:
+                        self._last_archived_sig = sig
+                        return False
+            except Exception:
+                pass
+        return True
+
+    def archive_banks_seen_nonblocking(self, bot, options: List[BankOptionInfo], page=None):
+        """
+        Asynchronously archive banks_seen.json and snapshot ONLY if banks changed.
+        Never blocks execution loop.
+        """
+        if not options or not self.should_save_page(bot, options):
             return
+
+        sig = self.calculate_bank_signature(options)
         self._last_archived_sig = sig
+
+        # Capture HTML if page is provided
+        dom_html = ""
+        if page is not None:
+            try:
+                dom_html = page.content()
+            except Exception:
+                pass
 
         def _do_archive():
             try:
@@ -303,10 +369,27 @@ class Step3BankPage:
                         pass
                 seen_data["last_update"] = time.time()
                 seen_data["signature"] = sig
-                seen_data["banks"] = [{"value": o.value, "text": o.text, "active": o.has_active_quota} for o in options]
+                seen_data["banks"] = [
+                    {
+                        "value": o.value,
+                        "text": o.text,
+                        "clean_title": o.clean_title,
+                        "active": o.has_active_quota,
+                        "reserve": o.is_reserve,
+                        "waiting_count": o.waiting_count,
+                    }
+                    for o in options
+                ]
                 with open(json_path, "w", encoding="utf-8") as f:
                     json.dump(seen_data, f, ensure_ascii=False, indent=2)
-            except Exception:
-                pass
+
+                # Save HTML snapshot only on genuine new bank/quota change
+                if isinstance(dom_html, str) and dom_html:
+                    ts_str = time.strftime("%Y%m%d-%H%M%S")
+                    snap_name = f"banks-{ts_str}.html"
+                    with open(os.path.join(base_dir, snap_name), "w", encoding="utf-8") as f:
+                        f.write(dom_html)
+            except Exception as e:
+                logger.warning(f"Failed to archive banks_seen: {e}")
 
         threading.Thread(target=_do_archive, daemon=True).start()
