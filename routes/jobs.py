@@ -2,11 +2,12 @@
 routes/jobs.py — Job start, restart, cancel, active list.
 """
 import time
-from typing import Any, Dict
+from typing import Any, Dict, Literal
+from pydantic import BaseModel
 
 from fastapi import APIRouter, Depends, HTTPException
 
-from core.deps import require_api_key
+from core.deps import require_api_key, _admin_user
 import core.state as _state
 from core.models import JobStartRequest
 from core.helpers import _serialize_applicants
@@ -30,6 +31,8 @@ def start_job(req: JobStartRequest, _: bool = Depends(require_api_key)):
         raise HTTPException(status_code=500, detail="Job queue not ready")
 
     bot_name = req.bot_name.lower()
+    if bot_name in {"delete", "delete_req"}:
+        raise HTTPException(403, "برای حذف از مسیر تأیید صریح حذف ثبت‌نام استفاده کنید")
     existing = _state.JOB_QUEUE.find_active(bot_name, req.nid)
     if existing:
         return {"status": "already_running", "job": existing.to_dict()}
@@ -60,6 +63,8 @@ def start_job(req: JobStartRequest, _: bool = Depends(require_api_key)):
 
 @router.post("/jobs/restart")
 def restart_job(req: JobStartRequest, _: bool = Depends(require_api_key)):
+    if req.bot_name.lower() in {"delete", "delete_req"}:
+        raise HTTPException(403, "راه‌اندازی مجدد حذف نیازمند تأیید تازه مدیر است")
     if not _state.JOB_QUEUE:
         raise HTTPException(status_code=500, detail="Job queue not ready")
     # Release prior claims and reset runtime on restart so re-registration is allowed
@@ -118,15 +123,20 @@ def stop_bot_by_nid(nid: str, _: bool = Depends(require_api_key)):
     return {"status": job.status, "job": job.to_dict()}
 
 
+class ExplicitDeleteApproval(BaseModel):
+    confirmed: Literal[True]
+
+
 @router.post("/bot/action/delete-request/{nid}")
-def delete_request(nid: str, _: bool = Depends(require_api_key)):
+def delete_request(nid: str, approval: ExplicitDeleteApproval, admin: Dict[str, Any] = Depends(_admin_user)):
     from database import DBHandler
     applicant = DBHandler.get_applicant(nid)
     if not applicant:
         raise HTTPException(status_code=404, detail="Applicant not found")
     if not _state.JOB_QUEUE:
         raise HTTPException(status_code=500, detail="Job queue not ready")
-    job = _state.JOB_QUEUE.enqueue("delete_req", nid, {})
+    job = _state.JOB_QUEUE.enqueue("delete_req", nid, {"delete_approved": True,
+        "delete_confirmed_by": str(admin.get("username") or admin.get("id"))})
     if job is None:
         existing = _state.JOB_QUEUE.find_active("delete_req", nid)
         return {"status": "already_running", "job": existing.to_dict() if existing else None}

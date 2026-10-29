@@ -41,7 +41,8 @@ from bot_select_bank import (
     load_runtime_data,
 )
 
-TARGET_URL = "https://ve.cbi.ir/SelectBnkShb.aspx"
+TARGET_URL = "https://ve.cbi.ir/SelTasCase.aspx"
+SELECT_BNK_SHB_URL = "https://ve.cbi.ir/SelectBnkShb.aspx"
 CHILD_SELECT_URL = "https://ve.cbi.ir/ChildSelectBnkShb.aspx"
 
 
@@ -60,9 +61,17 @@ class LoanTypeAdapter:
             self.loan_option_selector = self.radio_selector
 
     @property
-    def target_select_url(self) -> str:
-        # Both marriage and childbearing bank selection on ve.cbi.ir use SelectBnkShb.aspx (or ChildSelectBnkShb.aspx if configured)
+    def entry_url(self) -> str:
         return TARGET_URL
+
+    @property
+    def direct_bank_url(self) -> str:
+        return CHILD_SELECT_URL if self.kind == "childbearing" else SELECT_BNK_SHB_URL
+
+    @property
+    def target_select_url(self) -> str:
+        # Both marriage and childbearing bank selection on ve.cbi.ir prefer direct access to SelectBnkShb.aspx
+        return self.direct_bank_url
 
     def validate_applicant(self, nid: str, user_data: dict) -> tuple[bool, str]:
         clean_nid = str(nid or "").strip()
@@ -324,6 +333,11 @@ class BankSelectionBot(BotCore):
                             "BANK_SELECTION": "MONITORING",
                             "BANK_CAPACITY_FULL": "BANK_CAPACITY_FULL",
                             "BRANCH_SELECT": "PROCESSING",
+                            "WAITING_BRANCH_LIST": "RUNNING",
+                            "SELECTING_BRANCH": "PROCESSING",
+                            "BRANCH_SELECTED": "PROCESSING",
+                            "BRANCH_NOT_FOUND": "WAITING_USER_INPUT",
+                            "BRANCH_SELECTION_FAILED": "WAITING_USER_INPUT",
                             "DONE": "SUCCESS",
                         }
                         panel_label_map = {
@@ -333,6 +347,11 @@ class BankSelectionBot(BotCore):
                             "BANK_SELECTION": "انتخاب بانک",
                             "BANK_CAPACITY_FULL": "ظرفیت تکمیل",
                             "BRANCH_SELECT": "انتخاب شعبه",
+                            "WAITING_BRANCH_LIST": "در حال دریافت فهرست شعب",
+                            "SELECTING_BRANCH": "در حال انتخاب شعبه",
+                            "BRANCH_SELECTED": "شعبه انتخاب شد",
+                            "BRANCH_NOT_FOUND": "شعبه یافت نشد",
+                            "BRANCH_SELECTION_FAILED": "خطا در انتخاب شعبه",
                             "DONE": "ثبت نهایی موفق",
                         }
                         self.set_runtime_state(status_map.get(new_state, "RUNNING"), new_state, browser_status="OPEN")
@@ -400,13 +419,26 @@ class BankSelectionBot(BotCore):
                 self.record_metric("page_load_ms", navigation_started)
 
                 # Check Checkpoint & Resume synchronization right after initial page load
-                resumed_stage = self._restore_from_checkpoint_if_available(page)
-                if resumed_stage == "DONE":
-                    return
-                elif resumed_stage == "STEP_3_BANK_SELECT":
+                actual_detected = self.detect_actual_page_stage(page)
+                if actual_detected == "STEP_3_BANK_SELECT":
+                    self.log("⚡ نشست مرورگر معتبر است! صفحه انتخاب بانک (SelectBnkShb.aspx) مستقیماً باز شد و بدون اتلاف وقت آماده پایش است.", "success", page)
                     set_state("BANK_SELECT")
-                elif resumed_stage == "STEP_2_OTP":
+                elif actual_detected == "STEP_2_OTP":
+                    self.log("📋 صفحه تایید پیامک (کد یکبارمصرف) شناسایی شد.", "info", page)
                     set_state("OTP_FORM")
+                elif actual_detected == "STEP_1_ENTRY_FORM":
+                    self.log("📋 فرم ورود اطلاعات متقاضی شناسایی شد.", "info", page)
+                    set_state("ENTRY_FORM")
+                    self.log("⚡ نشست مرورگر معتبر است! صفحه انتخاب بانک (SelectBnkShb.aspx) مستقیماً باز شد و بدون اتلاف وقت آماده پایش است.", "success", page)
+                    set_state("BANK_SELECT")
+                else:
+                    resumed_stage = self._restore_from_checkpoint_if_available(page)
+                    if resumed_stage == "DONE":
+                        return
+                    elif resumed_stage == "STEP_3_BANK_SELECT":
+                        set_state("BANK_SELECT")
+                    elif resumed_stage == "STEP_2_OTP":
+                        set_state("OTP_FORM")
 
                 def wait_for_state(selector, label, timeout=250):
                     if stop_event.is_set():
@@ -461,9 +493,27 @@ class BankSelectionBot(BotCore):
                         from bank_session_controller import BankSelectionSessionController
                         result = BankSelectionSessionController(self, self.live_owner).run()
                         if result == "reauthenticate":
-                            attempt = 0
-                            break
-                        return
+                            self.log("🔄 نیاز به ورود مجدد و اخذ پیامک تازه؛ بازگشت مستقیم به فرم مرحله ۱...", "warning", page)
+                            DBHandler.update_status(self.nid, "در حال ورود مجدد", "انقضای نشست یا پایش چرخشی؛ ورود مجدد از مرحله ۱")
+                            self._safe_goto_guarded(
+                                page,
+                                adapter.entry_url,
+                                timeout=int(self.settings.get("navigation_timeout_ms", 35000)),
+                                wait_until="domcontentloaded",
+                                log_callback=self.log,
+                            )
+                            set_state("ENTRY_FORM")
+                            continue
+                        elif result == "cycle_otp":
+                            # Fast cycling back to OTP entry without returning to Step 1
+                            set_state("OTP_FORM")
+                            continue
+                        elif result == "confirmed":
+                            return
+                        elif result == "stopped" and stop_event.is_set():
+                            return
+                        # If result is "waiting" or controller returned without confirmation, keep monitoring!
+                        continue
 
                     check_rejection(page)
 
@@ -513,7 +563,7 @@ class BankSelectionBot(BotCore):
                         )
                         self._safe_goto_guarded(
                             page,
-                            adapter.target_select_url,
+                            adapter.entry_url,
                             timeout=int(self.settings.get("navigation_timeout_ms", 35000)),
                             wait_until="domcontentloaded",
                             log_callback=self.log,
@@ -521,8 +571,8 @@ class BankSelectionBot(BotCore):
                         set_state("ENTRY_FORM")
                         continue
 
-                    # If already on Step 3 (SelectBnkShb.aspx), discard stale OTP/CAPTCHA flags from Step 1/2
-                    if self.detect_actual_page_stage(page) == "STEP_3_BANK_SELECT":
+                    # If already on Step 3 (SelectBnkShb.aspx), discard stale OTP/CAPTCHA flags from Step 1/2 ONLY if OTP input is not visible
+                    if self.detect_actual_page_stage(page) == "STEP_3_BANK_SELECT" and not self._otp_input_visible(page):
                         self.clear_otp_locks()
                         self.consume_recovery_flag("otp_expired")
                         self.consume_recovery_flag("captcha_invalid")
@@ -546,7 +596,7 @@ class BankSelectionBot(BotCore):
                         )
                         self._safe_goto_guarded(
                             page,
-                            adapter.target_select_url,
+                            adapter.entry_url,
                             timeout=int(self.settings.get("navigation_timeout_ms", 35000)),
                             wait_until="domcontentloaded",
                             log_callback=self.log,
@@ -692,6 +742,37 @@ class BankSelectionBot(BotCore):
                             )
                             set_state("ENTRY_FORM")
                             continue
+
+                    elif actual_stage == "FACILITY_SELECTION" or "seltcase" in page.url.lower():
+                        set_state("FACILITY_SELECTION")
+                        self.log("📋 فرم انتخاب نوع تسهیلات (SelTasCase.aspx) شناسایی شد؛ انتخاب تسهیلات و کلیک ادامه جهت تنظیم نشست...", "info", page)
+                        chosen_opt = getattr(self, "facility_type", None) or self.settings.get("default_facility_type", "rbtnNaghdi")
+                        target_radio = "#ctl00_ContentPlaceHolder1_rbtnKala" if chosen_opt == "rbtnKala" else "#ctl00_ContentPlaceHolder1_rbtnNaghdi"
+                        for sel in (target_radio, f"input[value='{chosen_opt}']", "input[id*='rbtnNaghdi']", "input[id*='rbtnKala']"):
+                            try:
+                                loc = page.locator(sel)
+                                if loc.count() > 0 and loc.first.is_visible():
+                                    loc.first.check()
+                                    break
+                            except Exception:
+                                continue
+
+                        btn_clicked = False
+                        for btn_sel in ("#ctl00_ContentPlaceHolder1_btnContinue", "input[name$='btnContinue']", "button:has-text('ادامه')"):
+                            try:
+                                btn_loc = page.locator(btn_sel)
+                                if btn_loc.count() > 0 and btn_loc.first.is_visible():
+                                    btn_loc.first.click()
+                                    btn_clicked = True
+                                    break
+                            except Exception:
+                                continue
+                        if btn_clicked:
+                            try:
+                                page.wait_for_load_state("domcontentloaded", timeout=12000)
+                            except Exception:
+                                pass
+                        continue
 
                     elif actual_stage == "STEP_1_ENTRY_FORM":
                         set_state("ENTRY_FORM")

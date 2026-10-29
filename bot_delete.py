@@ -17,6 +17,7 @@ TARGET_URL = "https://ve.cbi.ir/TasReqDelete.aspx"
 
 
 class DeleteRequestBot(BotCore):
+    OTP_TYPE = "REGISTRATION_DELETE_OTP"
     def __init__(self, nid: str, settings: dict, log_callback=None, captcha_service=None, browser_profile=None):
         super().__init__(
             nid,
@@ -29,6 +30,9 @@ class DeleteRequestBot(BotCore):
         self._last_busy_log_ts = 0.0
 
     def run(self, stop_event) -> bool:
+        if not (self.settings.get("delete_approved") is True and self.settings.get("delete_confirmed_by")):
+            self.log("حذف ثبت‌نام بدون تأیید صریح مدیر مجاز آغاز نمی‌شود.", "error")
+            return False
         self._active_stop_event = stop_event
         playwright = None
         browser = None
@@ -312,6 +316,8 @@ class DeleteRequestBot(BotCore):
         )
 
     def _run_stage2_otp(self, page, stop_event) -> bool:
+        if not getattr(self, "_otp_entry_time", 0):
+            self.mark_otp_entry_time()
         self.log("مرحله دوم حذف (تأیید پیامکی) شناسایی شد؛ منتظر دریافت کد تأیید...", "info", page)
         otp_selectors = ["#ctl00_ContentPlaceHolder1_tbMobConfCode", "input[name*='tbMobConfCode']", "input[name*='ConfCode']"]
         captcha_selectors = ["#ctl00_ContentPlaceHolder1_tbCaptcha2", "input[name*='tbCaptcha']"]
@@ -339,7 +345,8 @@ class DeleteRequestBot(BotCore):
 
             if not code:
                 try:
-                    db_code = DBHandler.get_otp(self.nid)
+                    from otp_transport import fresh_record
+                    db_code = fresh_record(self, DBHandler.get_otp_record(self.nid))
                     if db_code and len(str(db_code).strip()) >= 5:
                         code = str(db_code).strip()
                 except Exception:

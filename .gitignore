@@ -65,3 +65,21 @@ updates_staging/
 .DS_Store
 Thumbs.db
 desktop.ini
+
+# 7. Media & Videos
+*.mp4
+*.mkv
+*.avi
+*.mov
+
+# 8. Temporary Diagnostic Scripts & Database Backups
+*.db.backup*
+scratch/
+dump_*.py
+inspect_*.py
+query_*.py
+extract_*.py
+search_*.py
+check_applicant.py
+list_nids.py
+analyze_scripts.py

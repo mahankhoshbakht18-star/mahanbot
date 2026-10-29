@@ -58,6 +58,18 @@ class LiveSessionRegistry:
         with self._lock:
             return self._sessions.get(str(nid))
 
+    def enqueue_command(self, nid, command):
+        with self._lock:
+            owner = self._sessions.get(str(nid))
+            if owner and owner.alive:
+                owner.commands.put(command)
+                if command == "pause":
+                    owner.paused = True
+                elif command == "resume":
+                    owner.paused = False
+                return True
+            return False
+
     def release(self, owner):
         owner.assert_owner()
         with self._lock:

@@ -63,12 +63,14 @@
     </div>
 
     <nav class="sidebar-nav">
+      <a class="nav-link" href="/admin/app-releases" target="_blank" rel="noopener"><i class="fa-solid fa-mobile-screen-button"></i><span>مدیریت نسخه‌های اپلیکیشن</span></a>
       <div onclick="switchView('license',this)"><button class="nav-link" aria-label="لایسنس ماهان" data-tooltip="فعال‌سازی و مدیریت مرکزی لایسنس"><i class="fa-solid fa-key"></i><span>لایسنس ماهان</span></button></div>
       <div onclick="switchView('dashboard',this)"><button class="nav-link active" data-tooltip="داشبورد عملیات: مشاهده وضعیت آنلاین بات‌ها، آمار کلی و مانیتور زنده"><i class="fa-solid fa-chart-pie"></i><span>داشبورد</span></button></div>
       <div onclick="switchView('queue',this)"><button class="nav-link" data-tooltip="مدیریت صف متقاضیان: اولویت‌بندی هوشمند، نظارت زنده بر ماشین حالت و کدهای پیامک"><i class="fa-solid fa-list-ol"></i><span>مدیریت صف</span></button></div>
       <div onclick="switchView('list',this)"><button class="nav-link" data-tooltip="مدیریت متقاضیان: فهرست پرونده‌ها، جستجو، فیلتر و ویرایش مشخصات"><i class="fa-solid fa-users"></i><span>متقاضیان</span></button></div>
       <div onclick="switchView('add',this)"><button class="nav-link" data-tooltip="ثبت‌نام اولیه: تشکیل پرونده وام ازدواج یا فرزندآوری و بارگذاری اکسل"><i class="fa-solid fa-user-plus"></i><span>ثبت‌نام اولیه</span></button></div>
       <div onclick="switchView('bank-select',this)"><button class="nav-link" data-tooltip="پایش ظرفیت: شکار هوشمند سهمیه بانکی و کنترل چرخه ثبت"><i class="fa-solid fa-crosshairs"></i><span>پایش ظرفیت</span></button></div>
+      <div onclick="switchView('radar',this)"><button class="nav-link" data-tooltip="رادار هوشمند ظرفیت: پایش کشوری، تحلیل ساعت ۱۸ و اعلان تلگرام"><i class="fa-solid fa-satellite-dish"></i><span>رادار و تلگرام</span></button></div>
       <div onclick="switchView('saved-pages',this)"><button class="nav-link" data-tooltip="صفحات ذخیره‌شده: بررسی و بازیابی نشست‌های مرحله ۳ بدون پیامک مجدد"><i class="fa-solid fa-file-shield"></i><span>صفحات ذخیره‌شده</span></button></div>
       <div onclick="switchView('recover',this)"><button class="nav-link" data-tooltip="بازیابی کد رهگیری: استعلام و استخراج خودکار کد رهگیری ۱۰ رقمی از ve.cbi.ir/GetTraceCD.aspx"><i class="fa-solid fa-file-invoice"></i><span>بازیابی کد رهگیری</span></button></div>
       <div onclick="switchView('delete-req',this)"><button class="fa-trash-nav nav-link" data-tooltip="حذف ثبت‌نام: لغو رسمی درخواست در سامانه مرکزی (ve.cbi.ir/TasReqDelete.aspx)"><i class="fa-solid fa-trash-can"></i><span>حذف ثبت‌نام</span></button></div>
@@ -823,11 +825,7 @@
           <label id="lblPriorityBranches">شعب اولویت‌دار (با ویرگول جدا کنید)
             <input id="inpPriorityBranches" class="form-control" placeholder="مثال: ۱۲۳۴، شعبه میدان ونک">
           </label>
-          <label class="check-card"><input id="inpInheritFinalSubmit" type="checkbox" checked onchange="syncApplicantSubmissionControls()"> ثبت نهایی طبق تنظیم عمومی</label>
-          <label class="check-card"><input id="inpAutoFinalSubmit" type="checkbox" disabled> ثبت نهایی خودکار این متقاضی</label>
-          <label>فاصله تلاش مجدد ثبت نهایی (ثانیه)
-            <input id="inpFinalSubmitInterval" class="form-control" type="number" min="1" max="600" step="0.1" placeholder="خالی: تنظیم عمومی">
-          </label>
+
           <label class="check-card mt-2">
             <input id="inpAllowReserve" type="checkbox" checked>
             پذیرش بانک در وضعیت رزرو / ذخیره (در انتظار ظرفیت جدید)
@@ -2044,6 +2042,214 @@
           </div>
         </div>
       </article>
+    </section>
+
+    <!-- ════════════════ VIEW: RADAR & TELEGRAM (رادار ظرفیت و اطلاع‌رسانی) ════════════════ -->
+    <section id="view-radar" class="view-section">
+      <div class="page-heading">
+        <div>
+          <span class="section-kicker" style="color:#0891b2; font-weight:700;">سامانه رادار هوشمند کشوری و اعلان تلگرام | MAHANBOT 2.0</span>
+          <h2 style="color:#0f172a;">رادار ظرفیت بانک‌ها و اطلاع‌رسان خودکار تلگرام</h2>
+          <p class="text-muted">پایش پیوسته وضعیت بانک‌ها در تمام استان‌ها، تحلیل تحلیلی پنجره طلایی ساعت ۱۸:۰۰ (۶ عصر)، مدیریت صف ذخیره و ارسال مستقیم اطلاعیه‌ها به کانال <strong>@Mahanvpn3</strong>.</p>
+        </div>
+        <div class="d-flex gap-2 align-items-center flex-wrap">
+          <span id="radar18Badge" class="badge p-2 px-3" style="background:#fef3c7; color:#92400e; border:1px solid #fcd34d; font-size:0.85rem; border-radius:12px;">
+            <i class="fa-solid fa-clock me-1"></i>پایش ساعت ۱۸:۰۰ در حال اجرا
+          </span>
+          <button class="btn btn-outline-primary action-pill" onclick="loadRadarData()">
+            <i class="fa-solid fa-arrows-rotate"></i>
+            <span>به‌روزرسانی رادار</span>
+          </button>
+          <button class="btn btn-primary action-pill" style="background:#0891b2; border-color:#0891b2;" onclick="showTelegramQuickPost()">
+            <i class="fa-brands fa-telegram"></i>
+            <span>ارسال پست به کانال</span>
+          </button>
+        </div>
+      </div>
+
+      <!-- Top Metric Cards (Light Theme Palette) -->
+      <div class="stats-grid mb-4">
+        <article class="stat-card" style="background:#ffffff; border-right:4px solid #10b981; box-shadow:0 2px 8px rgba(16,185,129,0.08);">
+          <span class="stat-icon" style="background:#ecfdf5; color:#10b981;"><i class="fa-solid fa-building-columns"></i></span>
+          <div>
+            <small class="text-muted">دارای سهمیه قطعی</small>
+            <strong id="radarMetricAvailable" style="color:#065f46;">۰</strong>
+          </div>
+        </article>
+        <article class="stat-card" style="background:#ffffff; border-right:4px solid #d97706; box-shadow:0 2px 8px rgba(217,119,6,0.08);">
+          <span class="stat-icon" style="background:#fffbeb; color:#d97706;"><i class="fa-solid fa-hourglass-half"></i></span>
+          <div>
+            <small class="text-muted">در صف تخصیص جدید (رزرو)</small>
+            <strong id="radarMetricReserve" style="color:#92400e;">۰</strong>
+          </div>
+        </article>
+        <article class="stat-card" style="background:#ffffff; border-right:4px solid #e11d48; box-shadow:0 2px 8px rgba(225,29,72,0.08);">
+          <span class="stat-icon" style="background:#fff1f2; color:#e11d48;"><i class="fa-solid fa-ban"></i></span>
+          <div>
+            <small class="text-muted">تکمیل ظرفیت</small>
+            <strong id="radarMetricFull" style="color:#9f1239;">۰</strong>
+          </div>
+        </article>
+        <article class="stat-card" style="background:#ffffff; border-right:4px solid #0891b2; box-shadow:0 2px 8px rgba(8,145,178,0.08);">
+          <span class="stat-icon" style="background:#ecfeff; color:#0891b2;"><i class="fa-brands fa-telegram"></i></span>
+          <div>
+            <small class="text-muted">کانال متصل تلگرام</small>
+            <strong id="radarMetricChannel" style="color:#155e75; font-size:1rem;">@Mahanvpn3</strong>
+          </div>
+        </article>
+      </div>
+
+      <!-- 18:00 Batch & Reserve Sniping Intelligence Panel -->
+      <div class="card mb-4" style="background:#ffffff; border:1px solid #e2e8f0; border-radius:14px; box-shadow:0 4px 12px rgba(0,0,0,0.03);">
+        <div class="card-body p-4">
+          <div class="d-flex align-items-center justify-content-between flex-wrap gap-2 mb-3">
+            <h4 class="m-0" style="color:#1e293b; font-weight:700;">
+              <i class="fa-solid fa-shield-halved text-primary me-2"></i>تحلیل هوشمند چرخه ساعت ۱۸:۰۰ (۶ عصر) و استعلام صف ذخیره
+            </h4>
+            <span class="badge" style="background:#e0f2fe; color:#0369a1; padding:6px 12px; border-radius:8px;">
+              سامانه رسمی بانک مرکزی (ve.cbi.ir)
+            </span>
+          </div>
+          <div class="row g-3">
+            <div class="col-lg-8">
+              <p class="text-secondary small mb-2" style="line-height:1.8;">
+                براساس شواهد ثبت موفق و رصد متقاضیان (مانند نمونه‌های ثبت‌شده با رتبه صف ۱۱۴ و ۱۱۸ در بانک صادرات با تاریخ 14050804 ساعت 18:00)، سامانه بانک مرکزی راس ساعت ۱۸:۰۰ سهمیه‌های ذخیره غیرحضوری را بازنشانی می‌کند.
+              </p>
+              <div class="d-flex gap-2 flex-wrap">
+                <div class="p-2 px-3 rounded border" style="background:#f8fafc; border-color:#e2e8f0 !important;">
+                  <span class="text-muted small">شعب پیشنهادی:</span>
+                  <span class="badge bg-secondary ms-1">شعبه مجازی سامانه (بدون معطلی انتخاب شعبه فیزیکی)</span>
+                </div>
+                <div class="p-2 px-3 rounded border" style="background:#f8fafc; border-color:#e2e8f0 !important;">
+                  <span class="text-muted small">استعلام وضعیت صف ذخیره:</span>
+                  <span class="badge bg-info text-dark ms-1">بدون نیاز به کد رهگیری (طبق مصوبه بانک مرکزی)</span>
+                </div>
+                <div class="p-2 px-3 rounded border" style="background:#f8fafc; border-color:#e2e8f0 !important;">
+                  <span class="text-muted small">نرخ موفقیت در ساعت ۱۸:</span>
+                  <strong class="text-success ms-1">حداکثر سهمیه</strong>
+                </div>
+              </div>
+            </div>
+            <div class="col-lg-4 text-center border-start">
+              <div class="p-2">
+                <small class="text-muted d-block mb-1">وضعیت پنجره زمانی فعلی</small>
+                <div id="radarBatchStatusDisplay" class="p-2 rounded font-monospace" style="background:#f1f5f9; font-weight:700; color:#334155;">
+                  عادی (آماده‌باش برای ساعت ۱۸:۰۰)
+                </div>
+                <small class="text-muted mt-2 d-block">ساعت سرور بانک مرکزی با ساعت رسمی کشور همگام است.</small>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Live Radar Table Section -->
+      <div class="card mb-4" style="background:#ffffff; border:1px solid #e2e8f0; border-radius:14px; box-shadow:0 4px 12px rgba(0,0,0,0.03);">
+        <div class="card-header bg-white border-bottom p-3 d-flex justify-content-between align-items-center flex-wrap gap-2">
+          <div class="d-flex align-items-center gap-2">
+            <h5 class="m-0" style="color:#0f172a; font-weight:700;"><i class="fa-solid fa-table-list text-info me-2"></i>جدول زنده پایش ظرفیت استان‌ها و بانک‌ها</h5>
+            <span id="radarTableCountBadge" class="badge bg-light text-dark border">۰ مورد</span>
+          </div>
+          <div class="d-flex align-items-center gap-2 flex-wrap">
+            <select id="radarFilterProvince" class="form-select form-select-sm" style="width:160px;" onchange="filterRadarTable()">
+              <option value="">همه استان‌ها</option>
+            </select>
+            <select id="radarFilterStatus" class="form-select form-select-sm" style="width:170px;" onchange="filterRadarTable()">
+              <option value="">همه وضعیت‌ها</option>
+              <option value="AVAILABLE_OBSERVED">🟢 دارای ظرفیت</option>
+              <option value="RESERVE">🟠 در انتظار ظرفیت جدید (صف ذخیره)</option>
+              <option value="FULL">🔴 تکمیل ظرفیت</option>
+            </select>
+            <input id="radarSearchInput" type="text" class="form-control form-control-sm" placeholder="جستجوی بانک یا شهر..." style="width:200px;" oninput="filterRadarTable()">
+          </div>
+        </div>
+        <div class="table-responsive p-0">
+          <table class="table table-hover align-middle mb-0" id="radarLiveTable">
+            <thead style="background:#f8fafc; color:#64748b; font-size:0.85rem;">
+              <tr>
+                <th class="text-center" style="width:50px;">#</th>
+                <th>استان</th>
+                <th>شهر</th>
+                <th>نام بانک</th>
+                <th>تسهیلات</th>
+                <th>نوع مراجعه</th>
+                <th>وضعیت ظرفیت</th>
+                <th>آخرین مشاهده</th>
+                <th class="text-center">عملیات</th>
+              </tr>
+            </thead>
+            <tbody id="radarLiveTableBody">
+              <tr>
+                <td colspan="9" class="text-center p-4 text-muted">
+                  <i class="fa-solid fa-spinner fa-spin me-2"></i>در حال دریافت وضعیت از رادار...
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- Telegram Channel Settings & Manual Post Box -->
+      <div class="row g-4">
+        <div class="col-lg-6">
+          <div class="card h-100" style="background:#ffffff; border:1px solid #e2e8f0; border-radius:14px;">
+            <div class="card-header bg-white border-bottom p-3">
+              <h5 class="m-0" style="color:#0f172a; font-weight:700;"><i class="fa-brands fa-telegram text-primary me-2"></i>تنظیمات و اتصال کانال @Mahanvpn3</h5>
+            </div>
+            <div class="card-body p-3">
+              <div class="mb-3">
+                <label class="form-label small text-muted">توکن ربات تلگرام (Bot Token):</label>
+                <div class="input-group input-group-sm">
+                  <input type="password" id="telegramBotTokenInput" class="form-control font-monospace" placeholder="8988974593:AAHnlt1ZVf5WAMFm59fbLtenxppF9aHM_Fc">
+                  <button class="btn btn-outline-secondary" type="button" onclick="togglePasswordVisibility('telegramBotTokenInput')"><i class="fa-solid fa-eye"></i></button>
+                </div>
+                <small class="text-muted">ربات متصل: <code>@MahanVPN_Shop_Bot</code></small>
+              </div>
+              <div class="mb-3">
+                <label class="form-label small text-muted">شناسه چت / کانال (Chat ID):</label>
+                <input type="text" id="telegramChatIdInput" class="form-control form-control-sm font-monospace" placeholder="-1003720759140">
+                <small class="text-muted">کانال رسمی: <code>@Mahanvpn3</code> (-1003720759140)</small>
+              </div>
+              <div class="form-check form-switch mb-3">
+                <input class="form-check-input" type="checkbox" id="telegramNotificationsToggle" checked>
+                <label class="form-check-label small" for="telegramNotificationsToggle">ارسال خودکار اعلان‌ها هنگام باز شدن ظرفیت یا ایجاد سهمیه جدید</label>
+              </div>
+              <div class="d-flex gap-2">
+                <button class="btn btn-sm btn-primary" onclick="saveTelegramSettings()">
+                  <i class="fa-solid fa-floppy-disk me-1"></i>ذخیره تنظیمات
+                </button>
+                <button class="btn btn-sm btn-outline-info" onclick="sendTelegramTestFromUI()">
+                  <i class="fa-solid fa-paper-plane me-1"></i>تست ارسال به کانال
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="col-lg-6">
+          <div class="card h-100" style="background:#ffffff; border:1px solid #e2e8f0; border-radius:14px;">
+            <div class="card-header bg-white border-bottom p-3">
+              <h5 class="m-0" style="color:#0f172a; font-weight:700;"><i class="fa-solid fa-bullhorn text-warning me-2"></i>ارسال اطلاعیه فوری تعرفه و ظرفیت به کانال</h5>
+            </div>
+            <div class="card-body p-3">
+              <div class="mb-2">
+                <label class="form-label small text-muted">عنوان پست:</label>
+                <input type="text" id="telegramPostTitle" class="form-control form-control-sm" value="🚀 ظرفیت جدید سرویس‌های MahanBot و تسهیلات بانکی">
+              </div>
+              <div class="mb-3">
+                <label class="form-label small text-muted">متن پیام و تعرفه‌ها:</label>
+                <textarea id="telegramPostContent" rows="4" class="form-control form-control-sm" placeholder="متن پیام همراه با ظرفیت‌ها و تعرفه‌ها..."></textarea>
+              </div>
+              <div class="p-2 rounded bg-light border mb-3 small text-muted">
+                <i class="fa-solid fa-circle-info text-info me-1"></i>این پست به همراه دکمه‌های شیشه‌ای ربات <code>@MahanVPN_Shop_Bot</code> و کانال <code>@Mahanvpn3</code> منتشر خواهد شد.
+              </div>
+              <button class="btn btn-sm btn-success" onclick="publishChannelPostFromUI()">
+                <i class="fa-solid fa-share-from-square me-1"></i>انتشار در کانال @Mahanvpn3
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
     </section>
 
   </main>

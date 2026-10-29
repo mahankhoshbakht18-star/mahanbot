@@ -159,20 +159,50 @@ def set_concurrency(req: ConcurrencyUpdateRequest, _: bool = Depends(require_api
 @router.post("/pause/{nid}")
 def pause_applicant_monitoring(nid: str, _: bool = Depends(require_api_key)):
     """Pause capacity monitoring for a specific applicant."""
-    owner = LIVE_SESSIONS.get(nid)
-    if not owner or not owner.alive:
-        raise HTTPException(status_code=404, detail="No active browser session for applicant")
+    clean_nid = str(nid).strip()
+    session_paused = False
+    try:
+        session_paused = LIVE_SESSIONS.enqueue_command(clean_nid, "pause")
+    except Exception:
+        pass
 
-    LIVE_SESSIONS.enqueue_command(nid, "pause")
-    return {"status": "ok", "message": f"Applicant {nid} paused"}
+    try:
+        from core.queue_manager import QueueManager
+        QueueManager.pause_applicant(clean_nid)
+    except Exception:
+        pass
+
+    if _state.JOB_QUEUE:
+        try:
+            _state.JOB_QUEUE.cancel_by_nid(clean_nid)
+        except Exception:
+            pass
+
+    return {
+        "status": "ok",
+        "message": f"Applicant {clean_nid} paused",
+        "live_session_paused": session_paused,
+    }
 
 
 @router.post("/resume/{nid}")
 def resume_applicant_monitoring(nid: str, _: bool = Depends(require_api_key)):
     """Resume capacity monitoring for a specific applicant."""
-    owner = LIVE_SESSIONS.get(nid)
-    if not owner or not owner.alive:
-        raise HTTPException(status_code=404, detail="No active browser session for applicant")
+    clean_nid = str(nid).strip()
+    session_resumed = False
+    try:
+        session_resumed = LIVE_SESSIONS.enqueue_command(clean_nid, "resume")
+    except Exception:
+        pass
 
-    LIVE_SESSIONS.enqueue_command(nid, "resume")
-    return {"status": "ok", "message": f"Applicant {nid} resumed"}
+    try:
+        from core.queue_manager import QueueManager
+        QueueManager.resume_applicant(clean_nid)
+    except Exception:
+        pass
+
+    return {
+        "status": "ok",
+        "message": f"Applicant {clean_nid} resumed",
+        "live_session_resumed": session_resumed,
+    }

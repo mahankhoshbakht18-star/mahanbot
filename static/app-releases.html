@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="fa" dir="rtl"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>مدیریت نسخه‌های اپلیکیشن ماهان</title>
+<style>
+body{margin:0;background:#f3f6fa;color:#17324a;font:16px Tahoma,sans-serif;line-height:1.9}main{max-width:1100px;margin:32px auto;padding:0 20px}h1{font-size:26px}h2{font-size:20px}section,.metric{background:white;border:1px solid #dce5ef;border-radius:20px;padding:22px;margin:16px 0}button,a.action{border:0;border-radius:12px;padding:12px 18px;background:#137b84;color:white;cursor:pointer;font:inherit;margin:6px}button.danger{background:#a73d4b}input,textarea,select{box-sizing:border-box;font:inherit;border:1px solid #c8d6e3;border-radius:10px;padding:10px;width:100%;margin:6px 0}label{display:block;margin-top:12px}table{border-collapse:collapse;width:100%;font-size:13px}th,td{text-align:right;border-bottom:1px solid #e1e8ef;padding:10px;overflow-wrap:anywhere}#status{white-space:pre-wrap;color:#18465b}.metrics{display:flex;gap:16px;flex-wrap:wrap}.metric{flex:1;min-width:160px}.scroll{overflow:auto}.muted{color:#617489}.pill{color:#205284;background:#edf3fa;padding:5px 10px;border-radius:9px}.warning{background:#fff5dd;border:1px solid #ead39c;padding:14px;border-radius:12px}dialog{max-width:600px;width:85%;border:0;border-radius:20px;color:#17324a}small{display:block}code{direction:ltr;unicode-bidi:embed}
+</style></head><body><main>
+<a href="/">بازگشت به داشبورد</a><h1>مدیریت نسخه‌های اپلیکیشن</h1><p class="muted">فقط مدیر مجاز · بسته Classic: <code>com.example.codresan</code> · انتشار ابتدا پیش‌نویس و آزمایشی است.</p>
+<div class="warning">نسخه‌های قدیمی FCM ندارند. دکمه اطلاع‌رسانی فقط برای نصب‌های ثبت‌شده و موافق، اعلان را در انتظار بررسی دوره‌ای قرار می‌دهد؛ به معنی ارسال Push یا نصب موفق نیست. تعداد کاربران قدیمیِ ثبت‌نشده نامعلوم است.</div>
+<div class="metrics"><div class="metric">آخرین نسخه عمومی<div id="latest">در حال دریافت…</div></div><div class="metric">نصب‌های ثبت‌شده<div id="devices">—</div></div><div class="metric">نسخه‌های قدیمی ثبت‌شده<div id="outdated">—</div></div></div>
+<section><h2>ثبت نسخه جدید</h2><form id="releaseForm">
+<label>فایل APK انتشار امضاشده<input id="apk" type="file" accept=".apk" required></label>
+<small class="muted">امضای کامل با ابزار Android و Package/Version در خود سرور بررسی می‌شوند. Debug APK با امضای متفاوت پذیرفته نمی‌شود.</small>
+<label>حداقل versionCode پشتیبانی‌شده<input id="minimum" type="number" min="1" value="1" required></label>
+<label>اولویت<select id="priority"><option value="normal">عادی</option><option value="critical">ضروری</option></select></label>
+<label>تغییرات نسخه<textarea id="notes" maxlength="4000" required rows="3"></textarea></label>
+<button type="submit">بارگذاری، بررسی امضا و ثبت پیش‌نویس</button></form><p id="status" role="status"></p></section>
+<section><h2>تاریخچه انتشار و کنترل توزیع</h2><div class="scroll"><table><thead><tr><th>نسخه / Build</th><th>کانال</th><th>SHA-256</th><th>انتشار</th><th>اقدام</th></tr></thead><tbody id="releases"></tbody></table></div></section>
+<section><h2>وضعیت واقعی نصب‌ها</h2><p class="muted">شناسه‌ها تصادفی‌اند. «گزارش نصب» فقط پس از اجرای نسخه جدید ثبت می‌شود؛ نبود گزارش به معنی شکست یا موفقیت نصب نیست.</p><div class="scroll"><table><thead><tr><th>شناسه نصب</th><th>نسخه</th><th>آخرین ارتباط</th><th>وضعیت گزارش‌شده</th><th>اجازه اعلان</th></tr></thead><tbody id="deviceRows"></tbody></table></div></section>
+<section><h2>گزارش اطلاع‌رسانی</h2><div id="notices"></div><h2>ممیزی عملیات</h2><div id="audit"></div></section>
+<dialog id="approval"><form method="dialog"><h2>تأیید مرحله انتشار</h2>
+<p id="approvalText"></p><label>شناسه نصب‌های آزمایشی، هر سطر یک UUID<textarea id="pilotIds" rows="3"></textarea></label>
+<label>گزارش تست نصب، ارتقا و گروه آزمایشی<textarea id="testReport" minlength="10" maxlength="2000" required rows="4"></textarea></label>
+<p class="warning">انتشار عمومی فقط پس از آزمایش، بررسی نتیجه و تأیید صریح شما انجام می‌شود.</p>
+<button id="approveButton" type="button">تأیید این مرحله</button><button>انصراف</button></form></dialog>
+</main><script src="/static/app-releases.js"></script></body></html>

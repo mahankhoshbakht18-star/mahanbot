@@ -158,3 +158,59 @@ def list_otp_queue(
 ):
     """List recent OTP requests with delivery & verification status."""
     return {"status": "ok", "requests": OTPQueueManager.list_requests(limit=limit)}
+
+
+@router.get("/api/queue/{nid}/branches")
+def get_applicant_branches(nid: str, _: bool = Depends(require_api_key)):
+    """Retrieve detected/available branches for applicant."""
+    clean_nid = str(nid).strip()
+    runtime = DBHandler.get_runtime(clean_nid) or {}
+    branches = runtime.get("available_branches") or []
+    selected = runtime.get("selected_branch") or ""
+    branch_code = runtime.get("branch_code") or ""
+    return {
+        "status": "ok",
+        "nid": clean_nid,
+        "branches": branches,
+        "selected_branch": selected,
+        "branch_code": branch_code,
+    }
+
+
+@router.post("/api/queue/{nid}/select-branch")
+def set_applicant_branch(nid: str, payload: Dict[str, Any], _: bool = Depends(require_api_key)):
+    """Manually select a branch for an applicant from dashboard."""
+    from core.state_machine import BotState, transition_state
+    clean_nid = str(nid).strip()
+    branch_code = str(payload.get("branch_code") or "").strip()
+    branch_name = str(payload.get("branch_name") or payload.get("branch_text") or "").strip()
+
+    if not branch_code and not branch_name:
+        raise HTTPException(status_code=400, detail="کد یا نام شعبه الزامی است.")
+
+    display_val = branch_name or branch_code
+    DBHandler.update_runtime(
+        clean_nid,
+        selected_branch=display_val,
+        branch_code=branch_code,
+        branch_name=branch_name,
+        manual_branch_selection=True,
+    )
+    transition_state(
+        clean_nid,
+        BotState.BRANCH_SELECTED,
+        reason=f"شعبه «{display_val}» به‌صورت دستی توسط کاربر انتخاب گردید",
+    )
+    transition_state(
+        clean_nid,
+        BotState.READY_TO_SUBMIT,
+        reason="آماده ثبت نهایی پس از انتخاب دستی شعبه",
+    )
+    QueueManager.emit_snapshot()
+    return {
+        "status": "ok",
+        "nid": clean_nid,
+        "selected_branch": display_val,
+        "branch_code": branch_code,
+        "message": f"شعبه «{display_val}» با موفقیت ثبت شد."
+    }

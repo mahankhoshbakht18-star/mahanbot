@@ -27,6 +27,11 @@ class BotState(str, enum.Enum):
     AUTHENTICATED = "AUTHENTICATED"              # ورود موفق
     STEP_3_READY = "STEP_3_READY"                # صفحه سوم آماده
     SELECTING_BANK = "SELECTING_BANK"            # انتخاب بانک
+    WAITING_BRANCH_LIST = "WAITING_BRANCH_LIST"  # انتظار دریافت لیست شعب
+    SELECTING_BRANCH = "SELECTING_BRANCH"        # در حال انتخاب شعبه
+    BRANCH_SELECTED = "BRANCH_SELECTED"          # شعبه انتخاب شد
+    BRANCH_NOT_FOUND = "BRANCH_NOT_FOUND"        # شعبه یافت نشد
+    BRANCH_SELECTION_FAILED = "BRANCH_SELECTION_FAILED"  # خطا در ثبت شعبه
     CAPACITY_FULL = "CAPACITY_FULL"              # ظرفیت تکمیل
     WAITING_AVAILABILITY = "WAITING_AVAILABILITY"  # انتظار بررسی مجاز ظرفیت
     READY_TO_SUBMIT = "READY_TO_SUBMIT"          # آماده ثبت نهایی
@@ -49,6 +54,11 @@ STATE_DESCRIPTIONS_FA = {
     BotState.AUTHENTICATED.value: "ورود موفق به سامانه",
     BotState.STEP_3_READY.value: "صفحه سوم آماده",
     BotState.SELECTING_BANK.value: "در حال انتخاب بانک",
+    BotState.WAITING_BRANCH_LIST.value: "در حال دریافت فهرست شعب",
+    BotState.SELECTING_BRANCH.value: "در حال انتخاب شعبه",
+    BotState.BRANCH_SELECTED.value: "شعبه انتخاب شد",
+    BotState.BRANCH_NOT_FOUND.value: "شعبه موردنظر یافت نشد (نیازمند انتخاب)",
+    BotState.BRANCH_SELECTION_FAILED.value: "خطا در انتخاب شعبه (نیازمند اقدام)",
     BotState.CAPACITY_FULL.value: "ظرفیت بانک تکمیل",
     BotState.WAITING_AVAILABILITY.value: "منتظر باز شدن ظرفیت",
     BotState.READY_TO_SUBMIT.value: "آماده ثبت نهایی",
@@ -73,6 +83,11 @@ STATE_TO_QUEUE_STATUS = {
     BotState.AUTHENTICATED.value: "RUNNING",
     BotState.STEP_3_READY.value: "RUNNING",
     BotState.SELECTING_BANK.value: "RUNNING",
+    BotState.WAITING_BRANCH_LIST.value: "RUNNING",
+    BotState.SELECTING_BRANCH.value: "RUNNING",
+    BotState.BRANCH_SELECTED.value: "RUNNING",
+    BotState.BRANCH_NOT_FOUND.value: "WAITING_USER",
+    BotState.BRANCH_SELECTION_FAILED.value: "WAITING_USER",
     BotState.CAPACITY_FULL.value: "WAITING_BANK",
     BotState.WAITING_AVAILABILITY.value: "WAITING_BANK",
     BotState.READY_TO_SUBMIT.value: "RUNNING",
@@ -95,7 +110,12 @@ ALLOWED_TRANSITIONS: Dict[BotState, Set[BotState]] = {
     BotState.VERIFYING_OTP: {BotState.AUTHENTICATED, BotState.WAITING_OTP, BotState.REQUESTING_OTP, BotState.BLOCKED, BotState.FAILED},
     BotState.AUTHENTICATED: {BotState.STEP_3_READY, BotState.SELECTING_BANK, BotState.SESSION_EXPIRED, BotState.PAUSED, BotState.FAILED},
     BotState.STEP_3_READY: {BotState.SELECTING_BANK, BotState.CAPACITY_FULL, BotState.SESSION_EXPIRED, BotState.PAUSED, BotState.FAILED},
-    BotState.SELECTING_BANK: {BotState.CAPACITY_FULL, BotState.WAITING_AVAILABILITY, BotState.READY_TO_SUBMIT, BotState.SESSION_EXPIRED, BotState.PAUSED, BotState.FAILED},
+    BotState.SELECTING_BANK: {BotState.WAITING_BRANCH_LIST, BotState.SELECTING_BRANCH, BotState.READY_TO_SUBMIT, BotState.CAPACITY_FULL, BotState.WAITING_AVAILABILITY, BotState.SESSION_EXPIRED, BotState.PAUSED, BotState.FAILED},
+    BotState.WAITING_BRANCH_LIST: {BotState.SELECTING_BRANCH, BotState.BRANCH_NOT_FOUND, BotState.BRANCH_SELECTION_FAILED, BotState.CAPACITY_FULL, BotState.PAUSED, BotState.FAILED},
+    BotState.SELECTING_BRANCH: {BotState.BRANCH_SELECTED, BotState.BRANCH_NOT_FOUND, BotState.BRANCH_SELECTION_FAILED, BotState.CAPACITY_FULL, BotState.PAUSED, BotState.FAILED},
+    BotState.BRANCH_SELECTED: {BotState.READY_TO_SUBMIT, BotState.SELECTING_BANK, BotState.PAUSED, BotState.FAILED},
+    BotState.BRANCH_NOT_FOUND: {BotState.SELECTING_BRANCH, BotState.BRANCH_SELECTED, BotState.READY_TO_SUBMIT, BotState.SELECTING_BANK, BotState.PAUSED, BotState.FAILED},
+    BotState.BRANCH_SELECTION_FAILED: {BotState.SELECTING_BRANCH, BotState.BRANCH_SELECTED, BotState.READY_TO_SUBMIT, BotState.SELECTING_BANK, BotState.PAUSED, BotState.FAILED},
     BotState.CAPACITY_FULL: {BotState.WAITING_AVAILABILITY, BotState.SELECTING_BANK, BotState.PAUSED, BotState.FAILED},
     BotState.WAITING_AVAILABILITY: {BotState.SELECTING_BANK, BotState.CAPACITY_FULL, BotState.SESSION_EXPIRED, BotState.PAUSED, BotState.FAILED},
     BotState.READY_TO_SUBMIT: {BotState.SUBMITTING, BotState.CAPACITY_FULL, BotState.SESSION_EXPIRED, BotState.PAUSED, BotState.FAILED},

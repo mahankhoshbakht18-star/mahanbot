@@ -29,6 +29,9 @@ def fresh_record(bot, record, now=None):
     if record.get("status") == "consumed":
         return None
     is_manual = record.get("status") == "manual" or record.get("source") == "manual"
+    operation = getattr(bot, "OTP_TYPE", "REGISTRATION_OTP")
+    if not is_manual and record.get("otp_type", "REGISTRATION_OTP") != operation:
+        return None
     digest = hashlib.sha256(code.encode()).hexdigest()
     if not is_manual and digest in getattr(bot, "_consumed_otp_digests", set()):
         return None

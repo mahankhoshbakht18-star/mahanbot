@@ -156,9 +156,11 @@ class BankSelectionSessionController:
         check_rejection(page)
         html = capture_dom_html(page)
         data = analyze_bank_page_html(html)
-        for name, selector in (("selected_branch", "#ctl00_ContentPlaceHolder1_ddlBranch"), ("city_value", "#ctl00_ContentPlaceHolder1_ddlCity")):
+        for name, selector in (("selected_branch", "#ctl00_ContentPlaceHolder1_ddlBranch, #ctl00_ContentPlaceHolder1_lstBranch, #ctl00_ContentPlaceHolder1_hdnBranchCode"), ("city_value", "#ctl00_ContentPlaceHolder1_ddlCity")):
             control = page.locator(selector)
             data[name] = control.first.input_value() if control.count() and control.first.is_visible() else ""
+        if not data.get("selected_branch"):
+            data["selected_branch"] = DBHandler.get_runtime(bot.nid).get("selected_branch", "")
         self._last_observation = data
         self._observation_issue = ""
         observed_nid = str(data.get("applicant_nid") or "").translate(str.maketrans("۰۱۲۳۴۵۶۷۸۹٠١٢٣٤٥٦٧٨٩", "01234567890123456789")).strip()
@@ -171,12 +173,9 @@ class BankSelectionSessionController:
             self.owner.bank_page_active = True
             self.owner.validated_at = time.time()
         elif stage in {"STEP_1_ENTRY_FORM", "STEP_2_OTP"}:
-            # Only declare SESSION_EXPIRED if the page truly navigated away from SelectBnk URL
-            curr_url = str(getattr(page, "url", "") or "")
-            if "SelectBnk" not in curr_url:
-                self.owner.bank_page_active = False
-                self.owner.validated_at = 0
-                return State.SESSION_EXPIRED, data
+            self.owner.bank_page_active = False
+            self.owner.validated_at = 0
+            return State.SESSION_EXPIRED, data
         return stage, data
 
     @staticmethod
@@ -189,6 +188,24 @@ class BankSelectionSessionController:
         row = DBHandler.get_applicant(self.bot.nid)
         prefs = dict(row).get('data') if row else self.bot.user_data
         return json.loads(prefs) if isinstance(prefs, str) else (prefs or {})
+
+    def _get_target_bank_names(self):
+        prefs = self._preferences()
+        p_banks = prefs.get("priority_banks") or prefs.get("banks") or []
+        names = []
+        if isinstance(p_banks, list):
+            for item in p_banks:
+                if isinstance(item, dict):
+                    name = item.get("name") or item.get("bank_name") or ""
+                    if name:
+                        names.append(name)
+                elif isinstance(item, str) and item:
+                    names.append(item)
+        if not names:
+            fallback = prefs.get("primary_bank") or prefs.get("bank_name") or prefs.get("bank") or (self.bot.user_data or {}).get("bank_name") or ""
+            if fallback:
+                names.append(fallback)
+        return names
 
     def _submission_allowed(self):
         from core.licensing import can_run
@@ -299,11 +316,11 @@ class BankSelectionSessionController:
             if self._observation_issue:
                 self.transition(State.MANUAL_ACTION_REQUIRED, self._observation_issue)
                 return "waiting"
-            if self.state == State.SESSION_EXPIRED or stage == State.SESSION_EXPIRED or data.get("state") == State.SESSION_EXPIRED or bot.consume_recovery_flag("session_expired"):
+            if self.state == State.SESSION_EXPIRED or stage == State.SESSION_EXPIRED or data.get("state") == State.SESSION_EXPIRED or bot.consume_recovery_flag("session_expired") or bot.consume_recovery_flag("otp_expired"):
                 owner.bank_page_active = False
                 owner.validated_at = 0
                 self.transition(State.SESSION_EXPIRED, "live_dom_requires_authentication")
-                return "waiting"
+                return "reauthenticate"
 
             code = _extract_confirmed_submission(bot, owner.page) if stage == "DONE" else data.get("tracking_code")
             if code:
@@ -319,6 +336,9 @@ class BankSelectionSessionController:
                 return "waiting"
             if stage != "STEP_3_BANK_SELECT":
                 owner.validated_at = 0
+                if stage in {"STEP_1_ENTRY_FORM", "STEP_2_OTP"}:
+                    self.transition(State.SESSION_EXPIRED, "navigated_away_to_entry_stage")
+                    return "reauthenticate"
                 self.transition(State.MANUAL_ACTION_REQUIRED, "unrecognized_live_dom")
                 return "waiting"
 
@@ -362,7 +382,7 @@ class BankSelectionSessionController:
                     return 'waiting'
                 if response_data.get('state') == State.SESSION_EXPIRED:
                     self.transition(State.SESSION_EXPIRED, 'session_expired_in_final_response')
-                    return 'waiting'
+                    return 'reauthenticate'
                 if response_data.get('error_kind') == 'waf_blocked':
                     self._blocked = True
                     self.transition(State.MANUAL_ACTION_REQUIRED, 'security_or_rate_limit')
@@ -402,12 +422,89 @@ class BankSelectionSessionController:
             observation = self._selection_signature(data)
             if self._prepared and observation != getattr(self, '_last_selection', None):
                 self._prepared = False
+            if self.state == State.PREFERRED_BANK_NOT_FOUND:
+                now = self._monotonic()
+                if now < getattr(self, "_next_bank_poll", 0):
+                    # Clean wait; do NOT spam DOM inspections or log spam
+                    return 'waiting'
+
+                # Time to poll / cycle: every 5 seconds (as requested by user)
+                poll_interval = max(3.0, float(bot.settings.get("bank_list_refresh_seconds", bot.settings.get("bank_refresh_interval", 5.0))))
+                self._next_bank_poll = now + poll_interval
+
+                # Dynamic target bank names for any selected bank (not just Saderat!)
+                target_names = self._get_target_bank_names()
+                target_display = " / ".join(target_names) or "بانک اولویت‌دار متقاضی"
+
+                # Check if OTP has genuinely expired (120s from entry or explicit alert dialog)
+                try:
+                    otp_entry_time = float(getattr(bot, "_otp_entry_time", 0) or 0)
+                except Exception:
+                    otp_entry_time = 0.0
+                try:
+                    otp_validity = float(bot.settings.get("otp_validity_seconds", 120))
+                except Exception:
+                    otp_validity = 120.0
+                otp_expired_by_time = otp_entry_time > 0 and (time.time() - otp_entry_time) >= otp_validity
+                has_otp_expired_flag = bot.consume_recovery_flag("otp_expired") or bot.consume_recovery_flag("session_expired")
+
+                if otp_expired_by_time or has_otp_expired_flag:
+                    bot.log(f"⏱️ مهلت پیامک جاری ({int(otp_validity)} ثانیه) به پایان رسید؛ بازگشت خودکار به مرحله ۱ جهت اخذ کد جدید و شروع چرخه تازه...", "warning", owner.page)
+                    self._bank_not_found_since = 0
+                    owner.bank_page_active = False
+                    self.transition(State.SESSION_EXPIRED, "otp_expired_refresh")
+                    return "reauthenticate"
+
+                elapsed_sec = int(time.time() - otp_entry_time) if otp_entry_time > 0 else 0
+                rem_sec = max(0, int(otp_validity - elapsed_sec))
+                bot.log(f"🔄 بانک ({target_display}) در فهرست ظرفیت فعلی نیست؛ استعلام مجدد ظرفیت (فاصله ۵ ثانیه - اعتبار پیامک: {rem_sec} ثانیه باقی‌مانده)...", "info", owner.page)
+
+                # 1. Trigger native ASP.NET PostBack on city dropdown to fetch fresh capacities without resetting session
+                try:
+                    from bot_select_bank import trigger_bank_capacity_refresh
+                    trigger_bank_capacity_refresh(bot, owner.page)
+                except Exception:
+                    pass
+
+                try:
+                    owner.page.wait_for_timeout(400)
+                except Exception:
+                    pass
+
+                current_stage = bot.detect_actual_page_stage(owner.page)
+
+                # If routed back to Step 2 (OTP code + CAPTCHA)
+                if current_stage == "STEP_2_OTP" or (isinstance(owner.page.locator("input[name$='tbMobileConfCode']").count(), int) and owner.page.locator("input[name$='tbMobileConfCode']").count() > 0):
+                    owner.bank_page_active = False
+                    self.transition(State.BANK_OPTIONS_LOADING, "cycled_back_to_otp")
+                    return "cycle_otp"
+
+                # If reverted to Step 1 (National ID + Captcha)
+                if current_stage == "STEP_1_ENTRY_FORM":
+                    owner.bank_page_active = False
+                    self.transition(State.SESSION_EXPIRED, "reloaded_to_step1")
+                    return "reauthenticate"
+
+                # If on Step 3 and a CAPTCHA input is visible, solve it
+                try:
+                    from browser_actions import BrowserActions
+                    captcha_in = BrowserActions.find_captcha_input(owner.page)
+                    if captcha_in and captcha_in.is_visible():
+                        bot.log("🤖 تصویر کپچای جدید در صفحه شناسایی شد؛ حل فوری با مدل هوشمند...", "info", owner.page)
+                        btn_sel = "#ctl00_ContentPlaceHolder1_btnSave, input[type='submit']"
+                        bot.solve_captcha_with_model(owner.page, captcha_in, btn_sel)
+                        owner.page.wait_for_timeout(350)
+                except Exception:
+                    pass
+
+                self._prepared = False
+
             if not self._prepared:
                 self.transition(State.BANK_OPTIONS_READY)
                 result = process_bank_selection_v2(bot, owner.page, owner.cancellation_token, capacity_sniping=True)
                 if owner.cancellation_token.is_set():
                     return 'stopped'
-                self._prepared = True
+                self._prepared = result not in {'no_match', 'waiting'}
                 self._submission_ready = result in {'option_selected_waiting_user', 'capacity_full'}
                 _, latest = self.observe()
                 self._last_selection = self._selection_signature(latest)
@@ -421,10 +518,31 @@ class BankSelectionSessionController:
                 self.transition(target, getattr(bot, '_bank_selection_issue', '') or latest.get('error_message') or result)
                 if result in {'submitted_confirmed', 'already_submitted'}:
                     return 'confirmed'
+
+                if result == 'no_match':
+                    poll_interval = max(3.0, float(bot.settings.get("bank_list_refresh_seconds", bot.settings.get("bank_refresh_interval", 5.0))))
+                    now = self._monotonic()
+                    self._next_bank_poll = now + poll_interval
+                    if not getattr(self, "_bank_not_found_since", 0):
+                        self._bank_not_found_since = now
+                    self._prepared = True  # Keep prepared=True so tick() waits for _next_bank_poll!
+                    DBHandler.update_runtime(
+                        bot.nid,
+                        status="پایش بانک‌ها",
+                        current_step="PREFERRED_BANK_NOT_FOUND",
+                        last_error=f"بانک اولویت‌دار در فهرست باز نیست؛ در حال پایش مداوم (بررسی بعدی در {int(poll_interval)} ثانیه)...",
+                        next_refresh=time.time() + poll_interval,
+                        check_interval=poll_interval,
+                        check_method="live_poll",
+                    )
+                else:
+                    self._bank_not_found_since = 0
+
             if enabled and self._submission_ready:
                 return self._sniping_tick(cfg)
-            DBHandler.update_runtime(bot.nid, next_refresh=0, check_method='live_dom_only')
-            return 'waiting'
+            if self.state != State.PREFERRED_BANK_NOT_FOUND:
+                DBHandler.update_runtime(bot.nid, next_refresh=0, check_method='live_dom_only')
+            return 'waiting' 
 
     def run(self):
         self.owner.bank_page_active = True
@@ -433,7 +551,7 @@ class BankSelectionSessionController:
             while not self.owner.cancellation_token.is_set():
                 try:
                     result = self.tick()
-                    if result in {"stopped", "confirmed", "reauthenticate"}:
+                    if result in {"stopped", "confirmed", "reauthenticate", "cycle_otp"}:
                         return result
                 except Exception as exc:
                     # A snapshot/DOM failure must never unwind into browser teardown/retry.

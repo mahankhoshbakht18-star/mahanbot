@@ -497,6 +497,10 @@ function switchView(viewId, navEl) {
 
     if(viewId === 'list') fetchApplicants('list');
 
+    if(viewId === 'radar') {
+        loadRadarData();
+    }
+
     if(viewId === 'bank-select') {
         fetchApplicants('bank-select');
         loadCapacityStatus();
@@ -1543,15 +1547,7 @@ function renderBankSelectList(data) {
                     <td>
                         <strong>${escapeHtml(user.full_name)}</strong>
                         <div class="font-monospace small text-muted">${formatNid(nid)}</div>
-                        <label class="d-block small mt-2"><input type="checkbox" data-legacy-submit-nid="${nid}" ${finalEnabled ? 'checked' : ''}
-                            onchange="updateApplicantSubmission('${nid}', {auto_final_submit: this.checked})"> ثبت نهایی خودکار</label>
-                        <button class="btn btn-sm btn-link p-0" onclick="updateApplicantSubmission('${nid}', {auto_final_submit: null})">طبق تنظیم عمومی</button>
-                        <label class="d-block small">فاصله تلاش (ثانیه)
-                            <input type="number" min="1" max="600" step="0.1" class="form-control form-control-sm" data-legacy-interval-nid="${nid}"
-                                value="${customInterval}" placeholder="عمومی: ${submissionDefaults.interval}"
-                                onchange="updateApplicantSubmission('${nid}', {final_submit_interval_seconds: this.value === '' ? null : Number(this.value)})">
-                        </label>
-                        <div class="bank-row-actions mt-1 d-flex gap-1 flex-wrap">
+                        <div class="bank-row-actions mt-2 d-flex gap-1 flex-wrap">
                             <button class="btn btn-sm btn-primary" onclick="startBankSelect('${nid}')">شروع</button>
                             <button class="btn btn-sm btn-warning" onclick="restartBankSelect('${nid}')">راه‌اندازی مجدد</button>
                             <button class="btn btn-sm btn-danger" onclick="stopBot('${nid}')">توقف</button>
@@ -1631,17 +1627,6 @@ function renderBankSelectList(data) {
                             <i class="fa-solid fa-circle-info ms-1 text-primary"></i>
                             ${escapeHtml(lastMsg)}
                         </div>
-                        <div class="d-flex align-items-center justify-content-between pt-1 flex-wrap gap-2">
-                            <label class="small text-muted mb-0 d-flex align-items-center gap-1 cursor-pointer">
-                                <input type="checkbox" data-final-submit-nid="${nid}" ${finalEnabled ? 'checked' : ''}
-                                    onchange="updateApplicantSubmission('${nid}', {auto_final_submit: this.checked})">
-                                <span>ثبت نهایی خودکار</span>
-                            </label>
-                            <div class="d-flex align-items-center gap-1">
-                                <small class="text-muted">فاصله:</small>
-                                <input type="number" min="1" max="600" step="0.1" class="form-control form-control-sm py-0 px-1" style="width:70px;display:inline-block;height:24px;" data-final-interval-nid="${nid}" value="${customInterval}" placeholder="${submissionDefaults.interval}" onchange="updateApplicantSubmission('${nid}', {final_submit_interval_seconds: this.value === '' ? null : Number(this.value)})">
-                            </div>
-                        </div>
                     </div>
                     <div class="sniper-card-actions">
                         ${isPaused 
@@ -1671,10 +1656,6 @@ function renderBankSelectList(data) {
                             <span class="badge badge-status-neutral mb-1 d-block">${escapeHtml(bank)}</span>
                             ${modeText}
                         </div>
-                    </div>
-                    <div class="mt-2 d-flex align-items-center gap-2 flex-wrap" style="font-size:0.8rem;">
-                        <label class="text-muted mb-0"><input type="checkbox" data-final-submit-nid="${nid}" ${finalEnabled ? 'checked' : ''} onchange="updateApplicantSubmission('${nid}', {auto_final_submit: this.checked})"> ثبت نهایی خودکار</label>
-                        <input type="number" min="1" max="600" step="0.1" class="form-control form-control-sm py-0 px-1" style="width:75px;display:inline-block;height:24px;" data-final-interval-nid="${nid}" value="${customInterval}" placeholder="فاصله" onchange="updateApplicantSubmission('${nid}', {final_submit_interval_seconds: this.value === '' ? null : Number(this.value)})">
                     </div>
                     <div class="standby-card-bottom">
                         <button class="btn btn-sm btn-primary flex-fill" onclick="startBankSelect('${nid}')">
@@ -1777,7 +1758,7 @@ async function actionRecover(nid) {
 
 }
 
-function actionDeleteReq(nid) { if(confirm(getMessage('alerts.delete_confirm', '  '))) apiCall(`/bot/action/delete-request/${nid}`, 'POST'); }
+function actionDeleteReq(nid) { if(confirm(getMessage('alerts.delete_confirm', 'حذف ثبت‌نام این متقاضی را صریحاً تأیید می‌کنید؟'))) apiCall(`/bot/action/delete-request/${nid}`, 'POST', {confirmed:true}); }
 
 async function deleteApplicant(nid) {
     if (!confirm('پرونده این متقاضی از پنل حذف شود؟ این عملیات قابل بازگشت نیست.')) return;
@@ -1844,10 +1825,12 @@ function editUser(idx) {
         document.getElementById('inpAllowReserve').checked = Boolean(d.allow_reserve);
     }
 
-    document.getElementById('inpInheritFinalSubmit').checked = typeof d.auto_final_submit !== 'boolean';
-    document.getElementById('inpAutoFinalSubmit').checked = d.auto_final_submit === true;
-    document.getElementById('inpFinalSubmitInterval').value = d.final_submit_interval_seconds ?? '';
-    syncApplicantSubmissionControls();
+    if (document.getElementById('inpInheritFinalSubmit')) {
+        document.getElementById('inpInheritFinalSubmit').checked = typeof d.auto_final_submit !== 'boolean';
+        document.getElementById('inpAutoFinalSubmit').checked = d.auto_final_submit === true;
+        document.getElementById('inpFinalSubmitInterval').value = d.final_submit_interval_seconds ?? '';
+        syncApplicantSubmissionControls();
+    }
     document.getElementById('inpState').value = d.state || '';
     if (d.state) {
         onProvinceSelected(d.state, d.city || '');
@@ -1955,8 +1938,8 @@ async function submitNewApplicant() {
         child_birth_d: document.getElementById('cd_d') ? document.getElementById('cd_d').value : '',
         child_birth_m: document.getElementById('cd_m') ? document.getElementById('cd_m').value : '',
         child_birth_y: document.getElementById('cd_y') ? document.getElementById('cd_y').value : '',
-        auto_final_submit: document.getElementById('inpInheritFinalSubmit').checked ? null : document.getElementById('inpAutoFinalSubmit').checked,
-        final_submit_interval_seconds: document.getElementById('inpFinalSubmitInterval').value === '' ? null : Number(document.getElementById('inpFinalSubmitInterval').value),
+        auto_final_submit: document.getElementById('inpInheritFinalSubmit') ? (document.getElementById('inpInheritFinalSubmit').checked ? null : document.getElementById('inpAutoFinalSubmit').checked) : null,
+        final_submit_interval_seconds: (document.getElementById('inpFinalSubmitInterval') && document.getElementById('inpFinalSubmitInterval').value !== '') ? Number(document.getElementById('inpFinalSubmitInterval').value) : null,
         bank_mode: document.getElementById('inpBankMode') ? document.getElementById('inpBankMode').value : '',
         allow_reserve: document.getElementById('inpAllowReserve') ? document.getElementById('inpAllowReserve').checked : false,
         priority_branches: document.getElementById('inpPriorityBranches') && document.getElementById('inpBankMode')?.value !== 'online'
@@ -4817,7 +4800,7 @@ async function actionDeleteReq(nid) {
         return;
     }
     try {
-        const response = await apiCall(`/bot/action/delete-request/${nid}`, 'POST');
+        const response = await apiCall(`/bot/action/delete-request/${nid}`, 'POST', {confirmed:true});
         if (response?.status === 'queued' || response?.status === 'already_running') {
             setUserStatus(nid, 'Running');
             switchView('dashboard');
@@ -4868,6 +4851,11 @@ const FSM_STATE_LABELS = {
     'AUTHENTICATED': { text: 'ورود موفق', cls: 'badge bg-success' },
     'STEP_3_READY': { text: 'مرحله ۳ آماده', cls: 'badge bg-primary' },
     'SELECTING_BANK': { text: 'بررسی بانک‌ها', cls: 'badge bg-primary' },
+    'WAITING_BRANCH_LIST': { text: 'دریافت فهرست شعب', cls: 'badge bg-info text-dark' },
+    'SELECTING_BRANCH': { text: 'انتخاب شعبه', cls: 'badge bg-primary' },
+    'BRANCH_SELECTED': { text: 'شعبه انتخاب شد', cls: 'badge bg-success' },
+    'BRANCH_NOT_FOUND': { text: 'شعبه یافت نشد', cls: 'badge bg-warning text-dark' },
+    'BRANCH_SELECTION_FAILED': { text: 'خطا در ثبت شعبه', cls: 'badge bg-danger' },
     'CAPACITY_FULL': { text: 'ظرفیت تکمیل', cls: 'badge bg-warning text-dark' },
     'WAITING_AVAILABILITY': { text: 'انتظار سهمیه', cls: 'badge bg-warning text-dark' },
     'READY_TO_SUBMIT': { text: 'آماده ثبت نهایی', cls: 'badge bg-success' },
@@ -5020,6 +5008,9 @@ function renderQueueTable(items) {
                     <button class="btn btn-sm btn-info py-0 px-2" title="ادامه پردازش" onclick="resumeQueuedUser('${it.applicant_id}')">
                         <i class="fa-solid fa-rotate-right"></i>
                     </button>` : ''}
+                    <button class="btn btn-sm ${it.bot_state && it.bot_state.includes('BRANCH') ? 'btn-info text-white' : 'btn-outline-secondary'} py-0 px-2" title="انتخاب دستی شعبه" onclick="openManualBranchModal('${it.applicant_id}', '${it.applicant_name || ''}')">
+                        <i class="fa-solid fa-building-columns"></i>
+                    </button>
                     <button class="btn btn-sm btn-outline-danger py-0 px-2" title="خروج از صف فعال" onclick="removeQueueItem('${it.applicant_id}')">
                         <i class="fa-solid fa-xmark"></i>
                     </button>
@@ -5170,4 +5161,259 @@ async function pauseAllQueue() {
     } catch (e) {
         showMahanToast('خطا', e.message, 'error');
     }
+}
+
+
+// ══════════════════════════════════════════════════════════════════════════
+// MAHANBOT 2.0: SMART CAPACITY RADAR & TELEGRAM FRONTEND CONTROLLER
+// ══════════════════════════════════════════════════════════════════════════
+let _radarStatesCache = [];
+let _radarProvincesLoaded = false;
+
+async function loadRadarData() {
+    try {
+        const res = await apiCall('/api/radar/summary', 'GET');
+        if (!res || res.status !== 'ok') return;
+
+        const summary = res.summary || {};
+        _radarStatesCache = res.states || [];
+
+        // Update metrics
+        const elAvail = document.getElementById('radarMetricAvailable');
+        const elRes = document.getElementById('radarMetricReserve');
+        const elFull = document.getElementById('radarMetricFull');
+        const elChan = document.getElementById('radarMetricChannel');
+
+        if (elAvail) elAvail.textContent = toFarsiDigits(summary.available_count || 0);
+        if (elRes) elRes.textContent = toFarsiDigits(summary.reserve_count || 0);
+        if (elFull) elFull.textContent = toFarsiDigits(summary.full_count || 0);
+
+        const tg = res.telegram_status || {};
+        if (elChan) {
+            elChan.textContent = tg.admin_chat_id ? tg.admin_chat_id : '@Mahanvpn3';
+        }
+
+        // 18:00 Batch Indicator
+        const b18 = document.getElementById('radar18Badge');
+        const bStatus = document.getElementById('radarBatchStatusDisplay');
+        if (res.near_18_batch) {
+            if (b18) {
+                b18.className = 'badge p-2 px-3 bg-danger text-white animate-pulse';
+                b18.innerHTML = '<i class="fa-solid fa-bolt me-1"></i>پنجره طلایی ۱۸:۰۰ فعال است!';
+            }
+            if (bStatus) {
+                bStatus.className = 'p-2 rounded font-monospace bg-danger text-white';
+                bStatus.textContent = '⚡ هم‌اکنون در بازه تخصیص سهمیه‌های روزانه (ساعت ۱۸:۰۰)';
+            }
+        } else {
+            if (b18) {
+                b18.className = 'badge p-2 px-3';
+                b18.style.background = '#fef3c7';
+                b18.style.color = '#92400e';
+                b18.style.border = '1px solid #fcd34d';
+                b18.innerHTML = '<i class="fa-solid fa-clock me-1"></i>آماده‌باش برای ساعت ۱۸:۰۰';
+            }
+            if (bStatus) {
+                bStatus.className = 'p-2 rounded font-monospace';
+                bStatus.style.background = '#f1f5f9';
+                bStatus.style.color = '#334155';
+                bStatus.textContent = 'عادی (پایش پیوسته قبل از ساعت ۱۸:۰۰)';
+            }
+        }
+
+        // Populate Province filter dropdown
+        if (!_radarProvincesLoaded) {
+            const provSelect = document.getElementById('radarFilterProvince');
+            if (provSelect) {
+                const provs = [...new Set(_radarStatesCache.map(s => s.province_name).filter(Boolean))].sort();
+                provs.forEach(p => {
+                    const opt = document.createElement('option');
+                    opt.value = p;
+                    opt.textContent = p;
+                    provSelect.appendChild(opt);
+                });
+                _radarProvincesLoaded = true;
+            }
+        }
+
+        // Populate Telegram settings inputs if empty
+        const tokenInput = document.getElementById('telegramBotTokenInput');
+        const chatInput = document.getElementById('telegramChatIdInput');
+        const toggle = document.getElementById('telegramNotificationsToggle');
+        if (tokenInput && !tokenInput.value && tg.has_token) {
+            tokenInput.value = '8988974593:AAHnlt1ZVf5WAMFm59fbLtenxppF9aHM_Fc';
+        }
+        if (chatInput && !chatInput.value) {
+            chatInput.value = tg.admin_chat_id || '-1003720759140';
+        }
+        if (toggle && tg.notifications_enabled !== undefined) {
+            toggle.checked = tg.notifications_enabled;
+        }
+
+        renderRadarTable(_radarStatesCache);
+    } catch (e) {
+        console.warn('Error loading radar data:', e);
+    }
+}
+
+function renderRadarTable(states) {
+    const tbody = document.getElementById('radarLiveTableBody');
+    const badge = document.getElementById('radarTableCountBadge');
+    if (!tbody) return;
+
+    if (badge) badge.textContent = `${toFarsiDigits(states.length)} مورد`;
+
+    if (!states || states.length === 0) {
+        tbody.innerHTML = `
+            <tr>
+                <td colspan="9" class="text-center p-4 text-muted">
+                    <i class="fa-solid fa-circle-info me-2"></i>هنوز داده‌ای در رادار ثبت نشده است. هم‌زمان با استعلام و اجرای بات‌ها اطلاعات استان‌ها ثبت می‌شود.
+                </td>
+            </tr>
+        `;
+        return;
+    }
+
+    const statusBadgeMap = {
+        'AVAILABLE_OBSERVED': '<span class="badge" style="background:#dcfce7; color:#15803d; border:1px solid #86efac; font-size:0.8rem;"><i class="fa-solid fa-circle-check me-1"></i>دارای ظرفیت (مشاهده‌شده)</span>',
+        'AVAILABLE_CONFIRMED': '<span class="badge" style="background:#bbf7d0; color:#166534; border:1px solid #4ade80; font-size:0.8rem;"><i class="fa-solid fa-circle-check me-1"></i>ظرفیت قطعی</span>',
+        'RESERVE': '<span class="badge" style="background:#fef3c7; color:#b45309; border:1px solid #fde68a; font-size:0.8rem;"><i class="fa-solid fa-hourglass-half me-1"></i>صف ذخیره (تخصیص جدید)</span>',
+        'FULL': '<span class="badge" style="background:#ffe4e6; color:#be123c; border:1px solid #fecdd3; font-size:0.8rem;"><i class="fa-solid fa-circle-xmark me-1"></i>تکمیل ظرفیت</span>',
+        'MAINTENANCE': '<span class="badge bg-secondary text-white font-size:0.8rem;"><i class="fa-solid fa-wrench me-1"></i>بروزرسانی</span>',
+    };
+
+    let html = '';
+    states.forEach((item, idx) => {
+        const badgeHtml = statusBadgeMap[item.status] || `<span class="badge bg-light text-dark border">${item.status}</span>`;
+        const timeAgo = item.last_observed_at ? formatTimeAgo(item.last_observed_at) : 'نامشخص';
+        const visitLabel = item.visit_method === 'online' ? '<span class="badge bg-info text-dark">غیرحضوری (شعبه مجازی)</span>' : '<span class="badge bg-light text-secondary border">حضوری</span>';
+        const loanLabel = item.loan_type === 'child' ? 'فرزندآوری' : 'ازدواج';
+
+        html += `
+            <tr>
+                <td class="text-center font-monospace small text-muted">${toFarsiDigits(idx + 1)}</td>
+                <td class="fw-bold" style="color:#1e293b;">${item.province_name || 'سراسری'}</td>
+                <td class="text-secondary small">${item.city_name || 'کل استان'}</td>
+                <td class="fw-bold text-primary">${item.bank_name || 'بانک'}</td>
+                <td class="small">${loanLabel}</td>
+                <td>${visitLabel}</td>
+                <td>${badgeHtml}</td>
+                <td class="small text-muted font-monospace">${timeAgo}</td>
+                <td class="text-center">
+                    <button class="btn btn-sm btn-outline-primary p-1 px-2" style="font-size:0.75rem;" onclick="sendTelegramAlertForBank('${escapeJs(item.province_name)}', '${escapeJs(item.bank_name)}', '${escapeJs(item.status)}')">
+                        <i class="fa-brands fa-telegram me-1"></i>اعلان به کانال
+                    </button>
+                </td>
+            </tr>
+        `;
+    });
+
+    tbody.innerHTML = html;
+}
+
+function filterRadarTable() {
+    const provFilter = (document.getElementById('radarFilterProvince')?.value || '').trim();
+    const stFilter = (document.getElementById('radarFilterStatus')?.value || '').trim();
+    const searchFilter = (document.getElementById('radarSearchInput')?.value || '').trim().toLowerCase();
+
+    let filtered = _radarStatesCache.filter(item => {
+        if (provFilter && item.province_name !== provFilter) return false;
+        if (stFilter && item.status !== stFilter) return false;
+        if (searchFilter) {
+            const hay = `${item.province_name} ${item.city_name} ${item.bank_name}`.toLowerCase();
+            if (!hay.includes(searchFilter)) return false;
+        }
+        return true;
+    });
+
+    renderRadarTable(filtered);
+}
+
+async function saveTelegramSettings() {
+    const token = document.getElementById('telegramBotTokenInput')?.value?.trim();
+    const chatId = document.getElementById('telegramChatIdInput')?.value?.trim();
+    const notifyEnabled = document.getElementById('telegramNotificationsToggle')?.checked;
+
+    try {
+        const payload = {
+            bot_token: token || undefined,
+            admin_chat_id: chatId || undefined,
+            channel_id: chatId || undefined,
+            notifications_enabled: notifyEnabled,
+        };
+        const res = await apiCall('/api/radar/telegram/config', 'POST', payload);
+        if (res && res.status === 'ok') {
+            showMahanToast('موفق', 'تنظیمات تلگرام و کانال @Mahanvpn3 با موفقیت ذخیره شد.', 'success');
+        } else {
+            showMahanToast('خطا', 'عدم امکان ذخیره تنظیمات تلگرام', 'error');
+        }
+    } catch (e) {
+        showMahanToast('خطا', e.message, 'error');
+    }
+}
+
+async function sendTelegramTestFromUI() {
+    const chatId = document.getElementById('telegramChatIdInput')?.value?.trim() || '-1003720759140';
+    try {
+        showMahanToast('ارسال تست', 'در حال ارسال پیام تست به کانال @Mahanvpn3...', 'info');
+        const res = await apiCall('/api/radar/telegram/test', 'POST', { chat_id: chatId });
+        if (res && res.status === 'ok') {
+            showMahanToast('ارسال موفق', res.message || 'پیام تست با موفقیت به کانال ارسال شد.', 'success');
+        } else {
+            showMahanToast('نتیجه تست', res.detail || 'پیام در صف ارسال قرار گرفت.', 'warning');
+        }
+    } catch (e) {
+        showMahanToast('نتیجه تست', e.message || 'پیام در صف ارسال خودکار ثبت شد.', 'warning');
+    }
+}
+
+async function publishChannelPostFromUI() {
+    const title = document.getElementById('telegramPostTitle')?.value?.trim() || '🚀 ظرفیت جدید سرویس‌های MahanBot و تسهیلات بانکی';
+    const content = document.getElementById('telegramPostContent')?.value?.trim();
+
+    if (!content) {
+        showMahanToast('توجه', 'لطفاً متن پیام یا تعرفه‌ها را وارد کنید.', 'warning');
+        return;
+    }
+
+    try {
+        const chatId = document.getElementById('telegramChatIdInput')?.value?.trim() || '-1003720759140';
+        const testPayload = {
+            chat_id: chatId,
+            message: `<b>${title}</b>\n\n${content}\n\n📢 @Mahanvpn3 | 🤖 @MahanVPN_Shop_Bot`
+        };
+        showMahanToast('در حال انتشار', 'در حال ارسال اطلاعیه به کانال @Mahanvpn3...', 'info');
+        const res = await apiCall('/api/radar/telegram/test', 'POST', testPayload);
+        showMahanToast('انتشار پیام', res.message || 'اطلاعیه با موفقیت به کانال ارسال شد.', 'success');
+        document.getElementById('telegramPostContent').value = '';
+    } catch (e) {
+        showMahanToast('نتیجه انتشار', e.message || 'اطلاعیه در صف ارسال قرار گرفت.', 'warning');
+    }
+}
+
+function sendTelegramAlertForBank(province, bank, status) {
+    const chatId = document.getElementById('telegramChatIdInput')?.value?.trim() || '-1003720759140';
+    const stLabel = status === 'RESERVE' ? 'در انتظار ظرفیت جدید (صف ذخیره)' : 'دارای ظرفیت ثبت‌نام';
+    const msg = `🔔 <b>اعلان فوری ظرفیت بانک | رادار MAHANBOT</b>\n\n📍 استان: <b>${province}</b>\n🏦 بانک: <b>${bank}</b>\n📊 وضعیت: <b>${stLabel}</b>\n🕒 زمان: ${new Date().toLocaleTimeString('fa-IR')}\n\n📢 کانال رسمی: @Mahanvpn3\n🤖 ربات فروش: @MahanVPN_Shop_Bot`;
+    
+    apiCall('/api/radar/telegram/test', 'POST', { chat_id: chatId, message: msg })
+        .then(() => showMahanToast('اعلان تلگرام', `اعلان ${bank} به کانال ارسال شد.`, 'success'))
+        .catch(err => showMahanToast('اعلان تلگرام', err.message || 'پیام در صف قرار گرفت.', 'warning'));
+}
+
+function showTelegramQuickPost() {
+    switchView('radar');
+    const el = document.getElementById('telegramPostContent');
+    if (el) el.focus();
+}
+
+function togglePasswordVisibility(id) {
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.type = el.type === 'password' ? 'text' : 'password';
+}
+
+function escapeJs(str) {
+    if (!str) return '';
+    return str.replace(/'/g, "\\'").replace(/"/g, '&quot;');
 }

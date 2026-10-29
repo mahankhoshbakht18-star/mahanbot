@@ -13,6 +13,7 @@ TARGET_URL = "https://ve.cbi.ir/GetTraceCD.aspx"
 
 
 class RecoveryBot(BotCore):
+    OTP_TYPE = "TRACKING_RECOVERY_OTP"
     def __init__(self, nid, settings, log_callback=None, captcha_service=None, browser_profile=None):
         super().__init__(
             nid,
@@ -384,7 +385,8 @@ class RecoveryBot(BotCore):
             last_server_poll_ts = now
 
         try:
-            db_code = DBHandler.get_otp(self.nid)
+            from otp_transport import fresh_record
+            db_code = fresh_record(self, DBHandler.get_otp_record(self.nid))
             if db_code and len(str(db_code).strip()) == 6:
                 return str(db_code).strip(), "db", last_server_poll_ts
         except Exception:
@@ -429,6 +431,8 @@ class RecoveryBot(BotCore):
 
     def _run_second_stage_sms_confirmation(self, page, stop_event) -> Optional[str]:
         self.log("ورود به مرحله دوم بازیابی (تایید پیامکی).", "warning", page)
+        if not getattr(self, "_otp_entry_time", 0):
+            self.mark_otp_entry_time()
         last_server_poll_ts = 0.0
         last_injected_code = None
 

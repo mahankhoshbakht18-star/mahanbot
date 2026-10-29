@@ -1,5 +1,6 @@
 """Authenticated Arvan relay client. Never sends SMS text, phone numbers or OTPs to logs."""
 import hashlib
+import hmac
 import os
 import threading
 import time
@@ -82,11 +83,29 @@ def publish_wait(bot):
         if not issued or time.time() - issued >= ttl:
             return False
         data = getattr(bot, "user_data", {}) or {}
+        operation = getattr(bot, "OTP_TYPE", "REGISTRATION_OTP")
+        confirmed_by = str(bot.settings.get("delete_confirmed_by") or "")
+        if operation == "REGISTRATION_DELETE_OTP" and not (bot.settings.get("delete_approved") is True and confirmed_by):
+            _transport_error(bot, "deletion_not_explicitly_authorized")
+            return False
+        payload = {"national_id": str(bot.nid), "waiting_since": issued, "job_id": request_id,
+                   "ttl_seconds": max(60, ttl - int(time.time() - issued)),
+                   "sender_hash": phone_hash(data.get("mobile") or data.get("phone"))}
+        # Registration remains wire-compatible with the legacy relay.
+        if operation != "REGISTRATION_OTP":
+            payload.update(otp_type=operation, delete_approved=operation == "REGISTRATION_DELETE_OTP",
+                           confirmed_by=confirmed_by if operation == "REGISTRATION_DELETE_OTP" else "")
+        if operation == "REGISTRATION_DELETE_OTP":
+            authority = os.getenv("RELAY_RELEASE_ADMIN_KEY", "").strip()
+            if not authority:
+                _transport_error(bot, "deletion_authority_not_configured")
+                return False
+            expires = int(time.time()) + ttl
+            message = f"delete-v1|{bot.nid}|{request_id}|{confirmed_by}|{expires}"
+            payload["delete_authorization"] = str(expires) + ":" + hmac.new(authority.encode(), message.encode(), "sha256").hexdigest()
         try:
             response = requests.post(base + "/api/v1/bot/wait", headers=headers,
-                json={"national_id": str(bot.nid), "waiting_since": issued, "job_id": request_id,
-                      "ttl_seconds": max(60, ttl - int(time.time() - issued)),
-                      "sender_hash": phone_hash(data.get("mobile") or data.get("phone"))}, timeout=(2, 3))
+                json=payload, timeout=(2, 3))
             if not _check_response(bot, response):
                 return False
             if response.status_code != 200 or not isinstance(response.json(), dict) or not response.json().get("accepted"):
@@ -117,13 +136,20 @@ def poll(bot, timeout=1):
         return None
     base, headers = configured
     try:
+        params = {"timeout": max(0, min(2, int(timeout))), "after_ts": float(getattr(bot, "_otp_entry_time", 0) or 0)}
+        operation = getattr(bot, "OTP_TYPE", "REGISTRATION_OTP")
+        if operation != "REGISTRATION_OTP":
+            params.update(otp_type=operation, request_id=getattr(bot, "_otp_request_id", ""))
         response = requests.get(base + "/api/v1/bot/pull/" + str(bot.nid), headers=headers,
-            params={"timeout": max(0, min(2, int(timeout))), "after_ts": float(getattr(bot, "_otp_entry_time", 0) or 0)}, timeout=(2, 4))
+            params=params, timeout=(2, 4))
         if not _check_response(bot, response) or response.status_code == 204:
             return None
         record = response.json()
         if not isinstance(record, dict):
             _transport_error(bot, "relay_invalid_response")
+            return None
+        if record.get("otp_type", "REGISTRATION_OTP") != operation:
+            _transport_error(bot, "relay_operation_mismatch")
             return None
         if response.headers.get("Date") and record.get("ts"):
             skew = time.time() - parsedate_to_datetime(response.headers["Date"]).timestamp()

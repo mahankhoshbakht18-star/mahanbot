@@ -180,6 +180,8 @@ class BotCore:
 
     def _update_browser_preview(self, page, force=False):
         """Capture a throttled live viewport for the embedded dashboard browser."""
+        if getattr(self, "critical_path_active", False):
+            return
         now = time.time()
         if not force and now - self._last_browser_preview_ts < 0.8:
             return
@@ -232,6 +234,9 @@ class BotCore:
 
     def save_checkpoint(self, step: str, page=None, **extra):
         """Persist recovery metadata independently of optional HTML/PNG snapshots."""
+        if getattr(self, "critical_path_active", False):
+            # Zero-Overhead Critical Path: bypass heavy synchronous screenshot capture
+            page = None
         url = ""
         if page is not None:
             try:
@@ -288,7 +293,8 @@ class BotCore:
         self._otp_entry_time = float(ts if ts is not None else time.time())
         self._otp_request_id = uuid.uuid4().hex
         DBHandler.update_runtime(self.nid, otp_requested_at=self._otp_entry_time,
-                                 otp_request_id=self._otp_request_id, otp_state="WAITING_FOR_SMS")
+                                 otp_request_id=self._otp_request_id, otp_state="WAITING_FOR_SMS",
+                                 otp_type=getattr(self, "OTP_TYPE", "REGISTRATION_OTP"))
         from relay_transport import queue_wait
         queue_wait(self)
         return self._otp_entry_time
@@ -336,7 +342,7 @@ class BotCore:
             profile["page_zoom"] = float(self.settings.get("browser_page_zoom", 1.25))
         if "focus_view_enabled" not in profile:
             profile["focus_view_enabled"] = bool(self.settings.get("focus_view_enabled", True))
-        if not self.settings.get("clear_cookies", True) and not profile.get("user_data_dir"):
+        if not bool(self.settings.get("clear_cookies", False)) and not profile.get("user_data_dir"):
             profile["user_data_dir"] = self.user_dir
         try:
             playwright, browser, context, page = launch_browser(profile)
@@ -459,9 +465,9 @@ class BotCore:
         stop_event=None,
         source="general",
         captcha_element=None,
-        captcha_image_selector=".BDC_CaptchaImage",
+        captcha_image_selector="img[id*='CaptchaImage' i], .BDC_CaptchaImage, img[src*='BotDetectCaptcha' i], img[src*='captcha' i]",
     ):
-        """Solve the visible CAPTCHA locally, fill its input, and submit."""
+        """Solve visible CAPTCHA locally, fill its input, and submit with robust reload/retry handling."""
         if stop_event is not None and stop_event.is_set():
             return False
 
@@ -473,85 +479,121 @@ class BotCore:
         if captcha_input is None:
             return False
 
-        from bot_select_captcha import wait_for_captcha_image_ready
-        if captcha_element is None:
-            captcha_element, _ = wait_for_captcha_image_ready(page, timeout_ms=4000, trigger_refresh_if_missing=True)
-            if captcha_element is None:
-                try:
-                    captcha_element = page.locator(captcha_image_selector).first
-                    if captcha_element.count() == 0 or not captcha_element.is_visible():
-                        self.log("⏳ تصویر کپچا هنوز در صفحه ظاهر نشده است؛ در حال انتظار...", "warning", page)
-                        return False
-                except Exception:
-                    return False
-        else:
-            # Ensure passed element has finished rendering (naturalWidth > 0) before screenshotting
-            try:
-                handle = captcha_element.element_handle()
-                if handle and hasattr(page, "evaluate"):
-                    page.wait_for_function(
-                        "(img) => !img || (typeof img.complete === 'undefined') || (img.complete && (img.naturalWidth === undefined || img.naturalWidth > 0))",
-                        arg=handle,
-                        timeout=3000,
-                    )
-            except Exception:
-                pass
+        from bot_select_captcha import (
+            wait_for_captcha_image_ready,
+            validate_captcha_prediction,
+            CAPTCHA_RELOAD_SELECTORS,
+        )
 
-        try:
-            self.set_runtime_state("PROCESSING", "SOLVE_CAPTCHA_LOCAL", browser_status="OPEN")
-            code = str(self.captcha_service.solve_element(captcha_element) or "").strip().upper()
-            min_length = max(1, int(self.settings.get("captcha_min_length", 4)))
-            max_length = max(min_length, int(self.settings.get("captcha_max_length", 12)))
+        min_length = max(1, int(self.settings.get("captcha_min_length", 4)))
+        max_length = max(min_length, int(self.settings.get("captcha_max_length", 12)))
 
-            if not re.fullmatch(rf"[0-9A-Z]{{{min_length},{max_length}}}", code):
-                DBHandler.append_captcha_attempt(self.nid, code, "failed", source=source)
-                solver_err = getattr(getattr(self.captcha_service, "solver", None), "last_error", None)
-                if solver_err:
-                    self.log(f"⚠️ خطای مدل کپچا: {solver_err}", "error", page)
-                else:
-                    self.log("مدل محلی کپچا پاسخ معتبری تولید نکرد؛ تلاش مجدد روی تصویر تازه...", "warning", page)
-                return False
-
-            from bot_select_captcha import validate_captcha_prediction
-            if not validate_captcha_prediction(code, min_length, max_length):
-                DBHandler.append_captcha_attempt(self.nid, code, "failed", source=source)
-                self.log("پیش‌بینی کپچا اعتبارسنجی را رد کرد.", "warning", page)
-                return False
-
-            try:
-                BrowserActions.human_fill(captcha_input, code)
-            except Exception:
-                try:
-                    captcha_input.fill(code, timeout=1500)
-                except Exception:
-                    pass
-            try:
-                captcha_input.dispatch_event("change")
-            except Exception:
-                pass
-            if (captcha_input.input_value() or "").strip().upper() != code:
-                DBHandler.append_captcha_attempt(self.nid, code, "failed", source=source)
-                return False
-
+        max_solve_attempts = 3
+        for attempt in range(max_solve_attempts):
             if stop_event is not None and stop_event.is_set():
                 return False
+
+            # Ensure we have a fresh, visible captcha element
+            target_el = captcha_element if (attempt == 0 and captcha_element is not None) else None
+            if target_el is None or (hasattr(target_el, "count") and target_el.count() == 0):
+                target_el, _ = wait_for_captcha_image_ready(page, timeout_ms=3000, trigger_refresh_if_missing=True)
+                if target_el is None:
+                    candidate_selectors = [
+                        "img[id*='CaptchaImage' i]",
+                        ".BDC_CaptchaImage",
+                        "img[src*='BotDetectCaptcha' i]",
+                        "img[src*='captcha' i]",
+                    ]
+                    for sel in candidate_selectors:
+                        try:
+                            loc = page.locator(sel)
+                            if loc.count() > 0 and loc.first.is_visible():
+                                target_el = loc.first
+                                break
+                        except Exception:
+                            continue
+
+                if target_el is None or (hasattr(target_el, "count") and target_el.count() == 0):
+                    self.log("⏳ تصویر کپچا هنوز در صفحه ظاهر نشده است؛ در حال انتظار...", "warning", page)
+                    if attempt < max_solve_attempts - 1:
+                        time.sleep(0.35)
+                        continue
+                    return False
+
             try:
-                time.sleep(random.uniform(0.15, 0.45))
-            except Exception:
-                pass
-            submit_button = (
-                page.locator(button_selector).first
-                if isinstance(button_selector, str)
-                else button_selector
-            )
-            submit_button.click()
-            DBHandler.append_captcha_attempt(self.nid, code, "submitted", source=source)
-            self.mark_progress("captcha_model_submit")
-            self.set_runtime_state("PROCESSING", "CHECK_RESPONSE", browser_status="OPEN")
-            return True
-        except Exception as exc:
-            self.log(f"خطا در حل محلی کپچا: {exc}", "warning", page)
-            return False
+                self.set_runtime_state("PROCESSING", "SOLVE_CAPTCHA_LOCAL", browser_status="OPEN")
+                code = str(self.captcha_service.solve_element(target_el) or "").strip().upper()
+
+                if not re.fullmatch(rf"[0-9A-Z]{{{min_length},{max_length}}}", code) or not validate_captcha_prediction(code, min_length, max_length):
+                    DBHandler.append_captcha_attempt(self.nid, code, "failed", source=source)
+                    solver_err = getattr(getattr(self.captcha_service, "solver", None), "last_error", None)
+                    if attempt < max_solve_attempts - 1:
+                        self.log(f"🔄 بازخوانی تصویر کپچا جهت استعلام مجدد با مدل هوشمند (تلاش {attempt + 1}/{max_solve_attempts})...", "info", page)
+                        # Click reload link to get fresh image
+                        for rsel in CAPTCHA_RELOAD_SELECTORS:
+                            try:
+                                rloc = page.locator(rsel).first
+                                if rloc.count() > 0 and rloc.is_visible():
+                                    rloc.click(timeout=700)
+                                    break
+                            except Exception:
+                                continue
+                        time.sleep(0.35)
+                        captcha_element = None  # Force re-query on next attempt
+                        continue
+                    else:
+                        if solver_err:
+                            self.log(f"⚠️ خطای مدل کپچا: {solver_err}", "error", page)
+                        else:
+                            self.log(f"مدل محلی کپچا پس از {max_solve_attempts} تلاش پاسخ معتبری تولید نکرد (کد دریافتی: '{code}')", "warning", page)
+                        return False
+
+                # We have a valid code!
+                try:
+                    BrowserActions.human_fill(captcha_input, code)
+                except Exception:
+                    try:
+                        captcha_input.fill(code, timeout=1500)
+                    except Exception:
+                        pass
+                try:
+                    captcha_input.dispatch_event("input")
+                    captcha_input.dispatch_event("change")
+                except Exception:
+                    pass
+
+                self.log(f"🤖 کپچا با موفقیت توسط مدل حل شد: [{code}]", "info", page)
+                if (captcha_input.input_value() or "").strip().upper() != code:
+                    DBHandler.append_captcha_attempt(self.nid, code, "failed", source=source)
+                    return False
+
+                if stop_event is not None and stop_event.is_set():
+                    return False
+
+                try:
+                    time.sleep(random.uniform(0.12, 0.35))
+                except Exception:
+                    pass
+
+                submit_button = (
+                    page.locator(button_selector).first
+                    if isinstance(button_selector, str)
+                    else button_selector
+                )
+                submit_button.click()
+                DBHandler.append_captcha_attempt(self.nid, code, "submitted", source=source)
+                self.mark_progress("captcha_model_submit")
+                self.set_runtime_state("PROCESSING", "CHECK_RESPONSE", browser_status="OPEN")
+                return True
+            except Exception as exc:
+                if attempt < max_solve_attempts - 1:
+                    time.sleep(0.3)
+                    captcha_element = None
+                    continue
+                self.log(f"خطا در حل محلی کپچا: {exc}", "warning", page)
+                return False
+
+        return False
 
     def wait_for_manual_captcha(self, page, input_selector, button_selector, stop_event, source="general"):
         """Compatibility alias for code migrated from the former manual flow."""
@@ -615,9 +657,15 @@ class BotCore:
 
     def _classify_dialog(self, msg: str) -> Optional[str]:
         """Classify JavaScript Alert/Confirm dialog text accurately before accepting/dismissing."""
-        msg_norm = (msg or "").replace("ي", "ی").replace("ك", "ک").strip()
-        if not msg_norm:
+        raw = msg or ""
+        msg_norm = raw.replace("ي", "ی").replace("ك", "ک").strip()
+        msg_clean = re.sub(r'[\u064B-\u065F\u0670\s]+', ' ', msg_norm).strip()
+        if not msg_clean:
             return None
+
+        # 0) System capacity updating notice (temporary gateway notice, not a permanent lack of capacity)
+        if any(u in msg_clean for u in ("در حال بروزرسانی ظرفیت", "بروزرسانی ظرفیت", "عملیات بروزرسانی", "تا پایان عملیات بروزرسانی")):
+            return "system_capacity_updating"
 
         # 1) Bank capacity full (e.g., Bank Saderat non-in-person capacity full in province)
         capacity_markers = (
@@ -648,10 +696,10 @@ class BotCore:
             "فاقد سهمیه",
             "سهمیه تکمیل",
         )
-        if any(m in msg_norm for m in capacity_markers) or (
-            ("غیرحضوری" in msg_norm or "غیر حضوری" in msg_norm) and ("تکمیل" in msg_norm or "اتمام" in msg_norm or "عدم" in msg_norm or "وجود ندارد" in msg_norm)
+        if any(m in msg_clean for m in capacity_markers) or (
+            ("غیرحضوری" in msg_clean or "غیر حضوری" in msg_clean) and ("تکمیل" in msg_clean or "اتمام" in msg_clean or "عدم" in msg_clean or "وجود ندارد" in msg_clean)
         ) or (
-            "ظرفیت" in msg_norm and ("تکمیل" in msg_norm or "اتمام" in msg_norm or "فاقد" in msg_norm or "پایان" in msg_norm or "وجود ندارد" in msg_norm)
+            "ظرفیت" in msg_clean and ("تکمیل" in msg_clean or "اتمام" in msg_clean or "فاقد" in msg_clean or "پایان" in msg_clean or "وجود ندارد" in msg_clean)
         ):
             return "bank_capacity_full"
 
@@ -663,7 +711,7 @@ class BotCore:
             "پیامک گردید",
             "با موفقیت ارسال",
         )
-        if any(s in msg_norm for s in otp_sent_markers) and not any(k in msg_norm for k in ("منقضی", "نامعتبر", "اشتباه")):
+        if any(s in msg_clean for s in otp_sent_markers) and not any(k in msg_clean for k in ("منقضی", "نامعتبر", "اشتباه")):
             return "otp_sent"
 
         # 3) OTP expired / invalid (only when explicit error keywords are present)
@@ -673,32 +721,37 @@ class BotCore:
             "کد تایید",
             "کد تأیید",
             "کد پیامکی",
+            "کد تایید پیامک",
         )
         otp_keywords = ("منقضی", "نامعتبر", "نا معتبر", "اشتباه", "صحیح نمی باشد", "صحیح نمی‌باشد", "پایان یافته", "اعتبار ندارد")
-        if any(k in msg_norm for k in otp_keywords) and (
-            any(p in msg_norm for p in otp_phrases) or "کد" in msg_norm
-        ) and "ظرفیت" not in msg_norm and "امنیتی" not in msg_norm:
+        if any(k in msg_clean for k in otp_keywords) and (
+            any(p in msg_clean for p in otp_phrases) or "کد" in msg_clean
+        ) and "ظرفیت" not in msg_clean and "امنیتی" not in msg_clean:
             return "otp_expired"
 
-        # 3) CAPTCHA invalid
-        if any(token in msg_norm for token in ("کد امنیتی", "کپچا", "CAPTCHA", "captcha")):
+        # 4) CAPTCHA invalid
+        if any(token in msg_clean for token in ("کد امنیتی", "کپچا", "CAPTCHA", "captcha")):
             return "captcha_invalid"
 
-        # 4) Session expired (strictly genuine session expiration only, never generic timing or capacity alerts)
+        # 5) Session expired (strictly genuine session expiration only, never generic timing or capacity alerts)
         session_markers = (
             "نشست شما منقضی",
             "انقضای نشست",
-            "مدت زمان نشست شما به پایان رسیده",
+            "مدت زمان نشست",
+            "مهلت زمانی نشست",
+            "زمان نشست شما به پایان رسیده",
+            "نشست شما به پایان رسیده",
             "مجددا وارد سامانه شوید",
-            "مجدداً وارد سامانه شوید",
             "مجددا وارد شوید",
-            "لطفا مجددا وارد شوید",
+            "لطفا مجددا وارد",
             "session expired",
         )
-        if any(m in msg_norm.lower() for m in session_markers):
+        if any(m in msg_clean.lower() for m in session_markers) or (
+            "نشست" in msg_clean and ("پایان رسیده" in msg_clean or "منقضی" in msg_clean or "وارد شوید" in msg_clean or "باطل" in msg_clean)
+        ):
             return "session_expired"
 
-        # 5) WAF / Security / Rate Limit
+        # 6) WAF / Security / Rate Limit
         waf_markers = (
             "مسدود",
             "تعداد دفعات",
@@ -708,7 +761,7 @@ class BotCore:
             "access denied",
             "rejected",
         )
-        if any(m in msg_norm.lower() for m in waf_markers):
+        if any(m in msg_clean.lower() for m in waf_markers):
             return "waf_blocked"
 
         return "generic_error"
@@ -735,11 +788,34 @@ class BotCore:
             except Exception:
                 pass
 
-            # Record dialog message BEFORE closing it
+            # Accept the dialog IMMEDIATELY so Chromium is never frozen on modal alerts
+            try:
+                dialog.accept()
+            except Exception:
+                try:
+                    dialog.dismiss()
+                except Exception:
+                    pass
+
+            # Record dialog message and classification
             normalized_msg = (msg or "").strip()
             action = self._classify_dialog(normalized_msg)
-            if action == "otp_expired" and getattr(getattr(self, "live_owner", None), "bank_page_active", False):
-                action = "stale_otp_ignored"
+
+            # Check if this dialog occurred on Step 2 (OTP stage)
+            is_otp_stage = False
+            try:
+                if page:
+                    otp_loc = page.locator("#ctl00_ContentPlaceHolder1_tbMobileConfCode, input[name$='tbMobileConfCode']")
+                    if otp_loc.count() > 0 and otp_loc.first.is_visible():
+                        is_otp_stage = True
+            except Exception:
+                pass
+            if not is_otp_stage:
+                is_otp_stage = (getattr(self, "current_step", "") == "STEP_2_OTP" or getattr(self, "state", "") == "OTP_FORM")
+
+            if is_otp_stage and action in ("bank_capacity_full", "system_capacity_updating", "generic_error"):
+                action = "otp_step_capacity_retry"
+
             self._last_dialog_message = normalized_msg
             self._last_dialog_action = action
             self._last_dialog_ts = time.time()
@@ -755,7 +831,13 @@ class BotCore:
                 pass
 
             try:
-                if action == "bank_capacity_full":
+                if action == "otp_step_capacity_retry":
+                    self.log(
+                        f"⚠️ پیام موقت در مرحله پیامک ({normalized_msg})؛ حل کپچای جدید و تلاش مجدد برای ورود به صفحه ۳ تا پایان اعتبار پیامک...",
+                        "warning",
+                        page,
+                    )
+                elif action == "bank_capacity_full":
                     self._set_recovery_flag("bank_capacity_full")
                     self.emit_event(
                         "BANK_CAPACITY_FULL",
@@ -774,14 +856,22 @@ class BotCore:
                         last_error=normalized_msg[:250],
                     )
                 elif action == "otp_expired":
-                    self.clear_remote_otp()
-                    self.clear_otp_backend()
+                    if getattr(self, "live_owner", None):
+                        self.live_owner.bank_page_active = False
                     self.clear_otp_locks()
                     self.mark_otp_entry_time()
                     if hasattr(self, "_consumed_otp_digests"):
                         self._consumed_otp_digests.clear()
                     self.register_otp_failure("dialog_otp_expired")
                     self._set_recovery_flag("otp_expired")
+                    try:
+                        DBHandler.clear_otp(self.nid)
+                    except Exception:
+                        pass
+                    DBHandler.update_status(self.nid, "کد منقضی - شروع مجدد", "کد تایید منقضی شد؛ بازگشت خودکار به مرحله ۱ جهت دریافت کد جدید")
+                    # Clear remote backend in separate thread to avoid blocking Playwright event loop
+                    import threading
+                    threading.Thread(target=self.clear_otp_backend, daemon=True).start()
                     self.emit_event(
                         "OTP_EXPIRED",
                         step="STEP_2_OTP",
@@ -803,6 +893,8 @@ class BotCore:
                     )
                     self.log("CAPTCHA نامعتبر بود؛ فقط state کپچا بازنشانی می‌شود.", "warning", page)
                 elif action == "session_expired":
+                    if getattr(self, "live_owner", None):
+                        self.live_owner.bank_page_active = False
                     self._set_recovery_flag("session_expired")
                     self.emit_event(
                         "OTP_EXPIRED",
@@ -830,17 +922,6 @@ class BotCore:
             except Exception:
                 pass
 
-            # Only accept/dismiss valid dialogs safely
-            try:
-                if dtype == "confirm" and action in {"generic_error", "bank_capacity_full"}:
-                    dialog.accept()
-                else:
-                    dialog.accept()
-            except Exception:
-                try:
-                    dialog.dismiss()
-                except Exception:
-                    pass
             if hasattr(self, "_dialog_handling"):
                 self._dialog_handling = False
 
@@ -870,10 +951,30 @@ class BotCore:
                     pass
                 if modal_text:
                     action = self._classify_dialog(modal_text)
+                    is_otp_stage = False
+                    try:
+                        if page:
+                            otp_loc = page.locator("#ctl00_ContentPlaceHolder1_tbMobileConfCode, input[name$='tbMobileConfCode']")
+                            if otp_loc.count() > 0 and otp_loc.first.is_visible():
+                                is_otp_stage = True
+                    except Exception:
+                        pass
+                    if not is_otp_stage:
+                        is_otp_stage = (getattr(self, "current_step", "") == "STEP_2_OTP" or getattr(self, "state", "") == "OTP_FORM")
+
+                    if is_otp_stage and action in ("bank_capacity_full", "system_capacity_updating", "generic_error"):
+                        action = "otp_step_capacity_retry"
+
                     self._last_dialog_message = modal_text
                     self._last_dialog_action = action
                     self._last_dialog_ts = time.time()
-                    if action == "bank_capacity_full":
+                    if action == "otp_step_capacity_retry":
+                        self.log(
+                            f"⚠️ پیام موقت در مدال مرحله پیامک ({modal_text})؛ تلاش مجدد تا پایان اعتبار پیامک...",
+                            "warning",
+                            page,
+                        )
+                    elif action == "bank_capacity_full":
                         self._set_recovery_flag("bank_capacity_full")
                         self.emit_event(
                             "BANK_CAPACITY_FULL",
@@ -884,6 +985,21 @@ class BotCore:
                             level="warning",
                             page=page,
                         )
+                    elif action == "otp_expired":
+                        self._set_recovery_flag("otp_expired")
+                        if getattr(self, "live_owner", None):
+                            self.live_owner.bank_page_active = False
+                        self.clear_otp_locks()
+                        try:
+                            DBHandler.clear_otp(self.nid)
+                        except Exception:
+                            pass
+                        import threading
+                        threading.Thread(target=self.clear_otp_backend, daemon=True).start()
+                    elif action == "session_expired":
+                        self._set_recovery_flag("session_expired")
+                        if getattr(self, "live_owner", None):
+                            self.live_owner.bank_page_active = False
                 btns = target.locator(
                     "button:has-text('OK'), button:has-text('تایید'), "
                     "button:has-text('تأیید'), button:has-text('بستن'), "
@@ -978,6 +1094,21 @@ class BotCore:
                 loc = page.locator(sel)
                 if loc.count() > 0 and loc.first.is_visible():
                     return "STEP_2_OTP"
+            except Exception:
+                continue
+
+        # Check Facility Case Selection Form (SelTasCase.aspx)
+        facility_selectors = [
+            "#ctl00_ContentPlaceHolder1_rbtnNaghdi",
+            "#ctl00_ContentPlaceHolder1_rbtnKala",
+            "input[name$='rbtnNaghdi']",
+            "input[name$='rbtnKala']",
+        ]
+        for sel in facility_selectors:
+            try:
+                loc = page.locator(sel)
+                if loc.count() > 0 and loc.first.is_visible():
+                    return "FACILITY_SELECTION"
             except Exception:
                 continue
 

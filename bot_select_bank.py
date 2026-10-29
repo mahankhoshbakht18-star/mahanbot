@@ -173,6 +173,8 @@ def match_bank_option(priority_name: Any, option_text: Any) -> bool:
 
 def _save_bank_page_if_changed(bot, page, bank_names):
     """Save HTML/screenshot once per normalized bank-list signature."""
+    if getattr(bot, "critical_path_active", False):
+        return []
     signature, normalized = _bank_signature(bank_names)
     if not normalized:
         return []
@@ -335,9 +337,16 @@ def repair_saved_pages(base_dir, only_folder=None):
     return report
 
 
-def _is_reserve_option(option_text: str) -> bool:
+def _is_active_capacity_option(option_text: str) -> bool:
+    """Strict verification of explicit active registration capacity [دارای ظرفیت ثبت نام]."""
     norm = _normalize_persian(option_text)
-    reserve_markers = ("ذخیره", "رزرو", "در انتظار تخصیص ظرفیت")
+    return "دارای ظرفیت ثبت نام" in norm or "[دارای ظرفیت ثبت نام]" in norm
+
+
+def _is_reserve_option(option_text: str) -> bool:
+    """Strict check for reserve queue marker [در انتظار تخصیص ظرفیت جدید (ذخیره)]."""
+    norm = _normalize_persian(option_text)
+    reserve_markers = ("در انتظار تخصیص ظرفیت جدید", "ذخیره", "رزرو", "در انتظار تخصیص ظرفیت")
     return any(m in norm for m in reserve_markers)
 
 
@@ -1037,15 +1046,20 @@ def process_bank_selection_v2(bot, page, stop_event, *, capacity_sniping=False):
             default_branches = [str(runtime_data.get("branch_code") or bot.user_data.get("branch_code"))]
 
         applicant_allow_reserve = (
-            runtime_data.get("allow_reserve")
-            if runtime_data.get("allow_reserve") is not None
-            else getattr(bot, "user_data", {}).get("allow_reserve")
+            runtime_data.get("allow_reserve_registration")
+            if runtime_data.get("allow_reserve_registration") is not None
+            else runtime_data.get("allow_reserve")
         )
-        allow_reserve_global = bool(bot.settings.get("allow_reserve_bank", True))
+        if applicant_allow_reserve is None:
+            applicant_allow_reserve = getattr(bot, "user_data", {}).get(
+                "allow_reserve_registration",
+                getattr(bot, "user_data", {}).get("allow_reserve"),
+            )
+        allow_reserve_global = bool(bot.settings.get("allow_reserve_registration", bot.settings.get("allow_reserve_bank", False)))
         allow_reserve_effective = (
             bool(applicant_allow_reserve)
             if applicant_allow_reserve is not None
-            else (allow_reserve_global)
+            else allow_reserve_global
         )
 
         priorities = _normalize_priority_entries(
@@ -1155,6 +1169,29 @@ def process_bank_selection_v2(bot, page, stop_event, *, capacity_sniping=False):
         except Exception:
             pass
 
+        # Ingest observed banks into Smart Capacity Radar & Dispatch to Telegram Channel
+        try:
+            from core.capacity_radar import CAPACITY_RADAR, CapacityStatus
+            obs_prov_val = obs_prov or getattr(bot, "state_name", "") or getattr(bot, "province_name", "") or (getattr(bot, "user_data", {}) or {}).get("state") or "سراسری"
+            obs_city_val = obs_city or getattr(bot, "city_name", "") or (getattr(bot, "user_data", {}) or {}).get("city") or "کل استان"
+            loan_type_val = getattr(bot, "loan_type", "marriage") or "marriage"
+
+            for t_item, v_item, _ in available:
+                is_res = _is_reserve_option(t_item)
+                stat = CapacityStatus.RESERVE if is_res else CapacityStatus.AVAILABLE_OBSERVED
+                CAPACITY_RADAR.ingest_observation(
+                    province_name=obs_prov_val,
+                    city_name=obs_city_val,
+                    bank_name=t_item,
+                    status=stat,
+                    loan_type=loan_type_val,
+                    visit_method="all",
+                    data_source="live_session",
+                )
+        except Exception as e:
+            if hasattr(bot, "log"):
+                bot.log(f"⚠️ خطا در ثبت رادار ظرفیت: {e}", "warning", page)
+
         # 4. Clean expired bank cooldowns and build candidate queue in applicant's priority order
         now = time.time()
         if not hasattr(bot, "_bank_cooldowns"):
@@ -1184,12 +1221,15 @@ def process_bank_selection_v2(bot, page, stop_event, *, capacity_sniping=False):
 
             for text_item, value_item, is_sel in available:
                 if match_bank_option(p_name, text_item):
-                    if _is_reserve_option(text_item):
+                    if _is_active_capacity_option(text_item):
+                        active_candidates.append((entry, text_item, value_item, is_sel, False))
+                    elif _is_reserve_option(text_item):
                         if not entry_allow_reserve:
                             skipped_reserve_options.append(text_item)
                         else:
                             reserve_candidates.append((entry, text_item, value_item, is_sel, True))
                     else:
+                        # Fallback for plain bank names that do not contain reserve markers
                         active_candidates.append((entry, text_item, value_item, is_sel, False))
 
         # Non-reserve active options are prioritized before reserve options
@@ -1449,46 +1489,42 @@ def process_bank_selection_v2(bot, page, stop_event, *, capacity_sniping=False):
             # Non-in-person banks do not require branch selection; ignore ddlBranch completely
             selected_branch = "غیرحضوری"
             DBHandler.update_runtime(bot.nid, selected_mode="online", selected_branch="غیرحضوری")
-        else:
-            branch_visible = False
             try:
-                b_loc = page.locator(branch_ddl)
-                branch_visible = b_loc.count() > 0 and b_loc.first.is_visible() and b_loc.first.is_enabled()
+                from core.state_machine import BotState, transition_state
+                transition_state(bot.nid, BotState.READY_TO_SUBMIT, reason="بانک غیرحضوری نیازی به انتخاب شعبه ندارد")
             except Exception:
-                branch_visible = False
+                pass
+        else:
+            from core.state_machine import BotState, transition_state
+            pref_branches = matched_entry.get("branches") or []
+            target_branch_code = runtime_data.get("branch_code") or bot.user_data.get("branch_code") or ""
 
-            if branch_visible:
-                branch_res = process_branch_selection(
-                    bot,
-                    page,
-                    stop_event,
-                    preferred_branches=matched_entry.get("branches") or [],
-                    trigger_submit=False,
-                )
-                if not branch_res:
-                    if bot.consume_recovery_flag("bank_capacity_full"):
-                        return "capacity_full"
-                    bot.emit_event(
-                        "BANK_SELECTION_FAILED",
-                        step="STEP_3_BANK_SELECT",
-                        reason=f"branch_selection_failed:bank={bank_name}",
-                        result="no_branch",
-                        message=f"انتخاب شعبه حضوری برای بانک {bank_name} انجام نشد.",
-                        level="warning",
-                        page=page,
-                    )
-                    return "waiting"
-                selected_branch = str(branch_res)
-                DBHandler.update_runtime(bot.nid, selected_mode=effective_mode, selected_branch=selected_branch)
-                bot.emit_event(
-                    "BRANCH_SELECTED",
-                    step="STEP_3_BANK_SELECT",
-                    reason=f"bank={bank_name} branch={selected_branch}",
-                    result=selected_branch,
-                    message=f"شعبه «{selected_branch}» برای بانک {bank_name} انتخاب و تایید شد.",
-                    level="info",
+            ok, branch_info, all_branches = select_branch_robust(
+                bot,
+                page,
+                preferred_branches=pref_branches,
+                branch_code=target_branch_code,
+                stop_event=stop_event,
+            )
+            if not ok:
+                if bot.consume_recovery_flag("bank_capacity_full"):
+                    return "capacity_full"
+                bot.save_checkpoint(
+                    "STEP_3_BANK_SELECT",
                     page=page,
+                    selected_bank=bank_name,
+                    bank_mode=effective_mode,
+                    expected_next_step="MANUAL_BRANCH_SELECT",
+                    last_operation_result="BRANCH_SELECTION_FAILED",
                 )
+                DBHandler.update_status(bot.nid, "نیازمند انتخاب شعبه", f"بانک {bank_name} آماده است؛ انتخاب خودکار شعبه ناموفق بود. لطفاً شعبه را دستی انتخاب کنید.")
+                return "branch_selection_failed"
+
+            selected_branch = branch_info.get("name") or branch_info.get("text") or branch_info.get("value") or "انتخاب‌شده"
+            try:
+                transition_state(bot.nid, BotState.READY_TO_SUBMIT, reason=f"شعبه «{selected_branch}» تایید شد")
+            except Exception:
+                pass
 
         # Save checkpoint and emit BANK_FORM_READY before final submit decision
         next_step_label = "FINAL_SUBMIT_RESERVE" if is_reserve_choice else "FINAL_SUBMIT"
@@ -1566,7 +1602,35 @@ def process_bank_selection_v2(bot, page, stop_event, *, capacity_sniping=False):
         )
         if not DBHandler.claim_final_submission(bot.nid):
             return "submit_rejected"
-        page.click("#ctl00_ContentPlaceHolder1_btnSave", timeout=5000)
+
+        # Zero-Overhead Critical Path: minimize latency from quota observation to click
+        critical_start = time.perf_counter()
+        bot.critical_path_active = True
+        try:
+            page.click("#ctl00_ContentPlaceHolder1_btnSave", timeout=5000)
+        finally:
+            latency_ms = (time.perf_counter() - critical_start) * 1000
+            bot.critical_path_active = False
+
+        # Record capacity telemetry asynchronously in background thread
+        try:
+            threading.Thread(
+                target=DBHandler.record_capacity_telemetry,
+                kwargs={
+                    "nid": bot.nid,
+                    "target_bank": bank_name,
+                    "target_status": "reserve" if is_reserve_choice else "active",
+                    "total_active_count": len(active_candidates),
+                    "total_reserve_count": len(reserve_candidates),
+                    "active_banks_json": [c[1] for c in active_candidates],
+                    "submission_latency_ms": latency_ms,
+                    "submission_result": "save_clicked",
+                },
+                daemon=True,
+            ).start()
+        except Exception:
+            pass
+
         try:
             page.wait_for_timeout(120)
         except Exception:
@@ -1682,49 +1746,613 @@ def return_to_bank_field(page, dropdown_id):
         pass
 
 
-def select_first_available_branch(page, preferred_branches: Optional[List[str]] = None):
-    branch_ddl = "#ctl00_ContentPlaceHolder1_ddlBranch"
-    options = _read_dropdown_options(page, branch_ddl)
-    valid_opts = [
-        (str(o.get("text", "")).strip(), str(o.get("value", "")))
-        for o in options
-        if o.get("value") and str(o.get("value")) != "0" and "انتخاب کن" not in _normalize_persian(o.get("text", ""))
-    ]
-    if not valid_opts:
-        return None
+# =========================================================================
+# Resilient Branch Selection Engine (Page 3: SelectBnkShb.aspx)
+# =========================================================================
 
-    if preferred_branches:
+BRANCH_SELECT_SELECTORS = [
+    "#ctl00_ContentPlaceHolder1_ddlBranch",
+    "select[name*='ddlBranch']",
+    "#ctl00_ContentPlaceHolder1_ddlShb",
+    "select[name*='ddlShb']",
+    "select[name*='Branch']",
+    "select[name*='Shb']",
+]
+
+BRANCH_LISTBOX_SELECTORS = [
+    "#ctl00_ContentPlaceHolder1_lstBranch",
+    "select[id*='lstBranch']",
+    "select[name*='lstBranch']",
+    "#ctl00_ContentPlaceHolder1_lstShb",
+    "select[id*='lstShb']",
+    "select[name*='lstShb']",
+    "select[size]",
+]
+
+BRANCH_SEARCH_SELECTORS = [
+    "#ctl00_ContentPlaceHolder1_txtSearch",
+    "#ctl00_ContentPlaceHolder1_txtSearchBranch",
+    "#ctl00_ContentPlaceHolder1_txtBranch",
+    "#ctl00_ContentPlaceHolder1_txtShb",
+    "input[id*='txtSearch']",
+    "input[id*='txtBranch']",
+    "input[id*='txtShb']",
+]
+
+BRANCH_HIDDEN_SELECTORS = [
+    "#ctl00_ContentPlaceHolder1_hdnBranchCode",
+    "input[type='hidden'][id*='Branch']",
+    "input[type='hidden'][name*='Branch']",
+    "input[type='hidden'][id*='Shb']",
+    "input[type='hidden'][name*='Shb']",
+]
+
+
+def detect_branch_controls(page) -> Dict[str, Any]:
+    """
+    Examines live DOM to determine what branch UI control structure is present.
+    Supports standard select, ASP.NET ListBox, search input, custom table/div lists.
+    """
+    try:
+        data = page.evaluate(r"""() => {
+            const res = {
+                control_type: 'none',
+                select_selector: '',
+                listbox_selector: '',
+                search_selector: '',
+                hidden_selector: '',
+                is_non_presential: false,
+                options_count: 0
+            };
+
+            const noBranchDiv = document.querySelector('#ctl00_ContentPlaceHolder1_divGheireHozori');
+            if (noBranchDiv && noBranchDiv.offsetParent !== null) {
+                res.is_non_presential = true;
+            }
+
+            const searchCandidates = [
+                '#ctl00_ContentPlaceHolder1_txtSearch',
+                '#ctl00_ContentPlaceHolder1_txtSearchBranch',
+                '#ctl00_ContentPlaceHolder1_txtBranch',
+                '#ctl00_ContentPlaceHolder1_txtShb',
+                'input[id*="txtSearch"]',
+                'input[id*="txtBranch"]',
+                'input[id*="txtShb"]'
+            ];
+            for (const sel of searchCandidates) {
+                const el = document.querySelector(sel);
+                if (el && el.offsetParent !== null) {
+                    res.search_selector = sel;
+                    break;
+                }
+            }
+
+            const hiddenCandidates = [
+                '#ctl00_ContentPlaceHolder1_hdnBranchCode',
+                'input[type="hidden"][id*="Branch"]',
+                'input[type="hidden"][name*="Branch"]',
+                'input[type="hidden"][id*="Shb"]',
+                'input[type="hidden"][name*="Shb"]'
+            ];
+            for (const sel of hiddenCandidates) {
+                const el = document.querySelector(sel);
+                if (el) {
+                    res.hidden_selector = sel;
+                    break;
+                }
+            }
+
+            const listboxCandidates = [
+                '#ctl00_ContentPlaceHolder1_lstBranch',
+                'select[id*="lstBranch"]',
+                'select[name*="lstBranch"]',
+                '#ctl00_ContentPlaceHolder1_lstShb',
+                'select[id*="lstShb"]',
+                'select[name*="lstShb"]',
+                'select[size]'
+            ];
+            for (const sel of listboxCandidates) {
+                const el = document.querySelector(sel);
+                if (el && el.offsetParent !== null) {
+                    res.listbox_selector = sel;
+                    res.options_count = (el.options || []).length;
+                    res.control_type = res.search_selector ? 'searchable' : 'listbox';
+                    return res;
+                }
+            }
+
+            const selectCandidates = [
+                '#ctl00_ContentPlaceHolder1_ddlBranch',
+                'select[name*="ddlBranch"]',
+                '#ctl00_ContentPlaceHolder1_ddlShb',
+                'select[name*="ddlShb"]',
+                'select[name*="Branch"]',
+                'select[name*="Shb"]'
+            ];
+            for (const sel of selectCandidates) {
+                const el = document.querySelector(sel);
+                if (el && el.offsetParent !== null) {
+                    res.select_selector = sel;
+                    res.options_count = (el.options || []).length;
+                    res.control_type = res.search_selector ? 'searchable' : 'select';
+                    return res;
+                }
+            }
+
+            const rowCandidates = [
+                'table[id*="Branch"] tr',
+                'table[id*="Shb"] tr',
+                'div[id*="BranchList"] div',
+                'div[id*="divBranch"] div',
+                'div[id*="divShb"] div'
+            ];
+            for (const sel of rowCandidates) {
+                const els = document.querySelectorAll(sel);
+                if (els && els.length > 0) {
+                    res.options_count = els.length;
+                    res.control_type = 'table_list';
+                    return res;
+                }
+            }
+
+            if (res.search_selector) {
+                res.control_type = 'searchable';
+            }
+
+            return res;
+        }""")
+        if isinstance(data, dict):
+            return data
+    except Exception:
+        pass
+    return {"control_type": "none", "options_count": 0, "is_non_presential": False}
+
+
+def wait_for_branch_fully_loaded(page, branch_ddl: Optional[str] = None, timeout_ms: int = 8000) -> Dict[str, Any]:
+    """
+    Waits until ASP.NET AJAX PostBack completes and branch controls are rendered and populated.
+    """
+    start_t = time.time()
+    max_wait_sec = max(2.0, timeout_ms / 1000.0)
+
+    while time.time() - start_t < max_wait_sec:
+        try:
+            is_postback = page.evaluate("""() => {
+                if (window.Sys && Sys.WebForms && Sys.WebForms.PageRequestManager) {
+                    const prm = Sys.WebForms.PageRequestManager.getInstance();
+                    if (prm && prm.get_isInAsyncPostBack()) return true;
+                }
+                return false;
+            }""")
+            if is_postback:
+                try:
+                    page.wait_for_timeout(150)
+                except Exception:
+                    time.sleep(0.15)
+                continue
+        except Exception:
+            pass
+
+        info = detect_branch_controls(page)
+        if info.get("control_type") in {"select", "listbox", "searchable", "table_list"}:
+            if info.get("options_count", 0) > 0:
+                return info
+        elif info.get("is_non_presential"):
+            return info
+
+        try:
+            page.wait_for_timeout(200)
+        except Exception:
+            time.sleep(0.2)
+
+    return detect_branch_controls(page)
+
+
+def get_available_branches(page) -> List[Dict[str, Any]]:
+    """
+    Extracts all available branches from live DOM across select, ListBox, table, or divs.
+    Each item is:
+      {"code": "03445", "name": "مرکزی زاهدان", "text": "مرکزی زاهدان - کد 03445", "value": "03445", "selected": False}
+    """
+    try:
+        branches = page.evaluate(r"""() => {
+            const list = [];
+            const seen = new Set();
+
+            function parseItem(rawText, rawVal, isSel, selector) {
+                const text = (rawText || '').trim();
+                const val = (rawVal || '').trim();
+                if (!val && !text) return;
+                if (val === '0' || text.includes('انتخاب کن')) return;
+
+                let code = '';
+                const codeMatch = text.match(/\b(\d{4,6})\b/) || val.match(/\b(\d{4,6})\b/);
+                if (codeMatch) {
+                    code = codeMatch[1];
+                } else if (/^\d+$/.test(val)) {
+                    code = val;
+                }
+
+                let name = text;
+                if (code) {
+                    name = name.replace(code, '').replace(/ك|کد|کد:|کد\s*شعبه/g, '').replace(/[-–—:]/g, ' ').trim();
+                }
+                if (!name) name = text;
+
+                const key = (code || val) + '|' + name;
+                if (seen.has(key)) return;
+                seen.add(key);
+
+                list.push({
+                    code: code,
+                    name: name,
+                    text: text,
+                    value: val || code,
+                    selected: !!isSel,
+                    selector: selector || ''
+                });
+            }
+
+            const selects = document.querySelectorAll('select');
+            for (const sel of selects) {
+                const id = sel.id || sel.name || '';
+                if (id.toLowerCase().includes('branch') || id.toLowerCase().includes('shb')) {
+                    for (const opt of sel.options || []) {
+                        parseItem(opt.textContent, opt.value, opt.selected || sel.value === opt.value, '#' + id);
+                    }
+                }
+            }
+
+            if (list.length === 0) {
+                const rows = document.querySelectorAll('table[id*="Branch"] tr, table[id*="Shb"] tr, div[id*="Branch"] div, div[id*="Shb"] div');
+                for (const row of rows) {
+                    const txt = row.innerText || row.textContent || '';
+                    if (txt.length > 3 && (txt.includes('شعبه') || /\d{4,6}/.test(txt))) {
+                        const val = row.getAttribute('data-value') || row.getAttribute('data-code') || '';
+                        parseItem(txt, val, row.classList.contains('selected'), '');
+                    }
+                }
+            }
+
+            return list;
+        }""")
+        if isinstance(branches, list):
+            return branches
+    except Exception:
+        pass
+    return []
+
+
+def select_branch_robust(
+    bot,
+    page,
+    preferred_branches: Optional[List[str]] = None,
+    branch_code: Optional[str] = None,
+    stop_event: Optional[Any] = None,
+) -> Tuple[bool, Dict[str, Any], List[Dict[str, Any]]]:
+    """
+    Robust, multi-strategy branch selection on SelectBnkShb.aspx.
+    Ensures:
+      1. Transitions FSM to WAITING_BRANCH_LIST
+      2. Ensures in-person mode if radio present
+      3. Waits for branch controls and DOM options to populate
+      4. Transitions FSM to SELECTING_BRANCH
+      5. Matches preferred branch by branch_code or preferred_branches (fallback to first valid)
+      6. Selects item in DOM (Select, ListBox, Filter input, Table row, Hidden input)
+      7. Strictly verifies that the selection persisted in DOM and is non-empty
+      8. Transitions FSM to BRANCH_SELECTED (or BRANCH_NOT_FOUND / BRANCH_SELECTION_FAILED)
+    Returns: (success: bool, selected_info: dict, available_branches: list)
+    """
+    if stop_event and stop_event.is_set():
+        return False, {}, []
+
+    try:
+        from core.state_machine import BotState, transition_state
+    except Exception:
+        transition_state = None
+        BotState = None
+
+    if transition_state and BotState:
+        try:
+            transition_state(bot.nid, BotState.WAITING_BRANCH_LIST, reason="در حال دریافت فهرست شعب")
+        except Exception:
+            pass
+
+    # Ensure in-person radio is checked if bank requires it
+    try:
+        hozori_loc = page.locator("#ctl00_ContentPlaceHolder1_rbtnHozori")
+        if hozori_loc.count() and hozori_loc.first.is_visible():
+            is_checked = page.evaluate("() => { const el = document.querySelector('#ctl00_ContentPlaceHolder1_rbtnHozori'); return el ? el.checked : false; }")
+            if not is_checked:
+                hozori_loc.first.click()
+                try:
+                    page.wait_for_timeout(200)
+                except Exception:
+                    pass
+                if hasattr(bot, "wait_for_aspnet_postback"):
+                    bot.wait_for_aspnet_postback(page, timeout_ms=5000)
+    except Exception:
+        pass
+
+    # Wait for branch controls and data to populate
+    ctrl_info = wait_for_branch_fully_loaded(page, timeout_ms=8000)
+
+    # Extract all available branch options
+    branches = get_available_branches(page)
+    if not branches:
+        try:
+            page.wait_for_timeout(500)
+        except Exception:
+            time.sleep(0.5)
+        ctrl_info = wait_for_branch_fully_loaded(page, timeout_ms=4000)
+        branches = get_available_branches(page)
+
+    if not branches:
+        if transition_state and BotState:
+            try:
+                transition_state(bot.nid, BotState.BRANCH_NOT_FOUND, reason="هیچ شعبه‌ای در فهرست شعب بانک یافت نشد")
+            except Exception:
+                pass
+        bot.emit_event(
+            "BRANCH_NOT_FOUND",
+            step="STEP_3_BANK_SELECT",
+            reason="branches_empty",
+            result="not_found",
+            message="فهرست شعب بانک انتخابی در صفحه یافت نشد یا خالی است.",
+            level="warning",
+            page=page,
+        )
+        return False, {}, []
+
+    if transition_state and BotState:
+        try:
+            transition_state(bot.nid, BotState.SELECTING_BRANCH, reason="در حال تطبیق و انتخاب شعبه")
+        except Exception:
+            pass
+
+    target_branch = None
+
+    # Strategy A: Match by explicit branch code (e.g. "03445")
+    if branch_code:
+        clean_code = re.sub(r"\D", "", str(branch_code))
+        if clean_code:
+            for b in branches:
+                b_code = re.sub(r"\D", "", str(b.get("code") or b.get("value") or ""))
+                if clean_code == b_code or clean_code in b_code:
+                    target_branch = b
+                    break
+
+    # Strategy B: Match by preferred branch names/keywords
+    if not target_branch and preferred_branches:
         for pref in preferred_branches:
             pref_norm = _normalize_persian_key(pref)
             if not pref_norm:
                 continue
-            for text_opt, val_opt in valid_opts:
-                if pref_norm == _normalize_persian_key(val_opt) or pref_norm in _normalize_persian_key(text_opt):
-                    page.select_option(branch_ddl, value=val_opt)
-                    return val_opt
+            for b in branches:
+                b_name_norm = _normalize_persian_key(b.get("name") or "")
+                b_text_norm = _normalize_persian_key(b.get("text") or "")
+                b_code = str(b.get("code") or "")
+                if (
+                    pref_norm == b_name_norm
+                    or pref_norm in b_name_norm
+                    or pref_norm in b_text_norm
+                    or (b_code and pref_norm == b_code)
+                ):
+                    target_branch = b
+                    break
+            if target_branch:
+                break
 
-    first_text, first_val = valid_opts[0]
-    page.select_option(branch_ddl, value=first_val)
-    return first_val
+    # Strategy C: Fallback to first valid available branch
+    if not target_branch:
+        target_branch = branches[0]
+        bot.log(
+            f"ℹ️ شعبه اولویت‌دار متقاضی در لیست پیدا نشد؛ اولین شعبه در دسترس («{target_branch.get('text')}») انتخاب می‌شود.",
+            "info",
+            page,
+        )
+
+    target_val = str(target_branch.get("value") or target_branch.get("code") or "")
+    target_code = str(target_branch.get("code") or "")
+    target_text = str(target_branch.get("text") or target_branch.get("name") or "")
+    target_name = str(target_branch.get("name") or target_text)
+
+    # If search input exists, filter the list first
+    search_sel = ctrl_info.get("search_selector") or ""
+    if search_sel:
+        try:
+            s_input = page.locator(search_sel)
+            if s_input.count() and s_input.first.is_visible():
+                filter_term = target_code or target_name
+                s_input.first.fill(filter_term)
+                s_input.first.dispatch_event("input")
+                s_input.first.dispatch_event("keyup")
+                s_input.first.dispatch_event("change")
+                try:
+                    page.wait_for_timeout(200)
+                except Exception:
+                    pass
+        except Exception:
+            pass
+
+    # Select via select / listbox
+    select_sel = ctrl_info.get("listbox_selector") or ctrl_info.get("select_selector") or "#ctl00_ContentPlaceHolder1_ddlBranch"
+    selected_in_dom = False
+
+    try:
+        loc = page.locator(select_sel)
+        if loc.count() and loc.first.is_visible():
+            try:
+                loc.select_option(value=target_val)
+                selected_in_dom = True
+            except Exception:
+                try:
+                    loc.select_option(label=target_text)
+                    selected_in_dom = True
+                except Exception:
+                    pass
+    except Exception:
+        pass
+
+    try:
+        page.evaluate("""({sel, val, code, txt}) => {
+            const el = document.querySelector(sel);
+            if (el && el.options) {
+                let matched = false;
+                for (let i = 0; i < el.options.length; i++) {
+                    const opt = el.options[i];
+                    if (opt.value === val || (code && (opt.value === code || opt.text.includes(code))) || (txt && opt.text.includes(txt))) {
+                        el.selectedIndex = i;
+                        opt.selected = true;
+                        matched = true;
+                        break;
+                    }
+                }
+                if (matched) {
+                    el.dispatchEvent(new Event('input', { bubbles: true }));
+                    el.dispatchEvent(new Event('change', { bubbles: true }));
+                    el.dispatchEvent(new Event('blur', { bubbles: true }));
+                    if (el.onchange) {
+                        try { el.onchange(); } catch(e) {}
+                    }
+                }
+            }
+
+            const hiddenInputs = document.querySelectorAll('input[type="hidden"][id*="Branch"], input[type="hidden"][name*="Branch"], input[type="hidden"][id*="Shb"], input[type="hidden"][name*="Shb"], #ctl00_ContentPlaceHolder1_hdnBranchCode');
+            for (const h of hiddenInputs) {
+                if (code) h.value = code;
+                else if (val) h.value = val;
+            }
+        }""", {"sel": select_sel, "val": target_val, "code": target_code, "txt": target_text})
+        selected_in_dom = True
+    except Exception:
+        pass
+
+    try:
+        page.wait_for_timeout(150)
+    except Exception:
+        pass
+    if hasattr(bot, "wait_for_aspnet_postback"):
+        bot.wait_for_aspnet_postback(page, timeout_ms=5000)
+
+    # Strict DOM Verification
+    verified = False
+    verified_val = ""
+    verified_text = ""
+    try:
+        ver_res = page.evaluate("""(sel) => {
+            const el = document.querySelector(sel);
+            if (!el) return { ok: false, val: '', text: '' };
+            if (el.options && el.selectedIndex >= 0) {
+                const opt = el.options[el.selectedIndex];
+                const val = (el.value || opt.value || '').trim();
+                const text = (opt.textContent || '').trim();
+                const ok = val !== '' && val !== '0' && !text.includes('انتخاب کن');
+                return { ok: ok, val: val, text: text };
+            }
+            const val = (el.value || '').trim();
+            return { ok: val !== '' && val !== '0', val: val, text: '' };
+        }""", select_sel)
+        if isinstance(ver_res, dict) and ver_res.get("ok"):
+            verified = True
+            verified_val = ver_res.get("val", "")
+            verified_text = ver_res.get("text", "")
+    except Exception:
+        verified = False
+
+    if not verified and selected_in_dom:
+        refreshed_branches = get_available_branches(page)
+        sel_branches = [b for b in refreshed_branches if b.get("selected")]
+        if sel_branches:
+            verified = True
+            verified_val = sel_branches[0].get("value", "")
+            verified_text = sel_branches[0].get("text", "")
+
+    if not verified:
+        if transition_state and BotState:
+            try:
+                transition_state(bot.nid, BotState.BRANCH_SELECTION_FAILED, reason=f"ثبت مقدار شعبه در DOM ناموفق بود (مقدار مورد انتظار: {target_val})")
+            except Exception:
+                pass
+        bot.emit_event(
+            "BRANCH_SELECTION_FAILED",
+            step="STEP_3_BANK_SELECT",
+            reason=f"verification_failed:val={target_val}",
+            result="unverified",
+            message=f"انتخاب شعبه «{target_text}» در صفحه تایید نشد؛ لطفاً شعبه را دستی انتخاب کنید.",
+            level="warning",
+            page=page,
+        )
+        return False, {}, branches
+
+    final_info = {
+        "code": target_code or verified_val,
+        "name": target_name,
+        "text": verified_text or target_text,
+        "value": verified_val or target_val,
+    }
+
+    if transition_state and BotState:
+        try:
+            transition_state(bot.nid, BotState.BRANCH_SELECTED, reason=f"شعبه «{final_info['text']}» با موفقیت انتخاب و در فرم ثبت شد")
+        except Exception:
+            pass
+    bot.emit_event(
+        "BRANCH_SELECTED",
+        step="STEP_3_BANK_SELECT",
+        reason=f"branch_code={final_info['code']} branch_name={final_info['name']}",
+        result=final_info["text"],
+        message=f"شعبه «{final_info['text']}» با موفقیت انتخاب و تایید شد.",
+        level="info",
+        page=page,
+    )
+    DBHandler.update_runtime(
+        bot.nid,
+        selected_branch=final_info["text"],
+        branch_code=final_info["code"],
+        branch_name=final_info["name"],
+    )
+
+    return True, final_info, branches
+
+
+def select_first_available_branch(page, preferred_branches: Optional[List[str]] = None):
+    """Backward compatibility wrapper delegating to get_available_branches."""
+    branches = get_available_branches(page)
+    if not branches:
+        return None
+    if preferred_branches:
+        for pref in preferred_branches:
+            pref_norm = _normalize_persian_key(pref)
+            for b in branches:
+                if pref_norm in _normalize_persian_key(b.get("name", "")) or pref_norm in _normalize_persian_key(b.get("text", "")):
+                    return b.get("value")
+    return branches[0].get("value")
 
 
 def process_branch_selection(bot, page, stop_event, preferred_branches: Optional[List[str]] = None, trigger_submit: bool = True):
+    """
+    High-level branch selection and submission coordinator.
+    Uses select_branch_robust to guarantee DOM selection & verification.
+    """
     try:
-        if stop_event.is_set():
-            return None
-        branch_ddl = "#ctl00_ContentPlaceHolder1_ddlBranch"
-        wait_for_branch_fully_loaded(page, branch_ddl)
-
-        branch_value = select_first_available_branch(page, preferred_branches=preferred_branches)
-        if not branch_value:
+        if stop_event and stop_event.is_set():
             return None
 
-        try:
-            page.wait_for_timeout(120)
-        except Exception:
-            pass
-        if hasattr(bot, "wait_for_aspnet_postback"):
-            bot.wait_for_aspnet_postback(page, timeout_ms=5000)
+        runtime_data = load_runtime_data(bot)
+        target_code = runtime_data.get("branch_code") or bot.user_data.get("branch_code")
+
+        ok, branch_info, _ = select_branch_robust(
+            bot,
+            page,
+            preferred_branches=preferred_branches,
+            branch_code=target_code,
+            stop_event=stop_event,
+        )
+        if not ok:
+            return None
+
+        branch_value = branch_info.get("value") or branch_info.get("text")
 
         if not trigger_submit:
             return branch_value
@@ -1747,21 +2375,6 @@ def process_branch_selection(bot, page, stop_event, preferred_branches: Optional
         return None
 
 
-def wait_for_branch_fully_loaded(page, branch_ddl):
-    try:
-        page.wait_for_selector(branch_ddl, timeout=1500)
-        page.wait_for_function(
-            "(selector) => {"
-            "const el = document.querySelector(selector);"
-            "return !!el && el.options && el.options.length > 1 && !el.disabled;"
-            "}",
-            branch_ddl,
-            timeout=5000,
-        )
-    except Exception:
-        pass
-
-
 def load_runtime_data(bot):
     row = DBHandler.get_applicant(bot.nid)
     if not row:
@@ -1782,3 +2395,32 @@ def load_runtime_data(bot):
             if k not in data or data[k] in (None, "", []):
                 data[k] = v
     return data
+
+
+def trigger_bank_capacity_refresh(bot, page) -> bool:
+    """Trigger native ASP.NET PostBack on ddlCity to fetch fresh bank capacities from the CBI server."""
+    try:
+        refreshed = page.evaluate("""() => {
+            const el = document.querySelector('#ctl00_ContentPlaceHolder1_ddlCity');
+            if (el && el.value && el.value !== '0') {
+                if (typeof __doPostBack === 'function') {
+                    __doPostBack('ctl00$ContentPlaceHolder1$ddlCity', '');
+                    return true;
+                }
+                el.dispatchEvent(new Event('change', { bubbles: true }));
+                return true;
+            }
+            return false;
+        }""")
+        if refreshed:
+            try:
+                page.wait_for_timeout(350)
+            except Exception:
+                pass
+            if hasattr(bot, "wait_for_aspnet_postback"):
+                bot.wait_for_aspnet_postback(page, timeout_ms=6000)
+            return True
+    except Exception as e:
+        if hasattr(bot, "log"):
+            bot.log(f"⚠️ خطا در بروزرسانی فهرست بانک‌ها: {e}", "warning", page)
+    return False

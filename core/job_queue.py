@@ -466,6 +466,9 @@ class JobQueue:
         elif job.bot_name == "recovery":
             RecoveryBot(job.nid, settings, log_callback, captcha_service, browser_profile).run(job.stop_event)
         elif job.bot_name in ("delete", "delete_req"):
+            # Approval belongs to this explicit queued action, never a persistent global setting.
+            settings = {**settings, "delete_approved": job.payload.get("delete_approved") is True,
+                        "delete_confirmed_by": str(job.payload.get("delete_confirmed_by") or "")}
             DeleteRequestBot(job.nid, settings, log_callback, captcha_service, browser_profile).run(job.stop_event)
         else:
             raise ValueError("Unsupported bot name")

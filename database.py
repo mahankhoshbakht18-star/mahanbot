@@ -27,7 +27,7 @@ DEFAULT_CONFIG = {
     "retry_count": 5,
     "retry_delay": 0.25,
     "browser_display_mode": "external",
-    "clear_cookies": True,
+    "clear_cookies": False,
     "captcha_mode": "model",
     "captcha_poll_interval": 0.1,
     "captcha_retry_delay": 0.25,
@@ -419,6 +419,120 @@ class DBHandler:
                     )"""
                 )
                 c.execute("CREATE INDEX IF NOT EXISTS idx_state_history_nid ON applicant_state_history(applicant_id, timestamp)")
+
+                # Capacity Telemetry Table
+                c.execute(
+                    """CREATE TABLE IF NOT EXISTS capacity_telemetry (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        nid TEXT NOT NULL,
+                        observed_at REAL NOT NULL,
+                        server_time TEXT,
+                        target_bank TEXT,
+                        target_status TEXT,
+                        total_active_count INTEGER DEFAULT 0,
+                        total_reserve_count INTEGER DEFAULT 0,
+                        active_banks_json TEXT DEFAULT '[]',
+                        submission_latency_ms REAL DEFAULT 0.0,
+                        submission_result TEXT DEFAULT ''
+                    )"""
+                )
+                c.execute("CREATE INDEX IF NOT EXISTS idx_telemetry_nid_time ON capacity_telemetry(nid, observed_at)")
+
+                # Smart Capacity Radar State
+                c.execute(
+                    """CREATE TABLE IF NOT EXISTS capacity_radar_state (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        province_name TEXT NOT NULL,
+                        city_name TEXT NOT NULL,
+                        bank_name TEXT NOT NULL,
+                        loan_type TEXT DEFAULT 'marriage',
+                        visit_method TEXT DEFAULT 'all',
+                        current_status TEXT NOT NULL,
+                        last_observed_at REAL NOT NULL,
+                        state_changed_at REAL NOT NULL,
+                        last_event_id TEXT,
+                        details_json TEXT DEFAULT '{}',
+                        UNIQUE(province_name, city_name, bank_name, loan_type, visit_method)
+                    )"""
+                )
+                c.execute("CREATE INDEX IF NOT EXISTS idx_radar_state_lookup ON capacity_radar_state(province_name, city_name, bank_name)")
+
+                # Smart Capacity Radar Observations
+                c.execute(
+                    """CREATE TABLE IF NOT EXISTS capacity_radar_observations (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        event_id TEXT NOT NULL,
+                        province_name TEXT NOT NULL,
+                        city_name TEXT NOT NULL,
+                        bank_name TEXT NOT NULL,
+                        loan_type TEXT DEFAULT 'marriage',
+                        visit_method TEXT DEFAULT 'all',
+                        branch_name TEXT DEFAULT '',
+                        status TEXT NOT NULL,
+                        observed_at REAL NOT NULL,
+                        data_source TEXT DEFAULT 'live_session',
+                        confidence REAL DEFAULT 1.0,
+                        raw_text TEXT DEFAULT ''
+                    )"""
+                )
+                c.execute("CREATE INDEX IF NOT EXISTS idx_radar_obs_time ON capacity_radar_observations(observed_at)")
+
+                # Smart Capacity State Change Events
+                c.execute(
+                    """CREATE TABLE IF NOT EXISTS capacity_change_events (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        event_id TEXT NOT NULL UNIQUE,
+                        province_name TEXT NOT NULL,
+                        city_name TEXT NOT NULL,
+                        bank_name TEXT NOT NULL,
+                        loan_type TEXT DEFAULT 'marriage',
+                        visit_method TEXT DEFAULT 'all',
+                        old_status TEXT NOT NULL,
+                        new_status TEXT NOT NULL,
+                        changed_at REAL NOT NULL,
+                        data_source TEXT DEFAULT 'radar',
+                        notified INTEGER DEFAULT 0
+                    )"""
+                )
+                c.execute("CREATE INDEX IF NOT EXISTS idx_radar_events_time ON capacity_change_events(changed_at)")
+
+                # Telegram Subscribers Table
+                c.execute(
+                    """CREATE TABLE IF NOT EXISTS telegram_subscribers (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        chat_id TEXT UNIQUE NOT NULL,
+                        username TEXT DEFAULT '',
+                        full_name TEXT DEFAULT '',
+                        target_province TEXT DEFAULT '',
+                        target_city TEXT DEFAULT '',
+                        favorite_banks_json TEXT DEFAULT '[]',
+                        loan_type TEXT DEFAULT 'all',
+                        visit_method TEXT DEFAULT 'all',
+                        instant_alert INTEGER DEFAULT 1,
+                        is_active INTEGER DEFAULT 1,
+                        created_at REAL NOT NULL,
+                        updated_at REAL NOT NULL
+                    )"""
+                )
+                c.execute("CREATE INDEX IF NOT EXISTS idx_tg_chat_id ON telegram_subscribers(chat_id)")
+
+                # Telegram Notification Queue (Offline-safe persistent delivery)
+                c.execute(
+                    """CREATE TABLE IF NOT EXISTS telegram_notification_queue (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        chat_id TEXT NOT NULL,
+                        message_text TEXT NOT NULL,
+                        message_type TEXT DEFAULT 'alert',
+                        event_id TEXT DEFAULT '',
+                        retry_count INTEGER DEFAULT 0,
+                        max_retries INTEGER DEFAULT 3,
+                        scheduled_at REAL NOT NULL,
+                        sent_at REAL,
+                        status TEXT DEFAULT 'pending',
+                        error_message TEXT DEFAULT ''
+                    )"""
+                )
+                c.execute("CREATE INDEX IF NOT EXISTS idx_tg_queue_status ON telegram_notification_queue(status, scheduled_at)")
 
                 default_config = json.dumps(DEFAULT_CONFIG, ensure_ascii=False)
                 c.execute("INSERT OR IGNORE INTO settings (key, value) VALUES ('config', ?)", (default_config,))
@@ -1528,3 +1642,417 @@ class DBHandler:
     def _current_timestamp_seconds_ms() -> float:
         """Return current unix timestamp in seconds with millisecond precision."""
         return time.time_ns() / 1_000_000_000
+
+    @staticmethod
+    def record_capacity_telemetry(
+        nid: str,
+        target_bank: str = "",
+        target_status: str = "",
+        total_active_count: int = 0,
+        total_reserve_count: int = 0,
+        active_banks_json: Any = "[]",
+        submission_latency_ms: float = 0.0,
+        submission_result: str = "",
+        server_time: str = "",
+        observed_at: Optional[float] = None,
+    ) -> Optional[int]:
+        """Record high-precision capacity telemetry event in database."""
+        clean_nid = str(nid or "").strip()
+        obs_time = float(observed_at or time.time())
+        active_json = active_banks_json if isinstance(active_banks_json, str) else json.dumps(active_banks_json, ensure_ascii=False)
+        try:
+            with DBHandler._connect() as conn:
+                c = conn.cursor()
+                c.execute(
+                    """CREATE TABLE IF NOT EXISTS capacity_telemetry (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        nid TEXT NOT NULL,
+                        observed_at REAL NOT NULL,
+                        server_time TEXT,
+                        target_bank TEXT,
+                        target_status TEXT,
+                        total_active_count INTEGER DEFAULT 0,
+                        total_reserve_count INTEGER DEFAULT 0,
+                        active_banks_json TEXT DEFAULT '[]',
+                        submission_latency_ms REAL DEFAULT 0.0,
+                        submission_result TEXT DEFAULT ''
+                    )"""
+                )
+                c.execute(
+                    """INSERT INTO capacity_telemetry
+                       (nid, observed_at, server_time, target_bank, target_status,
+                        total_active_count, total_reserve_count, active_banks_json,
+                        submission_latency_ms, submission_result)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    (
+                        clean_nid,
+                        obs_time,
+                        server_time or "",
+                        target_bank or "",
+                        target_status or "",
+                        int(total_active_count),
+                        int(total_reserve_count),
+                        active_json,
+                        float(submission_latency_ms),
+                        str(submission_result or ""),
+                    ),
+                )
+                conn.commit()
+                return c.lastrowid
+        except Exception as e:
+            print(f"Record Capacity Telemetry Error: {e}")
+            return None
+
+    @staticmethod
+    def get_capacity_telemetry(nid: Optional[str] = None, limit: int = 50) -> List[Dict[str, Any]]:
+        """Retrieve recent capacity telemetry events."""
+        try:
+            with DBHandler._connect(row_factory=True) as conn:
+                c = conn.cursor()
+                if nid:
+                    c.execute(
+                        "SELECT * FROM capacity_telemetry WHERE nid=? ORDER BY observed_at DESC LIMIT ?",
+                        (str(nid).strip(), int(limit)),
+                    )
+                else:
+                    c.execute(
+                        "SELECT * FROM capacity_telemetry ORDER BY observed_at DESC LIMIT ?",
+                        (int(limit),),
+                    )
+                return [dict(r) for r in c.fetchall()]
+        except Exception:
+            return []
+
+    # ── SMART CAPACITY RADAR DB OPERATIONS ────────────────────────────
+    @staticmethod
+    def upsert_radar_state(
+        province_name: str,
+        city_name: str,
+        bank_name: str,
+        loan_type: str = "marriage",
+        visit_method: str = "all",
+        current_status: str = "UNKNOWN",
+        event_id: str = "",
+        details: Optional[Dict[str, Any]] = None,
+        observed_at: Optional[float] = None,
+    ) -> Tuple[bool, Optional[str]]:
+        """
+        Upsert the latest known state for a (province, city, bank, loan_type, visit_method).
+        Returns (has_changed: bool, old_status: Optional[str]).
+        """
+        now = float(observed_at or time.time())
+        details_str = json.dumps(details or {}, ensure_ascii=False)
+        try:
+            with DBHandler._connect() as conn:
+                c = conn.cursor()
+                c.execute(
+                    """SELECT current_status, state_changed_at FROM capacity_radar_state
+                       WHERE province_name=? AND city_name=? AND bank_name=? AND loan_type=? AND visit_method=?""",
+                    (province_name, city_name, bank_name, loan_type, visit_method),
+                )
+                row = c.fetchone()
+                if not row:
+                    # Brand new record
+                    c.execute(
+                        """INSERT INTO capacity_radar_state
+                           (province_name, city_name, bank_name, loan_type, visit_method,
+                            current_status, last_observed_at, state_changed_at, last_event_id, details_json)
+                           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                        (province_name, city_name, bank_name, loan_type, visit_method,
+                         current_status, now, now, event_id, details_str),
+                    )
+                    conn.commit()
+                    return True, None
+
+                old_status, state_changed_at = row[0], row[1]
+                if old_status != current_status:
+                    # Status transitioned!
+                    c.execute(
+                        """UPDATE capacity_radar_state
+                           SET current_status=?, last_observed_at=?, state_changed_at=?, last_event_id=?, details_json=?
+                           WHERE province_name=? AND city_name=? AND bank_name=? AND loan_type=? AND visit_method=?""",
+                        (current_status, now, now, event_id, details_str,
+                         province_name, city_name, bank_name, loan_type, visit_method),
+                    )
+                    conn.commit()
+                    return True, old_status
+                else:
+                    # Same status: update timestamp only without triggering a change event
+                    c.execute(
+                        """UPDATE capacity_radar_state
+                           SET last_observed_at=?, details_json=?
+                           WHERE province_name=? AND city_name=? AND bank_name=? AND loan_type=? AND visit_method=?""",
+                        (now, details_str, province_name, city_name, bank_name, loan_type, visit_method),
+                    )
+                    conn.commit()
+                    return False, old_status
+        except Exception as e:
+            print(f"Upsert Radar State Error: {e}")
+            return False, None
+
+    @staticmethod
+    def record_radar_observation(
+        event_id: str,
+        province_name: str,
+        city_name: str,
+        bank_name: str,
+        status: str,
+        loan_type: str = "marriage",
+        visit_method: str = "all",
+        branch_name: str = "",
+        data_source: str = "live_session",
+        confidence: float = 1.0,
+        raw_text: str = "",
+        observed_at: Optional[float] = None,
+    ) -> Optional[int]:
+        """Record raw observation in capacity_radar_observations."""
+        now = float(observed_at or time.time())
+        try:
+            with DBHandler._connect() as conn:
+                c = conn.cursor()
+                c.execute(
+                    """INSERT INTO capacity_radar_observations
+                       (event_id, province_name, city_name, bank_name, loan_type, visit_method,
+                        branch_name, status, observed_at, data_source, confidence, raw_text)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    (event_id, province_name, city_name, bank_name, loan_type, visit_method,
+                     branch_name, status, now, data_source, float(confidence), raw_text),
+                )
+                conn.commit()
+                return c.lastrowid
+        except Exception as e:
+            print(f"Record Radar Observation Error: {e}")
+            return None
+
+    @staticmethod
+    def record_radar_change_event(
+        event_id: str,
+        province_name: str,
+        city_name: str,
+        bank_name: str,
+        old_status: str,
+        new_status: str,
+        loan_type: str = "marriage",
+        visit_method: str = "all",
+        data_source: str = "radar",
+        changed_at: Optional[float] = None,
+    ) -> Optional[int]:
+        """Record state change event triggering notification workflow."""
+        now = float(changed_at or time.time())
+        try:
+            with DBHandler._connect() as conn:
+                c = conn.cursor()
+                c.execute(
+                    """INSERT INTO capacity_change_events
+                       (event_id, province_name, city_name, bank_name, loan_type, visit_method,
+                        old_status, new_status, changed_at, data_source, notified)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)""",
+                    (event_id, province_name, city_name, bank_name, loan_type, visit_method,
+                     old_status, new_status, now, data_source),
+                )
+                conn.commit()
+                return c.lastrowid
+        except Exception as e:
+            print(f"Record Radar Change Event Error: {e}")
+            return None
+
+    @staticmethod
+    def get_radar_states(
+        province_name: Optional[str] = None,
+        city_name: Optional[str] = None,
+        bank_name: Optional[str] = None,
+        status: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
+        """Query current radar states across provinces, cities, and banks."""
+        query = "SELECT * FROM capacity_radar_state WHERE 1=1"
+        params = []
+        if province_name:
+            query += " AND province_name=?"
+            params.append(province_name)
+        if city_name:
+            query += " AND city_name=?"
+            params.append(city_name)
+        if bank_name:
+            query += " AND bank_name=?"
+            params.append(bank_name)
+        if status:
+            query += " AND current_status=?"
+            params.append(status)
+        query += " ORDER BY state_changed_at DESC"
+        try:
+            with DBHandler._connect(row_factory=True) as conn:
+                c = conn.cursor()
+                c.execute(query, tuple(params))
+                return [dict(r) for r in c.fetchall()]
+        except Exception:
+            return []
+
+    @staticmethod
+    def get_recent_radar_events(limit: int = 50) -> List[Dict[str, Any]]:
+        """Fetch latest state change events for dashboard & telegram."""
+        try:
+            with DBHandler._connect(row_factory=True) as conn:
+                c = conn.cursor()
+                c.execute(
+                    "SELECT * FROM capacity_change_events ORDER BY changed_at DESC LIMIT ?",
+                    (int(limit),),
+                )
+                return [dict(r) for r in c.fetchall()]
+        except Exception:
+            return []
+
+    # ── TELEGRAM SUBSCRIBERS & QUEUE OPERATIONS ───────────────────────
+    @staticmethod
+    def save_telegram_subscriber(
+        chat_id: str,
+        username: str = "",
+        full_name: str = "",
+        target_province: str = "",
+        target_city: str = "",
+        favorite_banks: Optional[List[str]] = None,
+        loan_type: str = "all",
+        visit_method: str = "all",
+        instant_alert: int = 1,
+    ) -> bool:
+        """Register or update telegram subscriber preferences."""
+        clean_cid = str(chat_id).strip()
+        now = time.time()
+        fav_json = json.dumps(favorite_banks or [], ensure_ascii=False)
+        try:
+            with DBHandler._connect() as conn:
+                c = conn.cursor()
+                c.execute(
+                    """INSERT INTO telegram_subscribers
+                       (chat_id, username, full_name, target_province, target_city,
+                        favorite_banks_json, loan_type, visit_method, instant_alert, is_active, created_at, updated_at)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)
+                       ON CONFLICT(chat_id) DO UPDATE SET
+                           username=excluded.username,
+                           full_name=excluded.full_name,
+                           target_province=excluded.target_province,
+                           target_city=excluded.target_city,
+                           favorite_banks_json=excluded.favorite_banks_json,
+                           loan_type=excluded.loan_type,
+                           visit_method=excluded.visit_method,
+                           instant_alert=excluded.instant_alert,
+                           is_active=1,
+                           updated_at=excluded.updated_at""",
+                    (clean_cid, username, full_name, target_province, target_city,
+                     fav_json, loan_type, visit_method, int(instant_alert), now, now),
+                )
+                conn.commit()
+                return True
+        except Exception as e:
+            print(f"Save Telegram Subscriber Error: {e}")
+            return False
+
+    @staticmethod
+    def get_telegram_subscribers(active_only: bool = True) -> List[Dict[str, Any]]:
+        """Retrieve list of registered telegram subscribers."""
+        query = "SELECT * FROM telegram_subscribers"
+        if active_only:
+            query += " WHERE is_active=1"
+        query += " ORDER BY updated_at DESC"
+        try:
+            with DBHandler._connect(row_factory=True) as conn:
+                c = conn.cursor()
+                c.execute(query)
+                res = []
+                for r in c.fetchall():
+                    item = dict(r)
+                    try:
+                        item["favorite_banks"] = json.loads(item.get("favorite_banks_json") or "[]")
+                    except Exception:
+                        item["favorite_banks"] = []
+                    res.append(item)
+                return res
+        except Exception:
+            return []
+
+    @staticmethod
+    def enqueue_telegram_message(
+        chat_id: str,
+        message_text: str,
+        message_type: str = "alert",
+        event_id: str = "",
+        scheduled_at: Optional[float] = None,
+    ) -> Optional[int]:
+        """Enqueue outgoing telegram message for reliable background delivery."""
+        now = float(scheduled_at or time.time())
+        try:
+            with DBHandler._connect() as conn:
+                c = conn.cursor()
+                c.execute(
+                    """INSERT INTO telegram_notification_queue
+                       (chat_id, message_text, message_type, event_id, retry_count, max_retries, scheduled_at, status)
+                       VALUES (?, ?, ?, ?, 0, 3, ?, 'pending')""",
+                    (str(chat_id).strip(), message_text, message_type, event_id, now),
+                )
+                conn.commit()
+                return c.lastrowid
+        except Exception as e:
+            print(f"Enqueue Telegram Message Error: {e}")
+            return None
+
+    @staticmethod
+    def fetch_pending_telegram_messages(limit: int = 25) -> List[Dict[str, Any]]:
+        """Fetch pending messages ready for delivery."""
+        now = time.time()
+        try:
+            with DBHandler._connect(row_factory=True) as conn:
+                c = conn.cursor()
+                c.execute(
+                    """SELECT * FROM telegram_notification_queue
+                       WHERE status='pending' AND scheduled_at <= ? AND retry_count < max_retries
+                       ORDER BY scheduled_at ASC LIMIT ?""",
+                    (now, int(limit)),
+                )
+                return [dict(r) for r in c.fetchall()]
+        except Exception:
+            return []
+
+    @staticmethod
+    def mark_telegram_message_sent(msg_id: int):
+        """Mark message as successfully delivered."""
+        now = time.time()
+        try:
+            with DBHandler._connect() as conn:
+                conn.execute(
+                    "UPDATE telegram_notification_queue SET status='sent', sent_at=? WHERE id=?",
+                    (now, int(msg_id)),
+                )
+                conn.commit()
+        except Exception:
+            pass
+
+    @staticmethod
+    def mark_telegram_message_failed(msg_id: int, error_message: str, retry: bool = True):
+        """Mark message delivery failure with exponential backoff."""
+        now = time.time()
+        try:
+            with DBHandler._connect() as conn:
+                c = conn.cursor()
+                c.execute("SELECT retry_count, max_retries FROM telegram_notification_queue WHERE id=?", (int(msg_id),))
+                row = c.fetchone()
+                if not row:
+                    return
+                retries, max_retries = row[0] + 1, row[1]
+                if retry and retries < max_retries:
+                    # Exponential backoff: 5s, 20s, 60s
+                    backoff = min(60.0, 5.0 * (4.0 ** (retries - 1)))
+                    c.execute(
+                        """UPDATE telegram_notification_queue
+                           SET retry_count=?, scheduled_at=?, error_message=?, status='pending'
+                           WHERE id=?""",
+                        (retries, now + backoff, str(error_message)[:250], int(msg_id)),
+                    )
+                else:
+                    c.execute(
+                        """UPDATE telegram_notification_queue
+                           SET retry_count=?, error_message=?, status='failed'
+                           WHERE id=?""",
+                        (retries, str(error_message)[:250], int(msg_id)),
+                    )
+                conn.commit()
+        except Exception:
+            pass
