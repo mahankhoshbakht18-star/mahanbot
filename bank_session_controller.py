@@ -762,39 +762,35 @@ class BankSelectionSessionController:
             self.transition(State.SESSION_EXPIRED, "otp_expired_warm_handover")
             return "reauthenticate"
 
-        elapsed_sec = int(time.time() - otp_entry_time) if otp_entry_time > 0 else 0
-        rem_sec = max(0, int(otp_validity - elapsed_sec))
-        
-        # 5-second polling interval when preferred bank is not available
+        # 5-second interval: If preferred bank is not available, wait 5 seconds then perform a full reload
         poll_interval = float(bot.settings.get("bank_refresh_interval") or 5.0)
-        bot.log(f"⏳ بانک مدنظر در سهمیه فعلی نیست؛ پایش مجدد ظرفیت هر {int(poll_interval)} ثانیه تا پایان مهلت پیامک (اعتبار باقی‌مانده: {rem_sec} ثانیه)...", "info", page)
-        
+        if poll_interval <= 0:
+            poll_interval = 5.0
+
         try:
             page.wait_for_timeout(int(poll_interval * 1000))
         except Exception:
             pass
 
-        # Check if OTP expired during the 5s wait
-        if otp_entry_time > 0 and (time.time() - otp_entry_time) >= otp_validity:
+        # Check if OTP expired during the wait
+        if (otp_entry_time > 0 and (time.time() - otp_entry_time) >= otp_validity) or bot.consume_recovery_flag("otp_expired"):
             bot.log(f"⏱️ مهلت پیامک جاری ({int(otp_validity)} ثانیه) به پایان رسید؛ انتقال به تب تازه (Warm Handover)...", "warning", page)
             self.perform_warm_tab_handover()
             self.transition(State.SESSION_EXPIRED, "otp_expired_warm_handover")
             return "reauthenticate"
 
-        # Disarm logout trap and trigger native CBI server refresh
+        elapsed_sec = int(time.time() - otp_entry_time) if otp_entry_time > 0 else 0
+        rem_sec = max(0, int(otp_validity - elapsed_sec))
+        bot.log(f"🔄 بانک مدنظر در سهمیه نیست؛ ریلود کامل صفحه بعد از {int(poll_interval)} ثانیه و ورود مجدد از مرحله پیامک/کپچا (اعتبار پیامک: {rem_sec} ثانیه)...", "info", page)
+
         step3.disable_logout_trap(page)
-        from bot_select_bank import trigger_bank_capacity_refresh
-        refreshed = trigger_bank_capacity_refresh(bot, page)
-        if not refreshed:
-            owner.bank_page_active = False
-            try:
-                page.reload()
-            except Exception:
-                pass
-            self.transition(State.BANK_OPTIONS_LOADING, "cycled_back_to_otp")
-            return "cycle_otp"
-        
-        return "waiting"
+        owner.bank_page_active = False
+        try:
+            page.reload()
+        except Exception as e:
+            logger.warning(f"Reload failed: {e}")
+        self.transition(State.BANK_OPTIONS_LOADING, "cycled_back_to_otp")
+        return "cycle_otp"
 
     def run(self):
         self.owner.bank_page_active = True
