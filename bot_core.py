@@ -565,12 +565,16 @@ class BotCore:
                             self.log(f"مدل محلی کپچا پس از {max_solve_attempts} تلاش پاسخ معتبری تولید نکرد (کد دریافتی: '{code}')", "warning", page)
                         return False
 
-                # We have a valid code!
+                # We have a valid code - fast high-speed injection with native event dispatch
                 try:
-                    BrowserActions.human_fill(captcha_input, code)
+                    captcha_input.fill(code, timeout=800)
                 except Exception:
                     try:
-                        captcha_input.fill(code, timeout=1500)
+                        captcha_input.evaluate("""(el, val) => {
+                            el.value = val;
+                            el.dispatchEvent(new Event('input', { bubbles: true }));
+                            el.dispatchEvent(new Event('change', { bubbles: true }));
+                        }""", code)
                     except Exception:
                         pass
                 try:
@@ -586,11 +590,6 @@ class BotCore:
 
                 if stop_event is not None and stop_event.is_set():
                     return False
-
-                try:
-                    time.sleep(random.uniform(0.12, 0.35))
-                except Exception:
-                    pass
 
                 submit_button = (
                     page.locator(button_selector).first

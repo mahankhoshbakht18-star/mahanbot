@@ -161,7 +161,15 @@ def _refresh_captcha_image(bot, page):
         _log_fa(bot, "ℹ️ تصویر کپچا هنوز بارگذاری نشده است؛ در حال انتظار برای نمایش تصویر...", "info", page)
         return False
     try:
-        previous = image.screenshot(type="png")
+        old_src = ""
+        try:
+            old_src = image.evaluate("""el => {
+                const img = el.tagName && el.tagName.toLowerCase() === 'img' ? el : el.querySelector('img');
+                return img ? (img.getAttribute('src') || '') : '';
+            }""")
+        except Exception:
+            old_src = ""
+
         clicked = False
         for _, scope in _iter_scopes(page):
             for rsel in CAPTCHA_RELOAD_SELECTORS:
@@ -178,12 +186,20 @@ def _refresh_captcha_image(bot, page):
         if not clicked:
             image.click(timeout=700)
 
-        deadline = time.time() + 2.5
+        # Fast non-blocking synchronization using evaluate (zero screenshot overhead)
+        deadline = time.time() + 2.0
         while time.time() < deadline:
-            page.wait_for_timeout(60)
+            time.sleep(0.04)
             try:
-                current_shot = image.screenshot(type="png")
-                if current_shot and current_shot != previous:
+                cur_src = image.evaluate("""el => {
+                    const img = el.tagName && el.tagName.toLowerCase() === 'img' ? el : el.querySelector('img');
+                    return img ? (img.getAttribute('src') || '') : '';
+                }""")
+                is_loaded = image.evaluate("""el => {
+                    const img = el.tagName && el.tagName.toLowerCase() === 'img' ? el : el.querySelector('img');
+                    return img ? (img.complete && img.naturalWidth > 0) : true;
+                }""")
+                if is_loaded and (not old_src or cur_src != old_src):
                     _log_fa(bot, "🔄 تصویر تازه کپچا دریافت شد.", "info", page)
                     return True
             except Exception:
