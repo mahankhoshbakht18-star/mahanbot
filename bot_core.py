@@ -349,6 +349,10 @@ class BotCore:
         except BrowserLaunchError as exc:
             self.log(f"❌ خطا در راه‌اندازی مرورگر: {exc.message}", "error")
             raise
+        try:
+            context.clear_cookies()
+        except Exception:
+            pass
         self.attach_dialog_handler(page)
         self.navigation_evidence = NavigationEvidence(page)
         context.on("page", self.attach_dialog_handler)
@@ -541,11 +545,21 @@ class BotCore:
 
             if stop_event is not None and stop_event.is_set():
                 return False
-            submit_button = (
-                page.locator(button_selector).first
-                if isinstance(button_selector, str)
-                else button_selector
-            )
+            submit_button = None
+            if isinstance(button_selector, str):
+                for candidate in [c.strip() for c in button_selector.split(",")]:
+                    try:
+                        loc = page.locator(candidate)
+                        if loc.count() > 0 and loc.first.is_visible():
+                            submit_button = loc.first
+                            break
+                    except Exception:
+                        continue
+                if submit_button is None:
+                    submit_button = page.locator(button_selector).first
+            else:
+                submit_button = button_selector
+
             submit_button.click()
             DBHandler.append_captcha_attempt(self.nid, code, "submitted", source=source)
             self.mark_progress("captcha_model_submit")
@@ -672,9 +686,16 @@ class BotCore:
             "با موفقیت ارسال",
         )
         if any(s in msg_clean for s in otp_sent_markers) and not any(k in msg_clean for k in ("منقضی", "نامعتبر", "اشتباه")):
-            return "otp_sent"
+            return "otp_sent"        # 3) CAPTCHA invalid (Checked BEFORE OTP to prevent misclassifying captcha error alerts as expired OTP!)
+        if any(token in msg_clean.lower() for token in ("کد امنیتی", "کپچا", "تصویر امنیتی", "کد تصویر", "captcha")) and any(
+            token in msg_clean.lower() for token in (
+                "اشتباه", "نادرست", "نامعتبر", "نا معتبر", "صحیح نیست", "صحیح نمی",
+                "incorrect", "invalid", "wrong",
+            )
+        ):
+            return "captcha_invalid"
 
-        # 3) OTP expired / invalid (only when explicit error keywords are present)
+        # 4) OTP expired / invalid (strictly genuine OTP error messages)
         otp_phrases = (
             "کد تایید تلفن همراه",
             "کد تأیید تلفن همراه",
@@ -682,21 +703,12 @@ class BotCore:
             "کد تأیید",
             "کد پیامکی",
             "کد تایید پیامک",
+            "رمز یکبار مصرف",
+            "تلفن همراه",
         )
         otp_keywords = ("منقضی", "نامعتبر", "نا معتبر", "اشتباه", "صحیح نمی باشد", "صحیح نمی‌باشد", "پایان یافته", "اعتبار ندارد")
-        if any(k in msg_clean for k in otp_keywords) and (
-            any(p in msg_clean for p in otp_phrases) or "کد" in msg_clean
-        ) and "ظرفیت" not in msg_clean and "امنیتی" not in msg_clean:
+        if any(k in msg_clean for k in otp_keywords) and any(p in msg_clean for p in otp_phrases) and "ظرفیت" not in msg_clean and "امنیتی" not in msg_clean and "تصویر" not in msg_clean:
             return "otp_expired"
-
-        # 4) CAPTCHA invalid
-        if any(token in msg_clean.lower() for token in ("کد امنیتی", "کپچا", "captcha")) and any(
-            token in msg_clean.lower() for token in (
-                "اشتباه", "نادرست", "نامعتبر", "نا معتبر", "صحیح نیست", "صحیح نمی",
-                "incorrect", "invalid", "wrong",
-            )
-        ):
-            return "captcha_invalid"
 
         # 5) Session expired (strictly genuine session expiration only, never generic timing or capacity alerts)
         session_markers = (

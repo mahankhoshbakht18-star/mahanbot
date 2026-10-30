@@ -559,10 +559,16 @@ def detect_captcha_failure(page) -> bool:
         "کد امنیتی صحیح",
         "کد امنیتی نادرست",
         "کد امنیتی وارد شده نامعتبر",
+        "کد امنیتی نامعتبر",
+        "کد تصویر نامعتبر",
+        "کد تصویر اشتباه",
+        "تصویر امنیتی",
+        "عبارت امنیتی",
         "security code",
         "captcha incorrect",
         "invalid captcha",
         "کپچا نامعتبر",
+        "کپچا اشتباه",
     ]
     try:
         content = page.content()
@@ -756,7 +762,7 @@ def solve_captcha_wrapper(bot, page, input_sel, btn_sel, mode):
 
 def solve_captcha_step(bot, page, input_sel: str, btn_sel: str, source: str = "general") -> bool:
     stop_event = getattr(bot, "_active_stop_event", None)
-    if stop_event is None or stop_event.is_set():
+    if stop_event is not None and stop_event.is_set():
         return False
 
     img_loc, _ = wait_for_captcha_image_ready(page, timeout_ms=3500, trigger_refresh_if_missing=True)

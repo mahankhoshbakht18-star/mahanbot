@@ -498,8 +498,15 @@ class BankSelectionBot(BotCore):
                         from bank_session_controller import BankSelectionSessionController
                         result = BankSelectionSessionController(self, self.live_owner).run()
                         if result == "reauthenticate":
-                            self.log("🔄 نیاز به ورود مجدد و اخذ پیامک تازه؛ بازگشت مستقیم به فرم مرحله ۱...", "warning", page)
-                            DBHandler.update_status(self.nid, "در حال ورود مجدد", "انقضای نشست یا پایش چرخشی؛ ورود مجدد از مرحله ۱")
+                            self.log("🔄 نیاز به ورود مجدد و اخذ پیامک تازه؛ پاکسازی سشن و بازگشت به فرم مرحله ۱...", "warning", page)
+                            self.clear_otp_locks()
+                            self.clear_otp_backend()
+                            self._last_retained_otp = None
+                            try:
+                                page.context.clear_cookies()
+                            except Exception:
+                                pass
+                            DBHandler.update_status(self.nid, "در حال ورود مجدد", "انقضای پیامک؛ ورود مجدد از مرحله ۱")
                             self._safe_goto_guarded(
                                 page,
                                 adapter.entry_url,
@@ -562,6 +569,11 @@ class BankSelectionBot(BotCore):
                     if self.consume_recovery_flag("session_expired"):
                         self.clear_otp_locks()
                         self.clear_otp_backend()
+                        self._last_retained_otp = None
+                        try:
+                            page.context.clear_cookies()
+                        except Exception:
+                            pass
                         otp_attempted = False
                         DBHandler.update_status(self.nid, "نیازمند ورود مجدد", "نشست منقضی شد؛ بازگشت به مرحله تایید هویت")
                         self.save_checkpoint(
@@ -592,6 +604,11 @@ class BankSelectionBot(BotCore):
                         self.clear_otp_locks()
                         self.clear_otp_backend()
                         self.clear_remote_otp()
+                        self._last_retained_otp = None
+                        try:
+                            page.context.clear_cookies()
+                        except Exception:
+                            pass
                         self._last_dialog_action = None
                         if hasattr(self, "_consumed_otp_digests"):
                             self._consumed_otp_digests.clear()
@@ -1056,8 +1073,16 @@ class BankSelectionBot(BotCore):
         Waits for the CAPTCHA image to appear and finish loading (`naturalWidth > 0`) before passing to the model.
         """
         from bot_select_captcha import wait_for_captcha_image_ready, wait_for_manual_captcha_handoff
-        input_sel = "input[name$='tbCaptcha1']"
-        btn_sel = "input[name$='btnSendConfirmCode']"
+        input_sel = "#ctl00_ContentPlaceHolder1_tbCaptcha1, input[name$='tbCaptcha1'], input[name*='tbCaptcha']"
+        btn_sel = (
+            "#ctl00_ContentPlaceHolder1_btnSendConfirmCode, "
+            "#ctl00_ContentPlaceHolder1_btnContinue, "
+            "#ctl00_ContentPlaceHolder1_btnCheck, "
+            "input[name$='btnSendConfirmCode'], "
+            "input[name$='btnContinue'], "
+            "input[name$='btnCheck'], "
+            "input[type='submit']"
+        )
         max_attempts = max(1, int(self.settings.get("captcha_max_retries", 8)))
         attempts = 0
 

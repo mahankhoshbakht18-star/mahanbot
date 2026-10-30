@@ -46,9 +46,15 @@ class CaptchaService:
         target = captcha_element
         try:
             if hasattr(captcha_element, "locator"):
-                img_loc = captcha_element.locator("img").first
-                if img_loc.count() > 0 and img_loc.is_visible():
-                    target = img_loc
+                is_img = False
+                try:
+                    is_img = str(captcha_element.evaluate("el => el.tagName") or "").lower() == "img"
+                except Exception:
+                    pass
+                if not is_img:
+                    img_loc = captcha_element.locator("img").first
+                    if img_loc.count() > 0 and img_loc.is_visible():
+                        target = img_loc
         except Exception:
             pass
 

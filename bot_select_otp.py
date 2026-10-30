@@ -291,16 +291,39 @@ def _inject_otp_code(bot, page, otp_locator, code: str):
         return False
 
 
-def _detect_failure_type(page) -> str:
-    """تشخیص نوع خطا: کپچا یا OTP"""
+def _detect_failure_type(page, bot=None):
+    """
+    تشخیص دقیق نوع خطا: کپچا یا OTP.
+    به هیچ عنوان خطای کپچا نباید اشتباهاً انقضای OTP تشخیص داده شود!
+    """
     try:
+        dialog_act = getattr(bot, "_last_dialog_action", None) if bot else None
+        dialog_msg = (getattr(bot, "_last_dialog_message", "") or "").lower() if bot else ""
+        if dialog_act == "captcha_invalid" or any(w in dialog_msg for w in ("کد امنیتی", "کپچا", "تصویر امنیتی", "کد تصویر")):
+            return "captcha"
+
         body = (page.inner_text("body") or "").lower()
+
+        # 1. First, check if CAPTCHA failed
         if detect_captcha_failure(page):
             return "captcha"
-        if ("کد تایید" in body or "کد تأیید" in body) and ("نامعتبر" in body or "منقضی" in body or "اشتباه" in body):
+
+        # Expanded check for captcha error text in DOM / alerts / labels
+        captcha_keywords = ("کد امنیتی", "کپچا", "تصویر امنیتی", "کد تصویر", "عبارت امنیتی", "security code", "captcha")
+        failure_keywords = ("اشتباه", "نادرست", "نامعتبر", "نا معتبر", "صحیح نیست", "صحیح نمی", "مطابقت ندارد", "incorrect", "invalid")
+        for ck in captcha_keywords:
+            if ck in body:
+                for fk in failure_keywords:
+                    if fk in body:
+                        return "captcha"
+
+        # 2. Check for OTP / SMS failure ONLY with explicit OTP terms
+        otp_terms = ("کد تایید", "کد تأیید", "کد پیامک", "رمز یکبار مصرف", "پیامک تایید", "mobileconfcode", "تلفن همراه")
+        if any(ot in body for ot in otp_terms) and any(fk in body for fk in ("نامعتبر", "منقضی", "اشتباه", "صحیح نمی‌باشد", "صحیح نمی باشد")):
             return "otp_expired"
-        if "نامعتبر" in body or "منقضی" in body:
+        if dialog_act == "otp_expired" or (any(ot in dialog_msg for ot in otp_terms) and any(fk in dialog_msg for fk in ("نامعتبر", "منقضی"))):
             return "otp_expired"
+
         return None
     except Exception:
         return None
@@ -347,7 +370,7 @@ def _post_submit_watch(bot, page, stop_event, sleep_with_stop_fn, last_code: str
             _log_fa(bot, "↩️ بازگشت به فرم ورود تشخیص داده شد.", "warning", page)
             return "stopped", None, None
 
-        fail_type = _detect_failure_type(page)
+        fail_type = _detect_failure_type(page, bot=bot)
         if fail_type in ("otp", "otp_expired") or getattr(bot, "_last_dialog_action", None) == "otp_expired" or getattr(bot, "_recovery_flags", {}).get("otp_expired"):
             rejected = getattr(bot, "_consumed_otp_digests", set())
             rejected.add(hashlib.sha256(str(last_code).encode()).hexdigest())
@@ -632,22 +655,42 @@ def fast_otp_sync_and_inject(bot, page, stop_event, sleep_with_stop_fn):
 def detect_otp_failure(bot, page) -> bool:
     try:
         body = (page.inner_text("body") or "").lower()
-        if "ظرفیت" in body:
+        if "ظرفیت" in body or "امنیتی" in body or "کپچا" in body:
             return False
-        return any(x in body for x in ["کد تایید نامعتبر", "کد تأیید نامعتبر", "منقضی", "کد وارد شده اشتباه"])
+        otp_markers = ["کد تایید", "کد تأیید", "کد پیامک", "رمز یکبار مصرف", "تلفن همراه"]
+        err_markers = ["نامعتبر", "منقضی", "اشتباه", "صحیح نمی‌باشد", "صحیح نمی باشد"]
+        return any(om in body for om in otp_markers) and any(em in body for em in err_markers)
     except Exception:
         return False
 
 
 def handle_otp_dialog(bot, dialog):
     msg = dialog.message() if callable(getattr(dialog, "message", None)) else getattr(dialog, "message", "")
-    if msg and any(x in msg for x in ["نامعتبر", "منقضی"]) and "ظرفیت" not in msg:
-        _log_fa(bot, f"🚨 هشدار دیالوگ OTP: {msg}؛ ثبت انقضا و بازگشت خودکار به مرحله ۱", "error")
+    if not msg:
+        dialog.accept()
+        return False
+    msg_clean = (msg or "").strip()
+    if any(k in msg_clean for k in ("کد امنیتی", "کپچا", "تصویر امنیتی", "کد تصویر", "عبارت امنیتی")) and any(
+        f in msg_clean for f in ("اشتباه", "نادرست", "نامعتبر", "نا معتبر", "صحیح نیست", "صحیح نمی", "incorrect", "invalid")
+    ):
+        _log_fa(bot, f"⚠️ هشدار دیالوگ: کپچا نادرست است ({msg_clean})؛ تصویر تازه دریافت و مجددا حل می‌شود.", "warning")
+        bot._last_dialog_action = "captcha_invalid"
+        bot._last_dialog_message = msg_clean
+        bot._set_recovery_flag("captcha_invalid")
+        dialog.accept()
+        return True
+
+    if any(ot in msg_clean for ot in ("کد تایید", "کد تأیید", "کد پیامک", "رمز یکبار مصرف", "تلفن همراه")) and any(
+        f in msg_clean for f in ("منقضی", "نامعتبر", "نا معتبر", "اشتباه")
+    ) and "امنیتی" not in msg_clean and "کپچا" not in msg_clean:
+        _log_fa(bot, f"🚨 هشدار دیالوگ OTP: {msg_clean}؛ ثبت انقضا و بازگشت خودکار به مرحله ۱", "error")
         bot._last_dialog_action = "otp_expired"
-        bot._last_dialog_message = msg
+        bot._last_dialog_message = msg_clean
         bot._set_recovery_flag("otp_expired")
         dialog.accept()
         return True
+
+    dialog.accept()
     return False
 
 

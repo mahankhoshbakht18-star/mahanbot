@@ -26,15 +26,23 @@ def fresh_record(bot, record, now=None):
     request_id = record.get("request_id")
     if request_id and request_id != getattr(bot, "_otp_request_id", None):
         return None
+    issued = float(getattr(bot, "_otp_entry_time", 0) or 0)
+    ttl = float(bot.settings.get("otp_validity_seconds", 120))
     if record.get("status") == "consumed":
-        return None
+        if code and code == getattr(bot, "_last_retained_otp", None) and issued > 0 and (now - issued < ttl):
+            pass
+        else:
+            return None
     is_manual = record.get("status") == "manual" or record.get("source") == "manual"
     operation = getattr(bot, "OTP_TYPE", "REGISTRATION_OTP")
     if not is_manual and record.get("otp_type", "REGISTRATION_OTP") != operation:
         return None
     digest = hashlib.sha256(code.encode()).hexdigest()
     if not is_manual and digest in getattr(bot, "_consumed_otp_digests", set()):
-        return None
+        if code and code == getattr(bot, "_last_retained_otp", None) and issued > 0 and (now - issued < ttl):
+            pass
+        else:
+            return None
     issued = float(getattr(bot, "_otp_entry_time", 0) or 0)
     ttl = float(bot.settings.get("otp_validity_seconds", 120))
     if not code.isascii() or not code.isdigit() or not 4 <= len(code) <= 8:

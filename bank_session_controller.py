@@ -757,12 +757,13 @@ class BankSelectionSessionController:
 
         otp_expired = (otp_entry_time > 0 and (time.time() - otp_entry_time) >= otp_validity) or bot.consume_recovery_flag("otp_expired")
         if otp_expired:
-            bot.log(f"⏱️ مهلت پیامک جاری ({int(otp_validity)} ثانیه) به پایان رسید؛ انتقال به تب تازه (Warm Handover)...", "warning", page)
-            self.perform_warm_tab_handover()
-            self.transition(State.SESSION_EXPIRED, "otp_expired_warm_handover")
+            bot.log(f"⏱️ مهلت پیامک جاری ({int(otp_validity)} ثانیه) به پایان رسید؛ خروج و بازگشت به مرحله ۱ جهت اخذ پیامک تازه...", "warning", page)
+            bot._last_retained_otp = None
+            owner.bank_page_active = False
+            self.transition(State.SESSION_EXPIRED, "otp_expired_refresh")
             return "reauthenticate"
 
-        # 5-second interval: If preferred bank is not available, wait 5 seconds then perform a full reload
+        # 5-second interval: If preferred bank is not available, wait configured seconds then perform a full reload
         poll_interval = float(bot.settings.get("bank_refresh_interval") or 5.0)
         if poll_interval <= 0:
             poll_interval = 5.0
@@ -774,9 +775,10 @@ class BankSelectionSessionController:
 
         # Check if OTP expired during the wait
         if (otp_entry_time > 0 and (time.time() - otp_entry_time) >= otp_validity) or bot.consume_recovery_flag("otp_expired"):
-            bot.log(f"⏱️ مهلت پیامک جاری ({int(otp_validity)} ثانیه) به پایان رسید؛ انتقال به تب تازه (Warm Handover)...", "warning", page)
-            self.perform_warm_tab_handover()
-            self.transition(State.SESSION_EXPIRED, "otp_expired_warm_handover")
+            bot.log(f"⏱️ مهلت پیامک جاری ({int(otp_validity)} ثانیه) به پایان رسید؛ خروج و بازگشت به مرحله ۱ جهت اخذ پیامک تازه...", "warning", page)
+            bot._last_retained_otp = None
+            owner.bank_page_active = False
+            self.transition(State.SESSION_EXPIRED, "otp_expired_refresh")
             return "reauthenticate"
 
         elapsed_sec = int(time.time() - otp_entry_time) if otp_entry_time > 0 else 0
