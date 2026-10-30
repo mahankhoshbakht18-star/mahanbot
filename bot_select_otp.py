@@ -102,7 +102,22 @@ def _locate_otp_captcha_controls(page, wait_ms: int = 3500):
         "button:has-text('ادامه')",
     ]
 
-    image, _ = wait_for_captcha_image_ready(page, timeout_ms=wait_ms, trigger_refresh_if_missing=True)
+    # Prioritize dedicated Step 2 captcha image if present
+    image = None
+    for _, scope in _iter_scopes(page):
+        for sel in ("img[id*='tbCaptcha2' i]", "img[id*='tbcaptcha2' i]"):
+            try:
+                loc = scope.locator(sel)
+                if loc.count() > 0 and loc.first.is_visible():
+                    image = loc.first
+                    break
+            except Exception:
+                continue
+        if image:
+            break
+
+    if not image:
+        image, _ = wait_for_captcha_image_ready(page, timeout_ms=wait_ms, trigger_refresh_if_missing=True)
     captcha_input, submit_btn = None, None
 
     if not image:

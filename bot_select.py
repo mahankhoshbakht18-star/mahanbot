@@ -1076,6 +1076,9 @@ class BankSelectionBot(BotCore):
                 if not self.solve_captcha_with_model(
                     page, input_sel, btn_sel, stop_event=stop_event, source="primary", captcha_element=captcha_img
                 ):
+                    if attempts < max_attempts:
+                        self._refresh_captcha_or_reload(page, input_sel=input_sel, allow_reload=False)
+                        continue
                     break
             except Exception:
                 break
@@ -1086,7 +1089,7 @@ class BankSelectionBot(BotCore):
             # Check if page transitioned to OTP (Step 2) or Bank Selection (Step 3)
             transitioned = False
             captcha_rejected = False
-            for _ in range(15):  # poll every 200ms up to 3.0s
+            for _ in range(25):  # poll every 200ms up to 5.0s
                 if stop_event.is_set():
                     return False
                 if self._otp_input_visible(page) or self.detect_actual_page_stage(page) in {"STEP_2_OTP", "STEP_3_BANK_SELECT"}:

@@ -544,9 +544,11 @@ class ModelCaptchaSolver:
             self.last_error = str(exc)
             model = None
 
+        best_crnn_prediction = None
+        best_crnn_confidence = -1.0
+
         modes = ["invert", "invert_contrast", "raw", "contrast", "binarize"] if use_enhanced else ["invert", "raw"]
         for index, mode in enumerate(modes if model is not None else [None]):
-            prediction = None
             if model is not None:
                 try:
                     tensor = self.preprocess(image_bytes, enhance=mode)
@@ -555,14 +557,17 @@ class ModelCaptchaSolver:
                         raw, confidence = self.decode(logits)
                     candidate = "".join(char for char in raw.upper() if char in CHARS)
                     if validate_captcha_prediction(candidate, 4, 8):
-                        prediction = candidate
                         if confidence >= min_confidence:
                             self.last_error = None
-                            return prediction
+                            return candidate
+                        if confidence > best_crnn_confidence:
+                            best_crnn_confidence = confidence
+                            best_crnn_prediction = candidate
                 except Exception as exc:
                     self.last_error = str(exc)
 
-            if index == 0 and self._ddddocr is not None:
+            # Check ddddocr fallback right after the primary mode if confidence was below threshold
+            if index == 0 and self._ddddocr is not None and image_bytes:
                 try:
                     with self._lock:
                         raw = str(self._ddddocr.classification(image_bytes) or "").strip().upper()
@@ -573,9 +578,11 @@ class ModelCaptchaSolver:
                 except Exception as exc:
                     self.last_error = str(exc)
 
-            if prediction is not None:
-                self.last_error = None
-                return prediction
+        # Fallback to best CRNN prediction if valid
+        if best_crnn_prediction is not None:
+            self.last_error = None
+            return best_crnn_prediction
+
         return None
 
 

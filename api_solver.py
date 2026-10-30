@@ -28,7 +28,23 @@ class CaptchaService:
         if image_source is None:
             return None
         try:
-            return self.solver.solve(image_source)
+            res = self.solver.solve(image_source)
+            if res:
+                return res
+            # Direct dual-engine fallback if solver produced no valid code
+            if hasattr(self.solver, "_ddddocr") and self.solver._ddddocr is not None:
+                img_bytes = None
+                if isinstance(image_source, (bytes, bytearray, memoryview)):
+                    img_bytes = bytes(image_source)
+                elif isinstance(image_source, (str, os.PathLike)) and os.path.exists(image_source):
+                    with open(image_source, "rb") as f:
+                        img_bytes = f.read()
+                if img_bytes:
+                    raw_ocr = str(self.solver._ddddocr.classification(img_bytes) or "").strip().upper()
+                    clean = "".join(c for c in raw_ocr if c in "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ")
+                    if 4 <= len(clean) <= 8:
+                        return clean
+            return res
         except Exception as exc:
             if hasattr(self.solver, "last_error"):
                 self.solver.last_error = str(exc)

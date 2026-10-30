@@ -521,13 +521,30 @@ class BotCore:
                 return False
             if stop_event is not None and stop_event.is_set():
                 return False
-            # A user may have started typing while inference was running.
-            if (captcha_input.input_value() or "").strip():
+
+            # Check if user is actively typing directly into the input
+            is_active_typing = False
+            try:
+                is_active_typing = captcha_input.evaluate("el => el === el.ownerDocument.activeElement") and bool((captcha_input.input_value() or "").strip())
+            except Exception:
+                pass
+            if is_active_typing:
                 self.log("ورودی کپچای کاربر حفظ شد؛ حل خودکار متوقف شد.", "info", page)
                 return False
+
+            self.log(f"🤖 کپچا با موفقیت توسط مدل حل شد: [{code}]", "info", page)
+            try:
+                captcha_input.fill("")
+            except Exception:
+                pass
             captcha_input.fill(code, timeout=800)
             captcha_input.dispatch_event("input")
             captcha_input.dispatch_event("change")
+            if (captcha_input.input_value() or "").strip().upper() != code:
+                try:
+                    captcha_input.evaluate("(el, val) => { el.value = val; el.dispatchEvent(new Event('input', {bubbles: true})); el.dispatchEvent(new Event('change', {bubbles: true})); }", code)
+                except Exception:
+                    pass
             if (captcha_input.input_value() or "").strip().upper() != code:
                 return False
             if stop_event is not None and stop_event.is_set():
