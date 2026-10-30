@@ -684,17 +684,8 @@ def wait_for_captcha_image_ready(page, timeout_ms: int = 5000, trigger_refresh_i
                         cand = loc.nth(idx)
                         if cand.is_visible():
                             try:
-                                # Verify image has finished loading in browser and has non-zero natural dimensions
-                                is_loaded = cand.evaluate("""el => {
-                                    if (el.tagName && el.tagName.toLowerCase() === 'img') {
-                                        return el.complete && el.naturalWidth > 0;
-                                    }
-                                    const img = el.querySelector('img');
-                                    if (img) return img.complete && img.naturalWidth > 0;
-                                    return true;
-                                }""")
                                 box = cand.bounding_box()
-                                if is_loaded and box and box.get("width", 0) >= 20 and box.get("height", 0) >= 10:
+                                if box and box.get("width", 0) >= 20 and box.get("height", 0) >= 10:
                                     return cand, scope
                             except Exception:
                                 return cand, scope
