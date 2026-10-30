@@ -677,7 +677,15 @@ class BotCore:
         ):
             return "bank_capacity_full"
 
-        # 2) OTP Sent / Info (announcements that code was sent to phone - must NOT be treated as expired)
+        # 2) SMS rate limit / cooldown (CBI throttles SMS resending to once every 2 minutes)
+        if any(w in msg_clean for w in (
+            "امکان ارسال کد تایید تا دو دقیقه وجود ندارد",
+            "امکان ارسال مجدد کد تا دو دقیقه وجود ندارد",
+            "تا دو دقیقه وجود ندارد",
+        )) or (("ارسال" in msg_clean or "کد تایید" in msg_clean) and ("دو دقیقه" in msg_clean or "۲ دقیقه" in msg_clean)):
+            return "sms_cooldown"
+
+        # 2.5) OTP Sent / Info (announcements that code was sent to phone - must NOT be treated as expired)
         otp_sent_markers = (
             "ارسال شد",
             "ارسال گردید",
@@ -858,6 +866,10 @@ class BotCore:
                         level="warning",
                         page=page,
                     )
+                elif action == "sms_cooldown":
+                    self._sms_cooldown_until = time.time() + 120.0
+                    DBHandler.update_status(self.nid, "انتظار سهمیه پیامک", "محدودیت ۲ دقیقه‌ای ارسال پیامک بانک مرکزی؛ در حال شکیبایی...")
+                    self.log("⏳ سامانه اعلام کرد امکان ارسال مجدد پیامک تا ۲ دقیقه وجود ندارد؛ بات برای حفظ سهمیه شکیبایی می‌کند...", "warning", page)
                 elif action == "captcha_invalid":
                     self._captcha_retry += 1
                     self._set_recovery_flag("captcha_invalid")

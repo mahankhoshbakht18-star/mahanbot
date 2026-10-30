@@ -7,6 +7,7 @@ from event_logger import emit_structured_event
 from browser_actions import BrowserActions
 from bot_select_captcha import (
     CAPTCHA_IMAGE_SELECTORS,
+    CAPTCHA_RELOAD_SELECTORS,
     refresh_captcha_or_reload,
     detect_captcha_failure,
     wait_for_captcha_image_ready,

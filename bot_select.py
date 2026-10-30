@@ -434,8 +434,6 @@ class BankSelectionBot(BotCore):
                 elif actual_detected == "STEP_1_ENTRY_FORM":
                     self.log("📋 فرم ورود اطلاعات متقاضی شناسایی شد.", "info", page)
                     set_state("ENTRY_FORM")
-                    self.log("⚡ نشست مرورگر معتبر است! صفحه انتخاب بانک (SelectBnkShb.aspx) مستقیماً باز شد و بدون اتلاف وقت آماده پایش است.", "success", page)
-                    set_state("BANK_SELECT")
                 else:
                     resumed_stage = self._restore_from_checkpoint_if_available(page)
                     if resumed_stage == "DONE":
@@ -492,6 +490,18 @@ class BankSelectionBot(BotCore):
                         self.set_runtime_state("RETRYING", "OPEN_BROWSER", browser_status="CLOSED", last_error="browser_closed")
                         self.log("مرورگر بسته/متوقف شد؛ بازکردن فوری مرورگر جدید...", "warning")
                         break
+
+                    # Guard against blank/unloaded browser page (e.g. initial about:blank)
+                    cur_page_url = str(getattr(page, "url", "") or "").strip().lower()
+                    if not cur_page_url or cur_page_url in ("about:blank", "chrome://newtab/"):
+                        self._safe_goto_guarded(
+                            page,
+                            adapter.target_select_url,
+                            timeout=int(self.settings.get("navigation_timeout_ms", 35000)),
+                            wait_until="domcontentloaded",
+                            log_callback=self.log,
+                        )
+                        continue
 
                     # Transfer ownership before recovery can consume stale OTP/session flags.
                     if self.detect_actual_page_stage(page) == "STEP_3_BANK_SELECT":
@@ -1025,6 +1035,17 @@ class BankSelectionBot(BotCore):
             return False
 
     def _safe_goto_guarded(self, page, url, **kwargs):
+        if not page or getattr(page, "is_closed", lambda: False)():
+            return False
+
+        page_url = str(getattr(page, "url", "") or "").strip().lower()
+        if not page_url or page_url in ("about:blank", "chrome://newtab/"):
+            self._safe_goto_locked = False
+            self._otp_wait_lock = False
+            self._otp_guard_until = 0.0
+            safe_goto(page, url, **kwargs)
+            return True
+
         actual_stage = self.detect_actual_page_stage(page)
         if actual_stage == "STEP_3_BANK_SELECT":
             self.clear_otp_locks()
@@ -1090,6 +1111,14 @@ class BankSelectionBot(BotCore):
             attempts += 1
             if self._firewall_gate(page, stop_event):
                 return False
+
+            # Check CBI 2-minute SMS cooldown
+            sms_cooldown = float(getattr(self, "_sms_cooldown_until", 0.0) or 0.0)
+            if time.time() < sms_cooldown:
+                wait_rem = int(sms_cooldown - time.time()) + 2
+                self.log(f"⏳ محدودیت ۲ دقیقه‌ای ارسال پیامک بانک مرکزی ({wait_rem} ثانیه باقی‌مانده)؛ انتظار تا پایان مهلت...", "info", page)
+                if sleep_with_stop(stop_event, wait_rem, step=1.0):
+                    return False
 
             captcha_img, _ = wait_for_captcha_image_ready(page, timeout_ms=4500, trigger_refresh_if_missing=True)
             if captcha_img is None:
