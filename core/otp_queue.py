@@ -110,7 +110,7 @@ class OTPQueueManager:
                 ttl=configured_ttl,
             )
         )
-        logger.info("Created OTP request %s for %s (phone: %s, TTL: %ds)", req_id, nid, phone, configured_ttl)
+        logger.info("Created OTP request %s (TTL: %ds)", req_id, configured_ttl)
         return {
             "otp_request_id": req_id,
             "applicant_id": nid,
@@ -274,14 +274,13 @@ class OTPQueueManager:
 
         # Sync with legacy DBHandler & runtime for existing bots
         DBHandler.set_otp(nid, clean_code, ts=now, status="received", request_id=req_id)
-        DBHandler.update_runtime(nid, otp_state="SMS_RECEIVED", last_otp_code=clean_code)
+        DBHandler.update_runtime(nid, otp_state="SMS_RECEIVED")
 
         # Notify waiting threads
-        from routes.otp import _signal_otp_event, _emit_applicants_snapshot
+        from routes.otp import _notify_otp_waiter, _emit_applicants_snapshot
         import core.state as _state
         import asyncio
-        if _state.MAIN_LOOP:
-            _state.MAIN_LOOP.call_soon_threadsafe(lambda: asyncio.create_task(_signal_otp_event(nid)))
+        _notify_otp_waiter(nid)
 
         # Emit live event
         EVENT_BROADCASTER.emit_event(
@@ -295,7 +294,7 @@ class OTPQueueManager:
             )
         )
         _emit_applicants_snapshot()
-        logger.info("OTP code delivered to applicant %s (request %s, source: %s)", nid, req_id, source)
+        logger.info("OTP delivered (request %s, source: %s)", req_id, source)
         return True, {
             "status": "ok",
             "applicant_id": nid,

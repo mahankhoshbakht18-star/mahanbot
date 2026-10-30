@@ -11,6 +11,7 @@ class BrowserSessionOwner:
     applicant_id: str
     cancellation_token: threading.Event
     session_id: str = field(default_factory=lambda: uuid.uuid4().hex)
+    context_id: str = ''
     thread_id: int = field(default_factory=threading.get_ident)
     context: object = None
     page: object = None
@@ -30,19 +31,26 @@ class BrowserSessionOwner:
 
     def bind(self, context, page):
         self.assert_owner()
+        if context is not self.context:
+            self.context_id = uuid.uuid4().hex
         self.context, self.page = context, page
+        def on_close():
+            if self.page is page:
+                self.bank_page_active = False
+                self.validated_at = 0
+        page.on('close', on_close)
 
     def summary(self):
         # Safely detect if page or context is closed without blocking
         is_live = self.alive and not self.cancellation_token.is_set()
         try:
-            if self.page is not None and getattr(self.page, "is_closed", lambda: False)():
+            if threading.get_ident() == self.thread_id and self.page is not None and self.page.is_closed():
                 is_live = False
                 self.alive = False
                 self.bank_page_active = False
         except Exception:
             pass
-        return {"session_id": self.session_id, "state": self.current_state,
+        return {"session_id": self.session_id, "browser_context_id": self.context_id, "state": self.current_state,
                 "live": is_live,
                 "bank_page_active": self.bank_page_active and is_live, "paused": self.paused,
                 "validated_at": self.validated_at,

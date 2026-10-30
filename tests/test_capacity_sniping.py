@@ -83,7 +83,7 @@ class CapacitySnipingTests(repair.RepairTestCase):
         self.page.locator('#ctl00_ContentPlaceHolder1_labErrMsg').evaluate('(el,text)=>el.textContent=text', FULL)
         self.prepare_and_attempt()
         self.assertEqual(self.page.evaluate('fixtureEvents.submits'), 1)
-        self.assertNotEqual(DBHandler.get_checkpoint(self.nid).get('final_submit_status'), 'pending')
+        self.assertEqual(DBHandler.get_checkpoint(self.nid).get('final_submit_status'), 'pending')
         self.assertTrue(self.controller._awaiting_result)
         self.clock += 30
         for _ in range(3):
@@ -182,7 +182,7 @@ class CapacitySnipingTests(repair.RepairTestCase):
             };
         }''', FULL)
         self.prepare_and_attempt()
-        self.assertNotEqual(DBHandler.get_checkpoint(self.nid).get('final_submit_status'), 'pending')
+        self.assertEqual(DBHandler.get_checkpoint(self.nid).get('final_submit_status'), 'pending')
         self.assertTrue(self.controller._awaiting_result)
         self.clock += 5
         self.controller.tick(force=True)
@@ -233,7 +233,7 @@ class CapacitySnipingTests(repair.RepairTestCase):
         controller2.tick(force=True)
         self.assertEqual(self.page.evaluate('fixtureEvents.submits'), 1)
         self.assertEqual(page2.evaluate('fixtureEvents.submits'), 2)
-        self.assertNotEqual(DBHandler.get_checkpoint(self.nid).get('final_submit_status'), 'pending')
+        self.assertEqual(DBHandler.get_checkpoint(self.nid).get('final_submit_status'), 'pending')
         self.assertTrue(self.controller._awaiting_result)
         self.assertFalse(DBHandler.get_checkpoint(nid2).get('final_submit_status'))
 

@@ -941,8 +941,6 @@ def _extract_confirmed_submission(bot, page) -> Optional[str]:
                 match = re.search(r"(\d{6,20})", txt)
                 if match:
                     return match.group(1)
-                if txt:
-                    return txt
         except Exception:
             continue
     try:
@@ -954,8 +952,6 @@ def _extract_confirmed_submission(bot, page) -> Optional[str]:
             m = re.search(pat, body)
             if m:
                 return m.group(1)
-        if "با موفقیت ثبت گردید" in body or "انتخاب بانک شما با موفقیت" in body or "درخواست شما با موفقیت ثبت شد" in body:
-            return "CONFIRMED"
     except Exception:
         pass
     return None

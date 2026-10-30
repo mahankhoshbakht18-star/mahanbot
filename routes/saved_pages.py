@@ -452,8 +452,6 @@ async def resume_applicant_checkpoint(nid: str, _: bool = Depends(require_api_ke
         raise HTTPException(status_code=409, detail="نشست زنده موجود نیست؛ ورود مجدد و بازیابی تنظیمات لازم است.")
     if owner.current_state in {BankPageState.SESSION_EXPIRED, BankPageState.REGISTRATION_CONFIRMED}:
         raise HTTPException(status_code=409, detail="نشست نیازمند ورود مجدد است یا درخواست قبلاً ثبت شده است.")
-    if not owner.bank_page_active:
-        raise HTTPException(status_code=409, detail="هنوز نشست زنده صفحه انتخاب بانک فعال نشده است")
     owner.commands.put("resume")
     return {"status": "ok", "session_id": owner.session_id, "validation_pending": True,
             "message": "بررسی DOM و ادامه در همان نشست به مالک مرورگر سپرده شد."}
@@ -476,14 +474,6 @@ def reauthenticate_applicant(nid: str, _: bool = Depends(require_api_key)):
         raise HTTPException(status_code=409, detail="درخواست یا رزرو قبلاً تأیید شده است")
     cp = DBHandler.get_checkpoint(nid)
     final_status = cp.get("final_submit_status")
-    if final_status == "pending" and (
-        cp.get("bank_state") == "CAPACITY_FULL"
-        or cp.get("last_operation_result") in ("CAPACITY_FULL", "BANK_CAPACITY_FULL")
-        or "تکمیل" in str(cp.get("last_error_reason", ""))
-        or cp.get("browser_closed_by_user")
-    ):
-        DBHandler.release_final_submission_claim(nid)
-        final_status = None
     if final_status:
         raise HTTPException(status_code=409, detail="ابتدا نتیجه درخواست قبلی را بررسی کنید؛ ورود مجدد خودکار مجاز نیست")
     owner = LIVE_SESSIONS.get(nid)
@@ -581,27 +571,20 @@ def switch_saved_page_city(nid: str, payload: Dict[str, Any] = Body(...), _: boo
         raise HTTPException(status_code=400, detail="کد شهر الزامی است")
 
     owner = LIVE_SESSIONS.get(nid)
-    if not owner or not owner.page or getattr(owner.page, "is_closed", lambda: False)():
+    if not owner or not owner.summary()['live']:
         raise HTTPException(status_code=400, detail="نشست زنده فعالی برای این متقاضی یافت نشد")
 
-    from core.step3_bank_page import Step3BankPage
-    step3 = Step3BankPage()
-    ok = step3.switch_city(owner.page, city_code)
-    if ok:
-        return {"status": "ok", "message": f"شهر با موفقیت به کد {city_code} تغییر یافت"}
-    raise HTTPException(status_code=500, detail="خطا در تغییر شهر در صفحه بانک مرکزی")
+    if DBHandler.get_checkpoint(nid).get('final_submit_status'):
+        raise HTTPException(status_code=409, detail='ابتدا نتیجه درخواست قبلی بررسی شود')
+    LIVE_SESSIONS.enqueue_command(nid, {'action': 'switch_city', 'city_code': city_code})
+    return {'status': 'ok', 'validation_pending': True, 'message': 'بررسی و تغییر شهر به مالک مرورگر سپرده شد'}
 
 
 @router.post("/saved-pages/live-repair/{nid}")
 def live_repair_saved_page(nid: str, _: bool = Depends(require_api_key)):
     """Safely reset or re-arm live session for applicant nid without throwing TargetClosedError."""
     owner = LIVE_SESSIONS.get(nid)
-    if owner and owner.page and not getattr(owner.page, "is_closed", lambda: False)():
-        from core.step3_bank_page import Step3BankPage
-        step3 = Step3BankPage()
-        step3.disable_logout_trap(owner.page)
-        return {"status": "ok", "message": "نشست زنده با موفقیت ایمن‌سازی و احیا شد"}
-
-    if owner:
-        LIVE_SESSIONS.pop(nid, None)
-    return {"status": "ok", "message": "نشست قدیمی پاکسازی شد. اکنون می‌توانید پایش مجدد را آغاز نمایید."}
+    if owner and owner.summary()['live']:
+        LIVE_SESSIONS.enqueue_command(nid, 'redetect')
+        return {'status': 'ok', 'validation_pending': True, 'message': 'شناسایی مجدد صفحه درخواست شد'}
+    raise HTTPException(status_code=409, detail='نشست زنده وجود ندارد؛ ورود مجدد لازم است')

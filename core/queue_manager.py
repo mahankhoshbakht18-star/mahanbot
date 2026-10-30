@@ -182,6 +182,8 @@ class QueueManager:
                     item["runtime_status"] = runtime.get("status") or "-"
                     item["runtime_step"] = runtime.get("current_step") or item["bot_state"]
                     item["otp_state"] = runtime.get("otp_state") or "-"
+                    for key in ('workflow_state', 'workflow_reason', 'workflow_checked_at'):
+                        item[key] = runtime.get(key)
                     item["session_active"] = bool(runtime.get("session_id") or runtime.get("browser_status") == "OPEN")
 
                     if status_filter and item["queue_status"] != status_filter:

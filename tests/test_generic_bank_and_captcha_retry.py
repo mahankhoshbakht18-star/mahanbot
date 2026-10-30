@@ -43,6 +43,8 @@ class TestGenericBankAndCaptchaRetry(unittest.TestCase):
         mock_bot.nid = "1234567890"
         mock_bot.settings = {}
         mock_owner = MockOwner()
+        mock_bot.live_owner = mock_owner
+        mock_bot.detect_actual_page_stage.return_value = 'STEP_3_BANK_SELECT'
 
         ctrl = BankSelectionSessionController(mock_bot, mock_owner)
 
@@ -107,6 +109,8 @@ class TestGenericBankAndCaptchaRetry(unittest.TestCase):
         mock_bot.settings = {"bank_refresh_interval": 5.0, "otp_validity_seconds": 120.0}
         mock_bot.user_data = {"bank_name": "بانک تجارت"}
         mock_owner = MockOwner()
+        mock_bot.live_owner = mock_owner
+        mock_bot.detect_actual_page_stage.return_value = 'STEP_3_BANK_SELECT'
 
         ctrl = BankSelectionSessionController(mock_bot, mock_owner)
         ctrl.observe = MagicMock(return_value=("STEP_3_BANK_SELECT", {"is_bank_page": True, "applicant_nid": "1234567890"}))
@@ -118,7 +122,8 @@ class TestGenericBankAndCaptchaRetry(unittest.TestCase):
              patch("bot_select_bank.trigger_bank_capacity_refresh"):
             res = ctrl.tick()
             # Under zero-camping architecture, missing bank immediately cycles back to OTP/Captcha
-            self.assertEqual(res, "cycle_otp")
+            self.assertEqual(res, "waiting")
+            mock_owner.page.reload.assert_called_once()
 
 
 if __name__ == "__main__":

@@ -1128,7 +1128,7 @@ class DBHandler:
         return DBHandler.set_otp(nid, code, ts=otp_ts, status=status)
 
     @staticmethod
-    def set_otp(nid: str, code: str, ts: Optional[float] = None, status: str = "received", request_id: Optional[str] = None) -> bool:
+    def set_otp(nid: str, code: str, ts: Optional[float] = None, status: str = "received", request_id: Optional[str] = None, otp_type: Optional[str] = None) -> bool:
         try:
             with DBHandler._connect() as conn:
                 conn.execute('BEGIN IMMEDIATE')
@@ -1137,6 +1137,8 @@ class DBHandler:
                     return False
                 data["otp_code"] = str(code).strip()
                 data["otp_status"] = status
+                if otp_type is not None:
+                    data['otp_type'] = otp_type
                 if request_id is not None:
                     data["otp_request_id"] = str(request_id)
                 timestamp_seconds = float(ts) if ts is not None else DBHandler._current_timestamp_seconds_ms()
@@ -1167,6 +1169,7 @@ class DBHandler:
                     "ts_ms": data.get("otp_ts_ms"),
                     "request_id": data.get("otp_request_id"),
                     "status": data.get("otp_status"),
+                    "otp_type": data.get('otp_type', 'REGISTRATION_OTP'),
                 }
         except Exception:
             return None
@@ -1191,6 +1194,7 @@ class DBHandler:
                 data.pop("otp_ts", None)
                 data.pop("otp_ts_ms", None)
                 data.pop("otp_request_id", None)
+                data.pop('otp_type', None)
                 conn.execute(
                     "UPDATE applicants SET data=? WHERE national_id=?",
                     (json.dumps(data, ensure_ascii=False), nid),

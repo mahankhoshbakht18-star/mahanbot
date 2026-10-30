@@ -256,32 +256,19 @@ class Step3BankPage:
             return False
 
     def switch_city(self, page, target_city_code: str) -> bool:
-        """
-        Switch city dropdown #ctl00_ContentPlaceHolder1_ddlCity to target_city_code
-        and trigger __doPostBack to reload city branches and quota.
-        """
-        if page is None or getattr(page, "is_closed", lambda: False)() or not target_city_code:
+        """Select a real live option; its native change handler owns the postback."""
+        if page is None or page.is_closed() or not target_city_code:
             return False
-        script = f"""(cityCode) => {{
-            const ddl = document.querySelector('{self.CITY_SELECTOR}');
-            if (!ddl) return false;
-            ddl.value = String(cityCode);
-            if (typeof __doPostBack === 'function') {{
-                __doPostBack('{self.CITY_SELECTOR}'.replace('#', '').replace(/_/g, '$'), '');
-            }} else {{
-                ddl.dispatchEvent(new Event('change', {{ bubbles: true }}));
-            }}
-            return true;
-        }}"""
         try:
-            switched = bool(page.evaluate(script, str(target_city_code)))
-            if switched:
-                self.wait_for_update_panel(page, timeout_ms=4000)
-                logger.info(f"Switched city to code {target_city_code}")
-                return True
-            return False
-        except Exception as e:
-            logger.warning(f"Failed to switch city to {target_city_code}: {e}")
+            city = page.locator(self.CITY_SELECTOR)
+            if city.count() != 1 or not city.is_visible() or not city.is_enabled():
+                return False
+            values = city.locator('option').evaluate_all('options=>options.filter(o=>!o.disabled).map(o=>o.value)')
+            if str(target_city_code) not in values:
+                return False
+            city.select_option(value=str(target_city_code), timeout=3000)
+            return self.wait_for_update_panel(page, timeout_ms=4000)
+        except Exception:
             return False
 
     def click_submit_btn(self, page) -> bool:
@@ -411,7 +398,9 @@ class Step3BankPage:
         sig = self.calculate_bank_signature(options)
         if sig == self._last_archived_sig:
             return False
-        base_dir = getattr(bot, "data_dir", os.path.join("static", "saved_pages"))
+        base_dir = getattr(bot, 'data_dir', None)
+        if not isinstance(base_dir, (str, os.PathLike)):
+            base_dir = os.getenv('MAHANBOT_SAVED_PAGES_DIR', os.path.join('static', 'saved_pages'))
         json_path = os.path.join(base_dir, "banks_seen.json")
         if os.path.exists(json_path):
             try:
@@ -443,9 +432,12 @@ class Step3BankPage:
             except Exception:
                 pass
 
+        base_dir = getattr(bot, 'data_dir', None)
+        if not isinstance(base_dir, (str, os.PathLike)):
+            base_dir = os.getenv('MAHANBOT_SAVED_PAGES_DIR', os.path.join('static', 'saved_pages'))
+
         def _do_archive():
             try:
-                base_dir = getattr(bot, "data_dir", os.path.join("static", "saved_pages"))
                 os.makedirs(base_dir, exist_ok=True)
                 json_path = os.path.join(base_dir, "banks_seen.json")
                 seen_data = {}
@@ -480,4 +472,4 @@ class Step3BankPage:
             except Exception as e:
                 logger.warning(f"Failed to archive banks_seen: {e}")
 
-        threading.Thread(target=_do_archive, daemon=True).start()
+        threading.Thread(target=_do_archive, name='mahan-bank-archive', daemon=True).start()

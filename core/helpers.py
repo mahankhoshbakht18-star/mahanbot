@@ -188,6 +188,7 @@ def _serialize_applicants() -> List[Dict[str, Any]]:
                 record["data"] = data
                 nid = record.get("national_id")
                 record["runtime"] = runtime_by_nid.get(nid, {})
+                record['runtime'].pop('last_otp_code', None)
                 record["checkpoint"] = checkpoint_by_nid.get(nid, {})
                 results.append(record)
     except Exception:

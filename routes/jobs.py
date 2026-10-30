@@ -7,7 +7,7 @@ from pydantic import BaseModel
 
 from fastapi import APIRouter, Depends, HTTPException
 
-from core.deps import require_api_key, _admin_user
+from core.deps import require_api_key, _admin_user, require_reconciled_submission
 import core.state as _state
 from core.models import JobStartRequest
 from core.helpers import _serialize_applicants
@@ -43,8 +43,8 @@ def start_job(req: JobStartRequest, _: bool = Depends(require_api_key)):
     if req.browser_profile_override:
         payload["browser_profile_override"] = normalize_browser_profile(req.browser_profile_override)
 
-    # Clear previous claims and runtime state so re-starting applicant runs cleanly
-    DBHandler.release_final_submission_claim(req.nid)
+    if bot_name in {'select', 'register'}:
+        require_reconciled_submission(req.nid)
     DBHandler.update_runtime(
         req.nid,
         status="RUNNING",
@@ -67,8 +67,8 @@ def restart_job(req: JobStartRequest, _: bool = Depends(require_api_key)):
         raise HTTPException(403, "راه‌اندازی مجدد حذف نیازمند تأیید تازه مدیر است")
     if not _state.JOB_QUEUE:
         raise HTTPException(status_code=500, detail="Job queue not ready")
-    # Release prior claims and reset runtime on restart so re-registration is allowed
-    DBHandler.release_final_submission_claim(req.nid)
+    if req.bot_name.lower() in {'select', 'register'}:
+        require_reconciled_submission(req.nid)
     DBHandler.update_runtime(
         req.nid,
         status="RUNNING",

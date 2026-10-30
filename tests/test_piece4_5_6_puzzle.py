@@ -1,125 +1,61 @@
-import unittest
-from unittest.mock import MagicMock, patch
+"""Step 3 policy regressions on isolated real Chromium, including expired local OTP."""
 import time
-import sys
-import os
-
-sys.path.insert(0, os.path.abspath(os.path.dirname(os.path.dirname(__file__))))
-
-from core.bank_matcher import PersianBankMatcher, BankOptionInfo
+from pathlib import Path
+from test_critical_repair import RepairTestCase
+from bank_session_controller import BankSelectionSessionController
 from bank_page_manager import BankPageState as State
+from database import DBHandler
 
 
-class MockOwner:
-    def __init__(self):
-        import threading
-        import queue
-        self.operation_lock = threading.RLock()
-        self.commands = queue.Queue()
-        self.cancellation_token = threading.Event()
-        self.page = MagicMock()
-        self.context = MagicMock()
-        self.bank_page_active = True
-        self.paused = False
-        self.session_id = "test-session"
-        self.validated_at = time.time()
+class TestPiece456Puzzle(RepairTestCase):
+    def setUp(self):
+        super().setUp()
+        from playwright.sync_api import sync_playwright
+        self.pw = sync_playwright().start()
+        self.browser = self.pw.chromium.launch(headless=True)
+        self.context = self.browser.new_context()
+        html = (Path(__file__).parent / 'fixtures/bank_page_webforms.html').read_text(encoding='utf-8')
+        self.context.route('**/*', lambda route: route.fulfill(body=html, content_type='text/html'))
+        self.page = self.context.new_page()
+        self.page.goto('http://127.0.0.1/SelectBnkShb.aspx')
+        self.owner.bind(self.context, self.page)
+        self.ctrl = BankSelectionSessionController(self.bot, self.owner)
+        self.ctrl._submit_response_timeout = .1
 
-    def assert_owner(self):
-        pass
+    def tearDown(self):
+        self.browser.close()
+        self.pw.stop()
+        super().tearDown()
 
-
-class TestPiece456Puzzle(unittest.TestCase):
     def test_active_bank_auto_final_submit_false_does_not_submit(self):
-        """Piece 4: When active bank is found but auto_final_submit is False, do NOT submit, continue monitoring."""
-        from bank_session_controller import BankSelectionSessionController
-        mock_bot = MagicMock()
-        mock_bot.nid = "1234567890"
-        mock_bot._otp_entry_time = time.time()  # Active OTP
-        mock_bot.consume_recovery_flag.return_value = False
-        mock_bot.settings = {"bank_refresh_interval": 5.0, "otp_validity_seconds": 115.0}
-        mock_bot.user_data = {"bank_name": "بانک ملت"}
-        mock_owner = MockOwner()
-
-        ctrl = BankSelectionSessionController(mock_bot, mock_owner)
-        ctrl.observe = MagicMock(return_value=("STEP_3_BANK_SELECT", {"is_bank_page": True, "applicant_nid": "1234567890"}))
-        ctrl._preferences = MagicMock(return_value={"priority_banks": [{"name": "بانک ملت", "allow_reserve": False}]})
-
-        # Mock auto_final_submit = False in DB config
-        with patch("database.DBHandler.get_config", return_value={"auto_final_submit": False}), \
-             patch("database.DBHandler.get_runtime", return_value={}), \
-             patch("core.step3_bank_page.Step3BankPage.read_live_bank_options", return_value=[
-                 BankOptionInfo(value="12", text="بانک ملت [دارای ظرفیت ثبت نام]", clean_title="ملت", has_active_quota=True)
-             ]), \
-             patch("core.step3_bank_page.Step3BankPage.click_submit_btn") as mock_submit:
-            res = ctrl.evaluate_and_execute_bank_logic(mock_owner.page)
-            # Must NOT click submit button
-            mock_submit.assert_not_called()
-            # Must return cycle_otp for continuing monitoring
-            self.assertEqual(res, "cycle_otp")
+        cfg = DBHandler.get_config()
+        cfg.update(auto_final_submit=False, final_submit=False)
+        DBHandler.update_config(cfg)
+        self.ctrl.tick(force=True)
+        self.assertEqual(self.page.evaluate('fixtureEvents.submits'), 0)
+        self.assertEqual(self.ctrl.state, State.FINAL_SUBMIT_READY)
+        self.assertTrue(self.owner.bank_page_active)
 
     def test_reserve_bank_requires_both_allow_reserve_and_auto_submit(self):
-        """Piece 4: Reserve bank must only submit if BOTH allow_reserve=True and auto_final_submit=True."""
-        from bank_session_controller import BankSelectionSessionController
-        mock_bot = MagicMock()
-        mock_bot.nid = "1234567890"
-        mock_bot._otp_entry_time = time.time()
-        mock_bot.consume_recovery_flag.return_value = False
-        mock_bot.settings = {"bank_refresh_interval": 5.0, "otp_validity_seconds": 115.0}
-        mock_bot.user_data = {"bank_name": "بانک تجارت"}
-        mock_owner = MockOwner()
+        self.page.locator('option[value="19"]').evaluate("e=>e.textContent='بانک صادرات [در انتظار تخصیص ظرفیت جدید (ذخیره)]'")
+        cfg = DBHandler.get_config()
+        cfg.update(auto_final_submit=True, final_submit=True, allow_reserve_bank=False)
+        DBHandler.update_config(cfg)
+        self.ctrl.tick(force=True)
+        self.assertEqual(self.page.evaluate('fixtureEvents.submits'), 0)
+        cfg['allow_reserve_bank'] = True
+        DBHandler.update_config(cfg)
+        self.ctrl._prepared = False
+        self.ctrl.tick(force=True)
+        self.assertEqual(self.page.evaluate('fixtureEvents.submits'), 1)
+        for _ in range(3):
+            self.ctrl.tick(force=True)
+        self.assertEqual(self.page.evaluate('fixtureEvents.submits'), 1)
 
-        ctrl = BankSelectionSessionController(mock_bot, mock_owner)
-        ctrl.observe = MagicMock(return_value=("STEP_3_BANK_SELECT", {"is_bank_page": True, "applicant_nid": "1234567890"}))
-
-        # Case 1: allow_reserve=False, auto_final_submit=True -> Must NOT submit
-        ctrl._preferences = MagicMock(return_value={"priority_banks": [{"name": "بانک تجارت", "allow_reserve": False}]})
-        with patch("database.DBHandler.get_config", return_value={"auto_final_submit": True}), \
-             patch("database.DBHandler.get_runtime", return_value={}), \
-             patch("core.step3_bank_page.Step3BankPage.read_live_bank_options", return_value=[
-                 BankOptionInfo(value="18", text="بانک تجارت [در انتظار تخصیص ظرفیت جدید (ذخیره)]", clean_title="تجارت", is_reserve=True)
-             ]), \
-             patch("core.step3_bank_page.Step3BankPage.click_submit_btn") as mock_submit:
-            res = ctrl.evaluate_and_execute_bank_logic(mock_owner.page)
-            mock_submit.assert_not_called()
-            self.assertEqual(res, "cycle_otp")
-
-        # Case 2: allow_reserve=True, auto_final_submit=True -> MUST submit!
-        ctrl._preferences = MagicMock(return_value={"priority_banks": [{"name": "بانک تجارت", "allow_reserve": True}]})
-        with patch("database.DBHandler.get_config", return_value={"auto_final_submit": True}), \
-             patch("database.DBHandler.get_runtime", return_value={}), \
-             patch("core.step3_bank_page.Step3BankPage.read_live_bank_options", return_value=[
-                 BankOptionInfo(value="18", text="بانک تجارت [در انتظار تخصیص ظرفیت جدید (ذخیره)]", clean_title="تجارت", is_reserve=True)
-             ]), \
-             patch("core.step3_bank_page.Step3BankPage.select_bank_option", return_value=True), \
-             patch("core.step3_bank_page.Step3BankPage.click_submit_btn", return_value=True) as mock_submit, \
-             patch("core.step3_bank_page.Step3BankPage.extract_tracking_or_error", return_value={"is_success": True, "tracking_code": "987654321"}):
-            res = ctrl.evaluate_and_execute_bank_logic(mock_owner.page)
-            mock_submit.assert_called_once()
-            self.assertEqual(res, "confirmed")
-
-    def test_warm_tab_handover_on_expired_otp(self):
-        """Piece 6: When OTP is expired, execute warm tab handover to open new tab and close old."""
-        from bank_session_controller import BankSelectionSessionController
-        mock_bot = MagicMock()
-        mock_bot.nid = "1234567890"
-        mock_bot._otp_entry_time = time.time() - 130.0  # Expired
-        mock_bot.consume_recovery_flag.return_value = False
-        mock_bot.settings = {"bank_refresh_interval": 5.0, "otp_validity_seconds": 115.0}
-        mock_owner = MockOwner()
-        new_mock_page = MagicMock()
-        mock_owner.context.new_page.return_value = new_mock_page
-
-        ctrl = BankSelectionSessionController(mock_bot, mock_owner)
-        with patch("browser_actions.BrowserActions.fast_fill"), \
-             patch("browser_actions.BrowserActions.find_captcha_input"), \
-             patch("bot_select_captcha.solve_captcha_step"):
-            ok = ctrl.perform_warm_tab_handover()
-            self.assertTrue(ok)
-            # Must have called context.new_page()
-            mock_owner.context.new_page.assert_called_once()
-            # Must point to new page
-            self.assertEqual(mock_owner.page, new_mock_page)
-
-
-if __name__ == "__main__":
-    unittest.main()
+    def test_live_bank_does_not_open_a_parallel_tab_when_local_otp_ttl_expires(self):
+        self.bot._otp_entry_time = time.time() - 130
+        before = list(self.context.pages)
+        self.ctrl.tick(force=True)
+        self.assertEqual(self.context.pages, before)
+        self.assertIs(self.owner.page, self.page)
+        self.assertNotEqual(self.ctrl.state, State.SESSION_EXPIRED)

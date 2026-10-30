@@ -87,6 +87,7 @@ class CriticalRepairTests(RepairTestCase):
     def test_timeout_preserves_form_and_manual_fallback(self):
         from bot_select_otp import fast_otp_sync_and_inject
         page, locator = Mock(), Mock()
+        self.owner.bind(None, page)
         locator.input_value.return_value = ''
         self.bot.mark_otp_entry_time(time.time() - 121)
         count = [0]
@@ -190,6 +191,8 @@ class CriticalRepairTests(RepairTestCase):
         from server import app
         self.bot.mark_otp_entry_time(time.time() - 1)
         with TestClient(app) as client, patch.dict(os.environ, {'MAHANBOT_OTP_SECRET': 'fixture-secret'}):
+            self.assertEqual(client.post('/login', json={'username': 'admin',
+                'password': os.environ['MAHANBOT_ADMIN_PASSWORD']}).status_code, 200)
             payload = {'text': f'کد تایید شما: 456789 کدملی {self.nid}'}
             self.assertEqual(client.post('/api/sms/webhook', json=payload).status_code, 401)
             received = client.post('/api/sms/webhook', json=payload, headers={'X-OTP-Secret': 'fixture-secret'})
@@ -233,6 +236,8 @@ class CriticalRepairTests(RepairTestCase):
         folder.mkdir(parents=True)
         (folder / 'banks-test.html').write_text((Path(__file__).parent / 'fixtures/bank_page_webforms.html').read_text(encoding='utf-8'), encoding='utf-8')
         with TestClient(app) as client, patch.object(saved_pages, 'SAVED_PAGES_DIR', str(folder.parent)):
+            self.assertEqual(client.post('/login', json={'username': 'admin',
+                'password': os.environ['MAHANBOT_ADMIN_PASSWORD']}).status_code, 200)
             self.owner.bank_page_active = True
             self.owner.current_state = State.FINAL_SUBMIT_READY
             self.assertEqual(client.post(f'/saved-pages/pause/{self.nid}').status_code, 200)
@@ -333,14 +338,14 @@ class ChromiumBankSessionTests(RepairTestCase):
         for _ in range(4):
             self.controller.tick(force=True)
         self.assertEqual(self.page.evaluate('fixtureEvents.submits'), 1)
-        self.assertNotEqual(DBHandler.get_checkpoint(self.nid).get('final_submit_status'), 'pending')
+        self.assertEqual(DBHandler.get_checkpoint(self.nid).get('final_submit_status'), 'pending')
         self.assertTrue(self.controller._awaiting_result)
 
     def test_server_expiry_requires_reauthentication_without_navigation(self):
         self.controller.tick(force=True)
         self.page.evaluate("document.body.innerHTML='<input id=\"ctl00_ContentPlaceHolder1_tbIDNo\">'")
-        self.controller.tick(force=True)
-        self.assertEqual(self.controller.state, State.SESSION_EXPIRED)
+        self.assertEqual(self.controller.tick(force=True), 'entry_form')
+        self.assertEqual(DBHandler.get_runtime(self.nid)['workflow_state'], 'STEP1_IDENTIFICATION')
         self.assertFalse(self.owner.bank_page_active)
         self.assertEqual(len(self.network), 1)
         self.assertEqual(DBHandler.get_checkpoint(self.nid)['bank_mode'], 'online')

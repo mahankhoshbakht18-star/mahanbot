@@ -1,0 +1,12 @@
+<!doctype html><html lang="fa" dir="rtl"><meta charset="utf-8">
+<title>Isolated WebForms OTP fixture</title>
+<form method="post" action="/continue">
+  <label for="CHALLENGE_FIELD">کد تأیید پیامکی</label>
+  <input id="CHALLENGE_FIELD" name="sms_code" autocomplete="one-time-code" maxlength="6">
+  <label for="currentCaptcha">کد امنیتی</label>
+  <input id="currentCaptcha" name="captcha_answer" maxlength="4">
+  <button type="submit" id="confirmCurrentChallenge">ادامه</button>
+</form>
+<form method="post" action="/request"><button type="submit" id="resendSms">ارسال مجدد پیامک</button></form>
+<div role="alert">SERVER_ERROR</div>
+</html>

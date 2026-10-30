@@ -109,7 +109,7 @@ class TestOtpCapacityRetryAndPause(unittest.TestCase):
                 bot, mock_page, stop_event, sleep_fn, last_code="12345", wait_seconds=1.0
             )
 
-            self.assertEqual(status, "retry")
+            self.assertEqual(status, "timeout")
             mock_refresh.assert_not_called()
             self.assertIsNone(bot._last_dialog_action)
 

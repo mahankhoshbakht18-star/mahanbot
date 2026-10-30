@@ -142,11 +142,11 @@ class FinalSubmissionPolicyTests(repair.RepairTestCase):
         self.ctl.tick()
         self.assertEqual(self.page.evaluate('fixtureEvents.submits'), 1)
 
-    def test_unknown_result_has_no_durable_pending_user_lock_and_observes_late_success(self):
+    def test_unknown_result_keeps_durable_pending_lock_and_observes_late_success(self):
         self.config(True)
         self.ctl.tick(force=True)
         self.assertEqual(self.page.evaluate('fixtureEvents.submits'), 1)
-        self.assertNotEqual(DBHandler.get_checkpoint(self.nid).get('final_submit_status'), 'pending')
+        self.assertEqual(DBHandler.get_checkpoint(self.nid).get('final_submit_status'), 'pending')
         self.clock += 30
         self.ctl.tick(force=True)
         self.assertEqual(self.page.evaluate('fixtureEvents.submits'), 1)

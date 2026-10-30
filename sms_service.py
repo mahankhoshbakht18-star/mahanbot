@@ -205,6 +205,7 @@ def route_incoming_sms(
     explicit_nid: Optional[str] = None,
     explicit_code: Optional[str] = None,
     request_id: Optional[str] = None,
+    otp_type: Optional[str] = None,
 ) -> Tuple[bool, Dict[str, Any]]:
     """
     Main entry point for incoming SMS.
@@ -267,6 +268,13 @@ def route_incoming_sms(
 
     if request_id and request_id != DBHandler.get_runtime(nid).get("otp_request_id"):
         return False, {"error": "request_mismatch"}
+
+    runtime = DBHandler.get_runtime(nid)
+    words = str(text or '').replace('ي', 'ی').replace('ك', 'ک')
+    operation = ('REGISTRATION_DELETE_OTP' if 'حذف' in words else
+                 'REGISTRATION_RECOVERY_OTP' if 'بازیابی' in words else 'REGISTRATION_OTP')
+    if (otp_type or operation) != runtime.get('otp_type', 'REGISTRATION_OTP'):
+        return False, {'error': 'otp_operation_mismatch'}
 
     # Record the received OTP via the standard OTP receiver
     from routes.otp import _handle_receive_sms, _emit_applicants_snapshot

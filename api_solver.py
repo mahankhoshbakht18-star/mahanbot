@@ -62,9 +62,7 @@ class CaptchaService:
         try:
             image_bytes = target.screenshot(type="png")
             if image_bytes and len(image_bytes) >= 10:
-                res = self.solve(image_bytes)
-                if res:
-                    return res
+                return self.solve(image_bytes)
         except Exception:
             pass
 

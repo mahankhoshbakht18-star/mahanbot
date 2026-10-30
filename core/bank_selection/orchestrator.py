@@ -33,7 +33,6 @@ class BankSelectionOrchestrator:
         3. Match against applicant priority banks
         Returns: (status, matched_option, all_options, message)
         """
-        self.step3.disable_logout_trap(self.page)
         options = BankCatalogParser.parse_playwright_page(self.page)
         if not options:
             # Fallback to step3 bank page locator

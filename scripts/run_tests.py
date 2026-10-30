@@ -2,6 +2,7 @@
 import os
 import sys
 import tempfile
+import threading
 import unittest
 from unittest.mock import patch
 from pathlib import Path
@@ -25,10 +26,14 @@ if __name__ == "__main__":
         # Network behavior is supplied by each test's mocks. Never contact a running
         # production server or the Android relay, including from background threads.
         with patch("requests.sessions.Session.request", side_effect=requests.ConnectionError("Network disabled in tests")):
+            database.DBHandler.init_db()
             if len(sys.argv) > 1:
                 sys.path.insert(0, str(ROOT / "tests"))
                 suite = unittest.defaultTestLoader.loadTestsFromNames(sys.argv[1:])
             else:
                 suite = unittest.defaultTestLoader.discover(str(ROOT / "tests"))
             result = unittest.TextTestRunner(verbosity=2).run(suite)
+            for worker in threading.enumerate():
+                if worker.name == 'mahan-bank-archive':
+                    worker.join(timeout=5)
         sys.exit(not result.wasSuccessful())

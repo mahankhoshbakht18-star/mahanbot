@@ -5,7 +5,7 @@ routes/queue.py — API endpoints for Applicant Queue & OTP Queue Management
 from typing import Dict, Any, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query
 
-from core.deps import require_api_key
+from core.deps import require_api_key, require_reconciled_submission
 from core.queue_manager import QueueManager
 from core.otp_queue import OTPQueueManager
 from database import DBHandler
@@ -46,8 +46,7 @@ def start_queued_applicant(nid: str, _: bool = Depends(require_api_key)):
     if not app:
         raise HTTPException(status_code=404, detail="متقاضی یافت نشد.")
 
-    # Reset any past final_submit claims or locks so it runs freshly
-    DBHandler.release_final_submission_claim(clean_nid)
+    require_reconciled_submission(clean_nid)
     DBHandler.update_runtime(
         clean_nid,
         status="RUNNING",
@@ -130,7 +129,10 @@ def start_all_queue(_: bool = Depends(require_api_key)):
     for item in queue_items:
         if item["queue_status"] in {"WAITING", "WAITING_BANK"} and not _state.JOB_QUEUE.find_active("select", item["applicant_id"]):
             nid = item["applicant_id"]
-            DBHandler.release_final_submission_claim(nid)
+            try:
+                require_reconciled_submission(nid)
+            except HTTPException:
+                continue
             job = _state.JOB_QUEUE.enqueue("select", nid, {})
             if job:
                 started.append(nid)

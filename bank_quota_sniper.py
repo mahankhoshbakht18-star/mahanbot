@@ -114,7 +114,8 @@ def submit_quota_attempt(bot, page, stop_event, *, timeout=10, blocked=lambda: F
                        result='native_save_click', message='در حال ارسال ثبت نهایی درخواست با انتخاب‌های همین متقاضی.', page=page)
         if not allowed() or stop_event.is_set():
             return 'stopped' if stop_event.is_set() else 'option_selected_waiting_user'
-        DBHandler.record_final_submission_attempt(bot.nid)
+        if not DBHandler.claim_final_submission(bot.nid):
+            return 'submit_rejected'
         page.click('#ctl00_ContentPlaceHolder1_btnSave', timeout=5000, no_wait_after=True)
         deadline = time.monotonic() + max(.05, timeout)
         while True:
@@ -144,6 +145,7 @@ def submit_quota_attempt(bot, page, stop_event, *, timeout=10, blocked=lambda: F
                             and getattr(bot, '_last_dialog_action', '') == 'bank_capacity_full')
             fresh_capacity = fresh_dialog or response_result.get('capacity') or (mutation and data.get('state') == State.CAPACITY_FULL)
             if fresh_capacity and not in_flight:
+                DBHandler.release_final_submission_claim(bot.nid)
                 bot.emit_event('FINAL_SUBMIT_REJECTED', step='FINAL_SUBMIT', reason='fresh_capacity_rejection',
                                result='bank_capacity_full', message='درخواست جدید به علت تکمیل ظرفیت رد شد؛ بانک، روش پذیرش و شعبه برای تلاش بعدی حفظ شدند.', page=page)
                 return 'capacity_full'

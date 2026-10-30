@@ -66,6 +66,7 @@ class TestSmsRouter(unittest.TestCase):
 
     @patch("sms_service.DBHandler")
     def test_route_by_national_id(self, mock_db_class):
+        mock_db_class.get_runtime.return_value = {}
         mock_db_class.get_applicant.return_value = {"national_id": "0012345678", "full_name": "علی محمدی"}
         with patch("routes.otp._handle_receive_sms", return_value=True) as mock_handle, \
              patch("routes.otp._emit_applicants_snapshot"):
@@ -78,6 +79,7 @@ class TestSmsRouter(unittest.TestCase):
     @patch("sms_service.find_active_otp_waiter")
     @patch("sms_service.DBHandler")
     def test_route_by_active_waiter_fallback(self, mock_db_class, mock_find_waiter):
+        mock_db_class.get_runtime.return_value = {}
         mock_db_class.get_applicant.return_value = None
         mock_db_class.get_all_applicants.return_value = []
         mock_find_waiter.return_value = {"national_id": "0098765432", "full_name": "رضا رضایی"}

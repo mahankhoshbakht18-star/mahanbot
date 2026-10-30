@@ -139,6 +139,7 @@ class MockLocator:
     def element_handle(self):
         h = Mock()
         h.bounding_box.return_value = {"x": 0, "y": 0, "width": 100, "height": 20}
+        h.owner_frame.return_value = None
         return h
 
     def wait_for(self, **kwargs):
@@ -292,6 +293,10 @@ class MockWebFormsPage:
             self.on_click_save_hook(self)
 
     def evaluate(self, script: str, arg=None):
+        if 'document.readyState' in script:
+            return True
+        if 'input,button,a,img' in script:
+            return None
         if arg == "#ctl00_ContentPlaceHolder1_ddlBankName":
             return self.bank_options
         if arg == "#ctl00_ContentPlaceHolder1_ddlBranch":

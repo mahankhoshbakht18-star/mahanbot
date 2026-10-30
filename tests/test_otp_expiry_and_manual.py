@@ -49,7 +49,7 @@ class OtpExpiryAndManualTests(unittest.TestCase):
         self.assertEqual(_detect_failure_type(page), "otp_expired")
 
         page.inner_text.return_value = "کد تأیید نامعتبر است"
-        self.assertEqual(_detect_failure_type(page), "otp_expired")
+        self.assertEqual(_detect_failure_type(page), "otp")
 
         page.inner_text.return_value = "کد امنیتی اشتباه است"
         self.assertEqual(_detect_failure_type(page), "captcha")

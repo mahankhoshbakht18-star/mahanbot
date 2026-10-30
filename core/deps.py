@@ -18,6 +18,12 @@ logger = logging.getLogger("mahanbot")
 _TRUE_VALUES = {"1", "true", "yes", "on"}
 
 
+def require_reconciled_submission(nid: str):
+    checkpoint = DBHandler.get_checkpoint(nid)
+    if checkpoint.get('final_submit_status') or checkpoint.get('reserve_confirmed') or DBHandler.has_final_submission(nid):
+        raise HTTPException(status_code=409, detail='ابتدا نتیجه درخواست یا رزرو قبلی را از مسیر رسمی بررسی کنید')
+
+
 # ── API-key guard ─────────────────────────────────────────────────────
 def require_api_key(x_api_key: Optional[str] = Header(None, alias="X-API-KEY")):
     """Machine-to-machine guard layered on top of session auth.

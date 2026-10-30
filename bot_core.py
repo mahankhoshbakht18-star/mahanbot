@@ -193,7 +193,8 @@ class BotCore:
             os.makedirs(preview_dir, exist_ok=True)
             final_path = os.path.join(preview_dir, f"{safe_nid}.jpg")
             temp_path = os.path.join(preview_dir, f".{safe_nid}.{threading.get_ident()}.jpg")
-            page.screenshot(path=temp_path, type="jpeg", quality=58, full_page=False, timeout=2500)
+            page.screenshot(path=temp_path, type="jpeg", quality=58, full_page=False, timeout=2500,
+                            mask=[page.locator('input:not([type="hidden"]), img[src*="aptcha"]')])
             os.replace(temp_path, final_path)
         except Exception:
             pass
@@ -289,9 +290,12 @@ class BotCore:
         return None
 
     def mark_otp_entry_time(self, ts: float = None) -> float:
-        import uuid
         self._otp_entry_time = float(ts if ts is not None else time.time())
-        self._otp_request_id = uuid.uuid4().hex
+        from core.otp_queue import OTPQueueManager
+        request = OTPQueueManager.create_request(self.nid,
+                    session_id=getattr(getattr(self, 'live_owner', None), 'session_id', None),
+                    ttl_seconds=int(self.settings.get('otp_validity_seconds', 120)))
+        self._otp_request_id = request['otp_request_id']
         DBHandler.update_runtime(self.nid, otp_requested_at=self._otp_entry_time,
                                  otp_request_id=self._otp_request_id, otp_state="WAITING_FOR_SMS",
                                  otp_type=getattr(self, "OTP_TYPE", "REGISTRATION_OTP"))
@@ -481,7 +485,14 @@ class BotCore:
             else input_selector
         )
         if captcha_input is None:
-            return False
+            if isinstance(input_selector, str):
+                from otp_form_detector import live_scopes
+                for scope in live_scopes(page):
+                    captcha_input = BrowserActions.find_captcha_input(scope, input_selector)
+                    if captcha_input is not None:
+                        break
+            if captcha_input is None:
+                return False
 
         from bot_select_captcha import wait_for_captcha_image_ready
         if captcha_element is None:
@@ -508,6 +519,14 @@ class BotCore:
                 pass
 
         try:
+            # Manual text belongs to the user; OCR must never overwrite it.
+            if captcha_input.input_value().strip():
+                return False
+            source_bytes = captcha_element.screenshot()
+        except Exception:
+            source_bytes = None
+
+        try:
             self.set_runtime_state("PROCESSING", "SOLVE_CAPTCHA_LOCAL", browser_status="OPEN")
             code = str(self.captcha_service.solve_element(captcha_element) or "").strip().upper()
             min_length = max(1, int(self.settings.get("captcha_min_length", 4)))
@@ -528,6 +547,10 @@ class BotCore:
                 self.log("پیش‌بینی کپچا اعتبارسنجی را رد کرد.", "warning", page)
                 return False
 
+            if captcha_input.input_value().strip():
+                return False
+            if source_bytes is not None and captcha_element.screenshot() != source_bytes:
+                return False
             try:
                 BrowserActions.human_fill(captcha_input, code)
             except Exception:
@@ -546,24 +569,31 @@ class BotCore:
             if stop_event is not None and stop_event.is_set():
                 return False
             submit_button = None
+            try:
+                button_scope = captcha_input.element_handle().owner_frame() or page
+            except Exception:
+                button_scope = page
             if isinstance(button_selector, str):
                 for candidate in [c.strip() for c in button_selector.split(",")]:
                     try:
-                        loc = page.locator(candidate)
+                        loc = button_scope.locator(candidate)
                         if loc.count() > 0 and loc.first.is_visible():
                             submit_button = loc.first
                             break
                     except Exception:
                         continue
                 if submit_button is None:
-                    submit_button = page.locator(button_selector).first
+                    submit_button = button_scope.locator(button_selector).first
             else:
                 submit_button = button_selector
 
             submit_button.click()
-            DBHandler.append_captcha_attempt(self.nid, code, "submitted", source=source)
-            self.mark_progress("captcha_model_submit")
-            self.set_runtime_state("PROCESSING", "CHECK_RESPONSE", browser_status="OPEN")
+            try:
+                DBHandler.append_captcha_attempt(self.nid, code, "submitted", source=source)
+                self.mark_progress("captcha_model_submit")
+                self.set_runtime_state("PROCESSING", "CHECK_RESPONSE", browser_status="OPEN")
+            except Exception:
+                pass  # A bookkeeping error cannot make an already-sent request safe to repeat.
             return True
         except Exception as exc:
             self.log(f"خطا در حل محلی کپچا: {exc}", "warning", page)
@@ -844,9 +874,6 @@ class BotCore:
                     if getattr(self, "live_owner", None):
                         self.live_owner.bank_page_active = False
                     self.clear_otp_locks()
-                    self.mark_otp_entry_time()
-                    if hasattr(self, "_consumed_otp_digests"):
-                        self._consumed_otp_digests.clear()
                     self.register_otp_failure("dialog_otp_expired")
                     self._set_recovery_flag("otp_expired")
                     try:
@@ -854,9 +881,7 @@ class BotCore:
                     except Exception:
                         pass
                     DBHandler.update_status(self.nid, "کد منقضی - شروع مجدد", "کد تایید منقضی شد؛ بازگشت خودکار به مرحله ۱ جهت دریافت کد جدید")
-                    # Clear remote backend in separate thread to avoid blocking Playwright event loop
-                    import threading
-                    threading.Thread(target=self.clear_otp_backend, daemon=True).start()
+                    # The owner starts a new challenge; no delayed clear may erase its SMS.
                     self.emit_event(
                         "OTP_EXPIRED",
                         step="STEP_2_OTP",
@@ -983,8 +1008,8 @@ class BotCore:
                             DBHandler.clear_otp(self.nid)
                         except Exception:
                             pass
-                        import threading
-                        threading.Thread(target=self.clear_otp_backend, daemon=True).start()
+                        from otp_transport import invalidate_otp
+                        invalidate_otp(self)
                     elif action == "session_expired":
                         self._set_recovery_flag("session_expired")
                         if getattr(self, "live_owner", None):
@@ -1073,11 +1098,19 @@ class BotCore:
             pass
 
         # Check Step 2: OTP Confirmation
+        from otp_form_detector import detect_otp_form
+        otp_form = detect_otp_form(page)
+        if otp_form.resolve('otp') is not None:
+            return 'STEP_2_OTP'
+        if otp_form.reason.startswith('ambiguous'):
+            return 'UNKNOWN'
         otp_selectors = [
             "#ctl00_ContentPlaceHolder1_tbMobileConfCode",
             "input[name$='tbMobileConfCode']",
             "#ctl00_ContentPlaceHolder1_tbMobConfCode",
         ]
+        if otp_form.inspected or otp_form.reason == 'postback_pending':
+            otp_selectors = []
         for sel in otp_selectors:
             try:
                 loc = page.locator(sel)
@@ -1183,7 +1216,8 @@ class BotCore:
         try:
             os.makedirs("screenshots", exist_ok=True)
             timestamp = time.strftime("%Y%m%d_%H%M%S")
-            page.screenshot(path=f"screenshots/watchdog_{safe_id.replace('*', 'x')}_{timestamp}.png", full_page=True)
+            page.screenshot(path=f"screenshots/watchdog_{safe_id.replace('*', 'x')}_{timestamp}.png", full_page=True,
+                            mask=[page.locator('input:not([type="hidden"]), img[src*="aptcha"]')])
         except Exception:
             pass
 

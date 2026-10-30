@@ -215,7 +215,8 @@ class OtpExpiryAndSaderatMonitoringTests(unittest.TestCase):
         with patch("bank_session_controller.process_bank_selection_v2", return_value="no_match"):
             cycle_result = controller.tick()
 
-        self.assertEqual(cycle_result, "reauthenticate")
+        self.assertEqual(cycle_result, "waiting")
+        self.assertNotEqual(controller.state, State.SESSION_EXPIRED)
 
     def test_04_session_expired_in_bank_controller_returns_reauthenticate(self):
         """When session expires while on bank page, controller returns 'reauthenticate'."""

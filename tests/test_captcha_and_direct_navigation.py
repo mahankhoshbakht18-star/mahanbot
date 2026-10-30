@@ -90,7 +90,14 @@ class TestCaptchaAndDirectNavigation(unittest.TestCase):
         cand.is_visible.return_value = True
         cand.bounding_box.return_value = {"width": 100, "height": 40}
 
-        cand.evaluate.return_value = True
+        observed_sources = []
+        def evaluate(script):
+            if 'getAttribute' in script:
+                value = 'https://ve.cbi.ir/old.ashx' if not observed_sources else 'https://ve.cbi.ir/new.ashx'
+                observed_sources.append(value)
+                return value
+            return 'IMG' if script == 'el => el.tagName' else True
+        cand.evaluate.side_effect = evaluate
         cand.get_attribute.side_effect = ["https://ve.cbi.ir/old.ashx", "https://ve.cbi.ir/new.ashx"]
         loc.count.return_value = 1
         loc.nth.return_value = cand
@@ -98,6 +105,7 @@ class TestCaptchaAndDirectNavigation(unittest.TestCase):
 
         res, scope = wait_for_captcha_image_ready(page, timeout_ms=800, previous_src="https://ve.cbi.ir/old.ashx")
         self.assertEqual(res, cand)
+        self.assertEqual(observed_sources[-1], 'https://ve.cbi.ir/new.ashx')
 
 
 if __name__ == "__main__":

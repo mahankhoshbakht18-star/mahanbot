@@ -137,6 +137,36 @@ class BankSelectionBot(BotCore):
             return str(otp_code).strip()
         return None
 
+    def recover_authentication(self, page, stop_event, adapter, reason):
+        """Keep the context; use current OTP/resend controls or the official entry URL."""
+        from core.loan_workflow import workflow_for
+        from otp_form_detector import detect_otp_form
+        flow = workflow_for(self)
+        if not flow.recovery_allowed():
+            self.live_owner.paused = True
+            return 'manual_required'
+        flow.transition('SESSION_RECOVERING', reason)
+        self.clear_otp_locks()
+        self._last_retained_otp = None
+        self._last_dialog_action = None
+        self.consume_recovery_flag('otp_expired')
+        self.consume_recovery_flag('session_expired')
+        self._nid_filled = False
+        if sleep_with_stop(stop_event, min(8.0, 0.5 * 2 ** (flow.recovery_count - 1)), step=.05):
+            return 'stopped'
+        form = detect_otp_form(page, timeout_ms=1500)
+        resend = form.resolve('resend')
+        self.mark_otp_entry_time()
+        if resend is not None:
+            resend.click(timeout=3000)
+        elif self.detect_actual_page_stage(page) != 'STEP_1_ENTRY_FORM':
+            self.live_owner.bank_page_active = False
+            self._safe_goto_guarded(page, adapter.target_select_url,
+                                    timeout=int(self.settings.get('navigation_timeout_ms', 35000)),
+                                    wait_until='domcontentloaded', log_callback=self.log)
+        flow.redetect(page, 'official_authentication_recovery')
+        return 'redetect'
+
     def _restore_from_checkpoint_if_available(self, page) -> str:
         """
         Check if a valid Checkpoint exists and compare it with actual DOM stage.
@@ -216,6 +246,8 @@ class BankSelectionBot(BotCore):
         try:
             return self._run_owned(stop_event, loan_type)
         finally:
+            if getattr(self, 'loan_workflow', None):
+                self.loan_workflow.unbind()
             LIVE_SESSIONS.release(owner)
             DBHandler.save_checkpoint(self.nid, {"session_active": False})
 
@@ -242,21 +274,15 @@ class BankSelectionBot(BotCore):
 
         cp = DBHandler.get_checkpoint(self.nid)
         final_status = cp.get("final_submit_status")
-        # If previous result was capacity full or browser was closed by user, release pending latch
-        if final_status == "pending" and (
-            cp.get("bank_state") == "CAPACITY_FULL"
-            or cp.get("last_operation_result") in ("CAPACITY_FULL", "BANK_CAPACITY_FULL")
-            or "تکمیل" in str(cp.get("last_error_reason", ""))
-            or cp.get("browser_closed_by_user")
-        ):
-            DBHandler.release_final_submission_claim(self.nid)
-            final_status = None
+        # Closing a browser or an old capacity message cannot resolve a submitted request.
         if final_status:
             self.set_runtime_state("WAITING_USER_INPUT", "PREVIOUS_SUBMISSION_UNRESOLVED", browser_status="CLOSED")
             self.log("ابتدا نتیجه درخواست یا رزرو قبلی بررسی شود؛ از شروع ثبت‌نام و پیامک جدید جلوگیری شد.", "warning")
             return
 
         adapter = LoanTypeAdapter(loan_type=loan_type, user_data=getattr(self, "user_data", {}))
+        from urllib.parse import urlsplit
+        self._workflow_entry_path = urlsplit(adapter.target_select_url).path
         valid_app, err_msg = adapter.validate_applicant(self.nid, getattr(self, "user_data", {}))
         if not valid_app:
             self.set_runtime_state("ERROR", "VALIDATION_ERROR", browser_status="CLOSED", last_error=err_msg)
@@ -267,6 +293,9 @@ class BankSelectionBot(BotCore):
         while attempt < self.retry_limit:
             if stop_event.is_set():
                 break
+            if DBHandler.get_checkpoint(self.nid).get('final_submit_status'):
+                self.set_runtime_state('WAITING_USER_INPUT', 'PREVIOUS_SUBMISSION_UNRESOLVED', browser_status='CLOSED')
+                return
             attempt += 1
             self.reset_attempt_state(attempt)
 
@@ -486,6 +515,19 @@ class BankSelectionBot(BotCore):
                     if stop_event.is_set():
                         break
 
+                    from core.loan_workflow import workflow_for
+                    flow = workflow_for(self)
+                    page = self.live_owner.page
+                    self.page = page
+                    if flow.pump_commands():
+                        if sleep_with_stop(stop_event, .2):
+                            break
+                        continue
+                    detection = flow.redetect(page)
+                    if detection.state == 'PAUSED':
+                        self.live_owner.paused = True
+                        continue
+
                     if page.is_closed():
                         self.set_runtime_state("RETRYING", "OPEN_BROWSER", browser_status="CLOSED", last_error="browser_closed")
                         self.log("مرورگر بسته/متوقف شد؛ بازکردن فوری مرورگر جدید...", "warning")
@@ -507,33 +549,16 @@ class BankSelectionBot(BotCore):
                     if self.detect_actual_page_stage(page) == "STEP_3_BANK_SELECT":
                         from bank_session_controller import BankSelectionSessionController
                         result = BankSelectionSessionController(self, self.live_owner).run()
-                        if result == "reauthenticate":
-                            self.log("🔄 نیاز به ورود مجدد و اخذ پیامک تازه؛ پاکسازی سشن و بازگشت به فرم مرحله ۱...", "warning", page)
-                            self.clear_otp_locks()
-                            self.clear_otp_backend()
-                            self._last_retained_otp = None
-                            try:
-                                page.context.clear_cookies()
-                            except Exception:
-                                pass
-                            DBHandler.update_status(self.nid, "در حال ورود مجدد", "انقضای پیامک؛ ورود مجدد از مرحله ۱")
-                            self._safe_goto_guarded(
-                                page,
-                                adapter.entry_url,
-                                timeout=int(self.settings.get("navigation_timeout_ms", 35000)),
-                                wait_until="domcontentloaded",
-                                log_callback=self.log,
-                            )
-                            set_state("ENTRY_FORM")
+                        page = self.live_owner.page
+                        self.page = page
+                        if result == 'reauthenticate':
+                            self.recover_authentication(page, stop_event, adapter, 'page3_requires_authentication')
+                            set_state('ENTRY_FORM')
                             continue
-                        elif result == "cycle_otp":
+                        elif result in {'cycle_otp', 'entry_form'}:
                             actual = self.detect_actual_page_stage(page)
-                            if actual == "STEP_1_ENTRY_FORM":
-                                set_state("ENTRY_FORM")
-                            elif actual == "STEP_3_BANK_SELECT":
-                                set_state("BANK_SELECT")
-                            else:
-                                set_state("OTP_FORM")
+                            set_state({'STEP_1_ENTRY_FORM': 'ENTRY_FORM', 'STEP_3_BANK_SELECT': 'BANK_SELECT',
+                                       'STEP_2_OTP': 'OTP_FORM'}.get(actual, 'PAGE_REDETECTING'))
                             continue
                         elif result == "confirmed":
                             return
@@ -576,69 +601,10 @@ class BankSelectionBot(BotCore):
                         DBHandler.update_status(self.nid, "محدودیت امنیتی سرور", "بررسی خودکار متوقف شد؛ نیازمند بررسی کاربر")
                         return
 
-                    if self.consume_recovery_flag("session_expired"):
-                        self.clear_otp_locks()
-                        self.clear_otp_backend()
-                        self._last_retained_otp = None
-                        try:
-                            page.context.clear_cookies()
-                        except Exception:
-                            pass
+                    if self.consume_recovery_flag('session_expired') or self.consume_recovery_flag('otp_expired'):
                         otp_attempted = False
-                        DBHandler.update_status(self.nid, "نیازمند ورود مجدد", "نشست منقضی شد؛ بازگشت به مرحله تایید هویت")
-                        self.save_checkpoint(
-                            "SESSION_EXPIRED",
-                            page=page,
-                            session_active=False,
-                            expected_next_step="STEP_1_ENTRY_FORM",
-                            last_error_reason="session_expired",
-                        )
-                        self._safe_goto_guarded(
-                            page,
-                            adapter.entry_url,
-                            timeout=int(self.settings.get("navigation_timeout_ms", 35000)),
-                            wait_until="domcontentloaded",
-                            log_callback=self.log,
-                        )
-                        set_state("ENTRY_FORM")
-                        continue
-
-                    # If already on Step 3 (SelectBnkShb.aspx), discard stale OTP/CAPTCHA flags from Step 1/2 ONLY if OTP input is not visible
-                    if self.detect_actual_page_stage(page) == "STEP_3_BANK_SELECT" and not self._otp_input_visible(page):
-                        self.clear_otp_locks()
-                        self.consume_recovery_flag("otp_expired")
-                        self.consume_recovery_flag("captcha_invalid")
-
-                    if self.consume_recovery_flag("otp_expired"):
-                        otp_attempted = False
-                        self.clear_otp_locks()
-                        self.clear_otp_backend()
-                        self.clear_remote_otp()
-                        self._last_retained_otp = None
-                        try:
-                            page.context.clear_cookies()
-                        except Exception:
-                            pass
-                        self._last_dialog_action = None
-                        if hasattr(self, "_consumed_otp_digests"):
-                            self._consumed_otp_digests.clear()
-                        self.log("🔄 دریافت الارم انقضای کد تایید؛ بازگشت خودکار به مرحله ۱ جهت اخذ کد تازه (اعتبار ۱۲۰ ثانیه)...", "warning", page)
-                        DBHandler.update_status(self.nid, "کد منقضی - شروع مجدد", "کد تایید منقضی شد؛ در حال ورود به مرحله ۱ جهت دریافت کد جدید")
-                        self.save_checkpoint(
-                            "STEP_1_ENTRY_FORM",
-                            page=page,
-                            session_active=True,
-                            expected_next_step="STEP_1_ENTRY_FORM",
-                            last_error_reason="otp_expired_restart",
-                        )
-                        self._safe_goto_guarded(
-                            page,
-                            adapter.entry_url,
-                            timeout=int(self.settings.get("navigation_timeout_ms", 35000)),
-                            wait_until="domcontentloaded",
-                            log_callback=self.log,
-                        )
-                        set_state("ENTRY_FORM")
+                        self.recover_authentication(page, stop_event, adapter, 'site_requires_new_challenge')
+                        set_state('ENTRY_FORM')
                         continue
 
                     if self.consume_recovery_flag("captcha_invalid"):
@@ -717,12 +683,13 @@ class BankSelectionBot(BotCore):
                     actual_stage = self.detect_actual_page_stage(page)
 
                     if actual_stage == "DONE":
+                        from bot_select_bank import _extract_confirmed_submission
+                        code = _extract_confirmed_submission(self, page)
+                        if not code:
+                            self.live_owner.paused = True
+                            flow.transition('PAUSED', 'unverified_tracking_message')
+                            continue
                         set_state("DONE")
-                        code = ""
-                        try:
-                            code = page.locator("#ctl00_ContentPlaceHolder1_lblTrackingCode").inner_text()
-                        except Exception:
-                            code = "CONFIRMED"
                         DBHandler.save_success_data(self.nid, code)
                         self.set_runtime_state("SUCCESS", "DONE", browser_status="OPEN")
                         self.emit_event(
@@ -753,32 +720,15 @@ class BankSelectionBot(BotCore):
                             set_state("BANK_SELECT")
                             DBHandler.update_status(self.nid, "انتخاب بانک", "ورود به مرحله انتخاب بانک")
                             self.set_runtime_state("MONITORING", "BANK_SELECTION", browser_status="OPEN")
-                        elif result == "otp_expired":
+                        elif result == 'otp_expired':
                             otp_attempted = False
-                            self.clear_otp_locks()
-                            self.clear_otp_backend()
-                            self.clear_remote_otp()
-                            self._last_dialog_action = None
-                            if hasattr(self, "_consumed_otp_digests"):
-                                self._consumed_otp_digests.clear()
-                            self.log("🔄 کد تایید منقضی شد؛ بازگشت به مرحله ۱ و شروع مجدد متقاضی جهت دریافت کد جدید (مهلت ۱۲۰ ثانیه)...", "warning", page)
-                            DBHandler.update_status(self.nid, "کد منقضی - شروع مجدد", "کد تایید منقضی شد؛ بازگشت به مرحله ۱ و شروع مجدد")
-                            self.save_checkpoint(
-                                "STEP_1_ENTRY_FORM",
-                                page=page,
-                                session_active=True,
-                                expected_next_step="STEP_1_ENTRY_FORM",
-                                last_error_reason="otp_expired_restart",
-                            )
-                            self._safe_goto_guarded(
-                                page,
-                                adapter.target_select_url,
-                                timeout=int(self.settings.get("navigation_timeout_ms", 35000)),
-                                wait_until="domcontentloaded",
-                                log_callback=self.log,
-                            )
-                            set_state("ENTRY_FORM")
+                            self.recover_authentication(page, stop_event, adapter, 'otp_expired')
+                            set_state('ENTRY_FORM')
                             continue
+                        elif result in {'manual_required', 'target_closed'}:
+                            if result == 'target_closed':
+                                break
+                            self.live_owner.paused = True
 
                     elif actual_stage == "FACILITY_SELECTION" or "seltcase" in page.url.lower():
                         set_state("FACILITY_SELECTION")

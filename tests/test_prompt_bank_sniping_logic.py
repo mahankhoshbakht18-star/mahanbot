@@ -178,7 +178,7 @@ class PromptBankSnipingLogicTests(repair.RepairTestCase):
         self.controller.tick(force=True)
         # Stale text did NOT cause immediate capacity_full; timeout causes claim to be retained
         self.assertEqual(self.controller.state, State.MANUAL_ACTION_REQUIRED)
-        self.assertNotEqual(DBHandler.get_checkpoint(self.nid).get("final_submit_status"), "pending")
+        self.assertEqual(DBHandler.get_checkpoint(self.nid).get("final_submit_status"), "pending")
         self.assertTrue(self.controller._awaiting_result)
 
     def test_06_independent_concurrent_applicants_and_stop_isolation(self):

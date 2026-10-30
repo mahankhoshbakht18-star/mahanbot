@@ -48,6 +48,8 @@ class TestBankPollingRadarAndReauth(unittest.TestCase):
         mock_bot.settings = {"bank_refresh_interval": 5.0, "otp_validity_seconds": 115.0}
         mock_bot.user_data = {"bank_name": "بانک صادرات ایران"}
         mock_owner = MockOwner()
+        mock_bot.live_owner = mock_owner
+        mock_bot.detect_actual_page_stage.return_value = 'STEP_3_BANK_SELECT'
 
         ctrl = BankSelectionSessionController(mock_bot, mock_owner)
         ctrl.observe = MagicMock(return_value=("STEP_3_BANK_SELECT", {"is_bank_page": True, "applicant_nid": "1234567890"}))
@@ -55,7 +57,8 @@ class TestBankPollingRadarAndReauth(unittest.TestCase):
 
         with patch("bank_session_controller.process_bank_selection_v2") as mock_proc:
             res = ctrl.tick()
-            self.assertEqual(res, "cycle_otp")
+            self.assertEqual(res, "waiting")
+            mock_owner.page.reload.assert_called_once()
             mock_proc.assert_not_called()
 
     def test_cycle_timeout_triggers_reauthentication(self):
@@ -67,6 +70,8 @@ class TestBankPollingRadarAndReauth(unittest.TestCase):
         mock_bot.settings = {"bank_refresh_interval": 2.0, "otp_validity_seconds": 120.0}
         mock_bot.user_data = {"bank_name": "بانک صادرات ایران"}
         mock_owner = MockOwner()
+        mock_bot.live_owner = mock_owner
+        mock_bot.detect_actual_page_stage.return_value = 'STEP_3_BANK_SELECT'
 
         ctrl = BankSelectionSessionController(mock_bot, mock_owner)
         ctrl.observe = MagicMock(return_value=("STEP_3_BANK_SELECT", {"is_bank_page": True, "applicant_nid": "1234567890"}))
@@ -76,8 +81,9 @@ class TestBankPollingRadarAndReauth(unittest.TestCase):
         ctrl._bank_not_found_since = now - 15.0  # Exceeded 10s cycle timeout
 
         res = ctrl.tick()
-        self.assertEqual(res, "reauthenticate")
-        self.assertEqual(ctrl.state, State.SESSION_EXPIRED)
+        self.assertEqual(res, "waiting")
+        self.assertNotEqual(ctrl.state, State.SESSION_EXPIRED)
+        mock_owner.page.context.clear_cookies.assert_not_called()
 
     def test_trigger_bank_capacity_refresh_evaluates_postback(self):
         """Verify trigger_bank_capacity_refresh invokes ASP.NET __doPostBack on ddlCity."""
@@ -93,9 +99,9 @@ class TestBankPollingRadarAndReauth(unittest.TestCase):
     def test_radar_ingestion_and_telegram_dedup(self):
         """Verify CAPACITY_RADAR ingests observation and detects active bank."""
         with patch("core.telegram_notifier.TELEGRAM_NOTIFIER.send_raw_telegram", return_value=(True, "OK")):
-            has_changed, old_status, evt_id = CAPACITY_RADAR.ingest_observation(
+            has_changed, evt_id, old_status = CAPACITY_RADAR.ingest_observation(
                 province_name="تهران",
-                city_name="تهران",
+                city_name="isolated-" + __import__('uuid').uuid4().hex,
                 bank_name="بانک تجارت",
                 status=CapacityStatus.AVAILABLE_OBSERVED,
                 loan_type="marriage",

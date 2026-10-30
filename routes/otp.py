@@ -45,6 +45,16 @@ async def _signal_otp_event(nid: str) -> None:
     event.set()
 
 
+def _notify_otp_waiter(nid: str) -> None:
+    loop = _state.MAIN_LOOP
+    if loop is None or loop.is_closed() or not loop.is_running():
+        return
+    try:
+        loop.call_soon_threadsafe(lambda: asyncio.create_task(_signal_otp_event(nid)))
+    except RuntimeError:
+        pass  # Shutdown can race SMS delivery; SQLite retains the received code.
+
+
 def _handle_receive_sms(nid: str, code: str, status_label: str = "received", ts: Optional[float] = None) -> bool:
     import re
     from sms_service import normalize_digits
@@ -56,23 +66,27 @@ def _handle_receive_sms(nid: str, code: str, status_label: str = "received", ts:
     if previous and previous.get("otp") == code and otp_ts - float(previous.get("ts") or 0) < 600:
         # Forwarder retries must not turn a stale/consumed message into a fresh code.
         return True
-    request_id = DBHandler.get_runtime(nid).get("otp_request_id")
+    runtime = DBHandler.get_runtime(nid)
+    request_id = runtime.get("otp_request_id")
     from core.otp_queue import OTPQueueManager
     ok, _ = OTPQueueManager.deliver_otp(code, source=status_label, explicit_nid=nid, request_id=request_id)
-    success = DBHandler.set_otp(nid, code, ts=otp_ts, status=status_label, request_id=request_id)
+    success = DBHandler.set_otp(nid, code, ts=otp_ts, status=status_label, request_id=request_id,
+                               otp_type=runtime.get('otp_type', 'REGISTRATION_OTP'))
     if not success and not ok:
         return False
     DBHandler.update_runtime(nid, otp_state="SMS_RECEIVED")
     log_event(nid, None, "OTP received", "success")
     logger.info("OTP received for %s; notifying waiters", _mask_identifier(nid))
-    if _state.MAIN_LOOP:
-        _state.MAIN_LOOP.call_soon_threadsafe(lambda: asyncio.create_task(_signal_otp_event(nid)))
+    _notify_otp_waiter(nid)
     return True
 
 
 # ── OTP endpoints ─────────────────────────────────────────────────────
 @router.post("/receive_sms")
 def receive_sms(req: SMSRequest, _: bool = Depends(require_otp_secret)):
+    expected_type = DBHandler.get_runtime(_normalize_nid(req.nid)).get('otp_type', 'REGISTRATION_OTP') if req.nid else None
+    if req.otp_type and expected_type and req.otp_type != expected_type:
+        raise HTTPException(status_code=409, detail='OTP operation does not match')
     if req.request_id and req.nid and req.request_id != DBHandler.get_runtime(_normalize_nid(req.nid)).get("otp_request_id"):
         raise HTTPException(status_code=409, detail="OTP request does not match the current applicant request")
     # 1. If text/message/body is provided, route via smart parser
@@ -84,12 +98,15 @@ def receive_sms(req: SMSRequest, _: bool = Depends(require_otp_secret)):
             explicit_nid=req.nid,
             explicit_code=req.code,
             request_id=req.request_id,
+            otp_type=req.otp_type,
         )
         if ok:
             return {"status": "ok", "ts": time.time(), **res}
         raise HTTPException(status_code=400, detail=res)
 
     raw_nid = str(req.nid or "").strip()
+    if expected_type and expected_type != 'REGISTRATION_OTP' and req.otp_type != expected_type:
+        raise HTTPException(status_code=409, detail='Explicit OTP operation is required')
     nid = _normalize_nid(raw_nid)
     code = str(req.code or "").strip()
 
@@ -129,6 +146,7 @@ async def universal_sms_webhook(request: Request, _: bool = Depends(require_otp_
     explicit_nid = None
     explicit_code = None
     request_id = None
+    otp_type = None
 
     content_type = request.headers.get("content-type", "").lower()
     if "application/json" in content_type:
@@ -140,6 +158,7 @@ async def universal_sms_webhook(request: Request, _: bool = Depends(require_otp_
                 explicit_nid = data.get("nid")
                 explicit_code = data.get("code") or data.get("otp")
                 request_id = data.get("request_id")
+                otp_type = data.get('otp_type')
         except Exception:
             pass
     elif "application/x-www-form-urlencoded" in content_type or "multipart/form-data" in content_type:
@@ -150,6 +169,7 @@ async def universal_sms_webhook(request: Request, _: bool = Depends(require_otp_
             explicit_nid = form.get("nid")
             explicit_code = form.get("code") or form.get("otp")
             request_id = form.get("request_id")
+            otp_type = form.get('otp_type')
         except Exception:
             pass
     
@@ -172,6 +192,7 @@ async def universal_sms_webhook(request: Request, _: bool = Depends(require_otp_
         explicit_nid=explicit_nid,
         explicit_code=explicit_code,
         request_id=request_id,
+        otp_type=otp_type,
     )
 
     if ok:
@@ -221,7 +242,11 @@ def manual_otp(req: SMSRequest):
         raise HTTPException(status_code=400, detail="Invalid payload")
 
     final_nid = nid or raw_nid
-    success = DBHandler.save_otp(final_nid, code, status="manual")
+    current_request = DBHandler.get_runtime(final_nid).get('otp_request_id')
+    if req.request_id and req.request_id != current_request:
+        raise HTTPException(status_code=409, detail='OTP request does not match')
+    success = DBHandler.set_otp(final_nid, code, status="manual", request_id=current_request,
+                               otp_type=DBHandler.get_runtime(final_nid).get('otp_type', 'REGISTRATION_OTP'))
     if not success and raw_nid and raw_nid != final_nid:
         success = DBHandler.save_otp(raw_nid, code, status="manual")
     if not success:
@@ -233,16 +258,7 @@ def manual_otp(req: SMSRequest):
     DBHandler.update_runtime(final_nid, otp_state="SMS_RECEIVED")
     log_event(final_nid, None, "OTP received manually", "success")
     logger.info("Manual OTP received for %s; notifying waiters", _mask_identifier(final_nid))
-    try:
-        event = OTP_EVENTS.get(final_nid)
-        if not event:
-            event = asyncio.Event()
-            OTP_EVENTS[final_nid] = event
-        event.set()
-    except Exception:
-        pass
-    if _state.MAIN_LOOP:
-        _state.MAIN_LOOP.call_soon_threadsafe(lambda: asyncio.create_task(_signal_otp_event(final_nid)))
+    _notify_otp_waiter(final_nid)
     _emit_applicants_snapshot()
     return {"status": "ok", "source": "manual"}
 
@@ -275,7 +291,7 @@ async def wait_otp(nid: str, timeout: int = 120, min_ts: float = 0.0):
             except Exception:
                 record_ts = 0.0
         ttl = DBHandler.get_config().get("otp_validity_seconds", 120)
-        if record and record.get("otp") and record.get("status") != "consumed" and record_ts > min_ts and 0 <= time.time() - record_ts <= ttl:
+        if record and record.get("otp") and record.get("status") not in {"consumed", "expired", "rejected", "submitted"} and record_ts > min_ts and 0 <= time.time() - record_ts <= ttl:
             logger.info(
                 "wait_otp released for %s ts=%s > min_ts=%s",
                 _mask_identifier(nid), record_ts, min_ts,

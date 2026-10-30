@@ -14,6 +14,7 @@ class ApplicantModel(BaseModel):
 
 class SMSRequest(BaseModel):
     request_id: Optional[str] = None
+    otp_type: Optional[str] = None
     nid: Optional[str] = None
     code: Optional[str] = None
     text: Optional[str] = None

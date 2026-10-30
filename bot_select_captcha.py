@@ -420,6 +420,8 @@ def wait_for_captcha_image_ready(
                     cnt = loc.count()
                     for idx in range(min(cnt, 4)):
                         cand = loc.nth(idx)
+                        if hasattr(cand, 'locator') and cand.evaluate('el => el.tagName') != 'IMG' and cand.locator('img').count():
+                            cand = cand.locator('img').first
                         if not cand.is_visible():
                             continue
 
@@ -462,17 +464,21 @@ def wait_for_captcha_image_ready(
 
         if trigger_refresh_if_missing and not refreshed_once and (deadline - time.time()) < (timeout_ms / 2000.0):
             refreshed_once = True
+            clicked = False
             for scope in _iter_scopes():
                 for rsel in CAPTCHA_RELOAD_SELECTORS:
                     try:
                         rloc = scope.locator(rsel)
                         if rloc.count() > 0 and rloc.first.is_visible():
                             rloc.first.click(timeout=700)
+                            clicked = True
                             break
                     except Exception:
                         continue
+                if clicked:
+                    break
 
-        time.sleep(0.08)
+        page.wait_for_timeout(40)
 
     return None, None
 
@@ -487,94 +493,51 @@ def refresh_captcha_or_reload(
     captcha_rejected=False,
     **kwargs,
 ):
-    """Smart strategy: Try clicking refresh button or image first, then fallback to full reload if allowed."""
-    old_src = None
-    try:
-        current_img, _ = wait_for_captcha_image_ready(page, timeout_ms=800, trigger_refresh_if_missing=False)
-        if current_img is not None:
-            old_src = current_img.evaluate("""el => {
-                const img = el.tagName && el.tagName.toLowerCase() === 'img' ? el : el.querySelector('img');
-                return img ? (img.getAttribute('src') || '') : '';
-            }""")
-    except Exception:
-        old_src = None
-
-    for attempt in range(max_retries):
-        try:
-            target_scope = page
-            clicked_reload = False
-            for rsel in CAPTCHA_RELOAD_SELECTORS:
-                try:
-                    reload_btn = target_scope.locator(rsel).first
-                    if reload_btn.count() > 0 and reload_btn.is_visible():
-                        reload_btn.click(timeout=1000)
-                        clicked_reload = True
-                        break
-                except Exception:
-                    continue
-
-            if not clicked_reload:
-                try:
-                    cimg, _ = wait_for_captcha_image_ready(page, timeout_ms=600, trigger_refresh_if_missing=False)
-                    if cimg is not None:
-                        cimg.click(timeout=800)
-                        clicked_reload = True
-                except Exception:
-                    pass
-
-            if clicked_reload:
-                if input_sel:
-                    try:
-                        loc = page.locator(input_sel)
-                        if loc.count() > 0 and loc.first.is_visible():
-                            loc.first.fill("")
-                    except Exception:
-                        pass
-
-                new_img, _ = wait_for_captcha_image_ready(
-                    page, timeout_ms=2500, trigger_refresh_if_missing=False, previous_src=old_src
-                )
-                if new_img is not None:
-                    return True
-        except Exception:
-            continue
-
-    if not allow_reload:
+    """Refresh only a rejected challenge, in the same frame as its answer."""
+    rejected = (captcha_rejected or getattr(bot, '_last_dialog_action', None) == 'captcha_invalid'
+                or detect_captcha_failure(page))
+    if not rejected:
         return False
-
+    image, scope = wait_for_captcha_image_ready(page, timeout_ms=800, trigger_refresh_if_missing=False)
+    if image is None:
+        image, scope = wait_for_captcha_image_ready(page, timeout_ms=800, trigger_refresh_if_missing=True)
+        return image is not None
+    old_src = image.evaluate("el => el.getAttribute('src') || ''")
     try:
-        page.reload(wait_until="commit")
-        try:
-            page.wait_for_load_state("domcontentloaded", timeout=min(timeout, 3000))
-        except Exception:
-            pass
-        return True
+        for selector in CAPTCHA_RELOAD_SELECTORS:
+            link = scope.locator(selector).first
+            if link.count() and link.is_visible():
+                link.click(timeout=1000)
+                break
+        else:
+            image.click(timeout=1000)
+        answer = scope.locator(input_sel).first if input_sel else None
+        if answer is not None and answer.count() and answer.is_visible():
+            answer.fill('')
+        bot._last_dialog_action = None
+        flags = getattr(bot, '_recovery_flags', {})
+        if isinstance(flags, dict):
+            flags['captcha_invalid'] = False
+        fresh, _ = wait_for_captcha_image_ready(page, timeout_ms=min(timeout, 2500),
+                         trigger_refresh_if_missing=False, previous_src=old_src)
+        return fresh is not None
     except Exception:
         return False
+
 
 def detect_captcha_failure(page) -> bool:
-    """Detect if CAPTCHA submission failed based on page content."""
-    phrases = [
-        "کد امنیتی اشتباه",
-        "کد امنیتی صحیح",
-        "کد امنیتی نادرست",
-        "کد امنیتی وارد شده نامعتبر",
-        "کد امنیتی نامعتبر",
-        "کد تصویر نامعتبر",
-        "کد تصویر اشتباه",
-        "تصویر امنیتی",
-        "عبارت امنیتی",
-        "security code",
-        "captcha incorrect",
-        "invalid captcha",
-        "کپچا نامعتبر",
-        "کپچا اشتباه",
-    ]
+    """Only visible server rejection text counts; labels and scripts are not errors."""
+    import re
+    from otp_form_detector import normalize_text, live_scopes
     try:
-        content = page.content()
+        for scope in live_scopes(page):
+            text = normalize_text(scope.locator('body').inner_text(timeout=500))
+            if re.search(r'(?:کد امنیتی|کد تصویر|کپچا|عبارت امنیتی|security code).{0,30}'
+                         r'(?:اشتباه|نادرست|نامعتبر|صحیح نیست|صحیح نمی|incorrect|invalid)', text):
+                return True
     except Exception:
-        return False
-    return any(phrase in content for phrase in phrases)
+        pass
+    return False
 
 
 def detect_form_validation_error(page) -> Optional[str]:
@@ -675,7 +638,7 @@ def wait_for_manual_captcha_handoff(
                 continue
 
         now = time.time()
-        if now - last_model_try_ts >= 2.5:
+        if not bot.settings.get('pause_for_manual_captcha', False) and now - last_model_try_ts >= 2.5:
             last_model_try_ts = now
             try:
                 img_loc, _ = wait_for_captcha_image_ready(page, timeout_ms=600, trigger_refresh_if_missing=True)
@@ -697,8 +660,7 @@ def wait_for_manual_captcha_handoff(
                         ):
                             time.sleep(0.6)
                             continue
-                    else:
-                        refresh_captcha_or_reload(bot, page, input_sel=input_sel, allow_reload=False)
+                    # Keep the same challenge available for manual entry.
             except Exception:
                 pass
 
@@ -732,8 +694,7 @@ def solve_captcha_wrapper(bot, page, input_sel, btn_sel, mode):
                     pass
 
             if not solve_captcha_step(bot, page, input_sel, btn_sel, source="otp"):
-                refresh_captcha_or_reload(bot, page, input_sel=input_sel, allow_reload=False)
-                continue
+                return False
 
             code = ""
             try:

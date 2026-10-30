@@ -1023,10 +1023,38 @@ function renderActiveApplicantCard(user) {
 
 function isOtpWaiting(user) {
     const runtime = user.runtime || {};
+    if (/^(STEP2_|WAITING_FOR_NEW_OTP|OTP_REAUTH_REQUIRED)/.test(runtime.workflow_state || '')) return true;
     const step = String(runtime.current_step || '').toUpperCase();
     if (/(BANK|CAPACITY|FINAL|RESERVE|DONE|STOPPED|MANUAL_ACTION_REQUIRED)/.test(step)) return false;
     return /^(STEP_2_OTP|OTP_FORM|WAITING_SMS|OTP_REQUIRED|OTP_MANUAL_REQUIRED|MANUAL_OTP_REQUIRED)$/.test(step)
         || /waiting (sms|otp)|منتظر پیامک/i.test(String(user.status || ''));
+}
+
+const WORKFLOW_LABELS_FA = {
+    STEP1_IDENTIFICATION: 'ورود اطلاعات', STEP1_CAPTCHA_REQUIRED: 'کپچای مرحله اول',
+    STEP2_OTP_REQUIRED: 'در انتظار پیامک', STEP2_CAPTCHA_REQUIRED: 'کپچای مرحله پیامک',
+    STEP2_READY_TO_CONTINUE: 'آماده تأیید پیامک', WAITING_FOR_NEW_OTP: 'در انتظار کد جدید',
+    OTP_REAUTH_REQUIRED: 'نیازمند پیامک جدید', STEP3_ACTIVE: 'صفحه سوم فعال',
+    STEP3_CHECKING_BANKS: 'بررسی بانک‌ها', STEP3_QUOTA_AVAILABLE: 'بانک مناسب آماده',
+    STEP3_NO_MATCH: 'در انتظار ظرفیت', RELOAD_PENDING: 'در حال بازخوانی',
+    PAGE_REDETECTING: 'در حال شناسایی صفحه', SESSION_EXPIRED: 'نشست منقضی',
+    SESSION_RECOVERING: 'در حال ورود مجدد', FINAL_SUBMIT_PENDING: 'نتیجه ثبت نیازمند بررسی',
+    FINAL_SUBMITTING: 'در حال ثبت', FINAL_SUBMIT_CONFIRMED: 'ثبت تأیید شد',
+    PAUSED: 'نیازمند بررسی کاربر / توقف', FAILED: 'خطای گردش کار', UNKNOWN: 'صفحه نامشخص'
+};
+
+const OTP_LABELS_FA = {
+    WAITING_FOR_SMS: 'در انتظار پیامک', WAITING_SMS: 'در انتظار پیامک', SMS_RECEIVED: 'پیامک دریافت شد',
+    CODE_VALIDATED: 'در حال بررسی', VERIFYING_OTP: 'در حال بررسی', OTP_SUBMITTED: 'در حال تأیید',
+    OTP_ACCEPTED: 'تأیید شد', OTP_EXPIRED: 'منقضی شد', OTP_INVALID: 'کد اشتباه',
+    MANUAL_OTP_REQUIRED: 'نیازمند ورود دستی', CAPTCHA_REQUIRED: 'نیازمند پاسخ کپچا'
+};
+
+function workflowBadge(runtime) {
+    const state = runtime.workflow_state;
+    if (!state) return '';
+    const title = `${runtime.workflow_reason || ''} | ${runtime.workflow_checked_at ? new Date(runtime.workflow_checked_at * 1000).toLocaleTimeString('fa-IR') : ''}`;
+    return `<small class="badge bg-light text-dark border d-block mt-1" role="status" title="${escapeHtml(title)}">${escapeHtml(WORKFLOW_LABELS_FA[state] || state)}</small>`;
 }
 
 let manualOtpTargetNid = null;
@@ -1233,7 +1261,7 @@ function renderMainList(data) {
                 </td>
                 <td class="font-monospace text-center fw-semibold" style="color: #E2E8F0; font-size: 13px; letter-spacing: 0.5px;">${formatNid(user.national_id)}</td>
                 <td class="font-monospace text-center">${codeBadge}</td>
-                <td class="text-center"><span class="badge ${getStatusBadge(user.status)}">${translateStatus(user.status)}</span></td>
+                <td class="text-center"><span class="badge ${getStatusBadge(user.status)}">${translateStatus(user.status)}</span>${workflowBadge(user.runtime || {})}</td>
                 <td class="text-center"><button class="btn btn-sm btn-outline-success rounded-pill px-3" onclick="startRegister('${user.national_id}')"><i class="fas fa-play me-1"></i>شروع ثبت‌نام</button></td>
                 <td class="text-center"><button class="btn btn-sm btn-outline-warning rounded-pill px-3" onclick="stopBot('${user.national_id}')"><i class="fas fa-stop me-1"></i>توقف</button></td>
                 <td class="text-center"><button class="btn btn-sm btn-outline-danger rounded-circle p-2" title="حذف متقاضی" onclick="deleteApplicant('${user.national_id}')"><i class="fas fa-trash"></i></button></td>
@@ -4991,8 +5019,8 @@ function renderQueueTable(items) {
             <td><code>${toPersianNum(nidDisplay)}</code></td>
             <td><small class="badge bg-light text-dark border">${it.loan_type === 'CHILD' ? 'فرزندآوری' : 'ازدواج'}</small></td>
             <td><small>${it.requested_bank || 'همه بانک‌ها'}</small></td>
-            <td><span class="${fsmInfo.cls}">${fsmInfo.text}</span></td>
-            <td><small>${it.otp_state || '-'}</small></td>
+            <td><span class="${fsmInfo.cls}">${fsmInfo.text}</span>${workflowBadge(it)}</td>
+            <td><small>${escapeHtml(OTP_LABELS_FA[it.otp_state] || it.otp_state || '-')}</small></td>
             <td>${sessionDot}</td>
             <td><small class="text-muted">${lastAct}</small></td>
             <td>

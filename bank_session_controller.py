@@ -1,5 +1,6 @@
-"""Page-three lifecycle. Observation never reloads or synthesizes WebForms postbacks."""
+"""Owned page-three lifecycle with guarded native navigation and live redetection."""
 import json
+import logging
 import time
 
 from bank_page_manager import BankPageState as State, analyze_bank_page_html, capture_dom_html
@@ -11,6 +12,9 @@ from bot_select_bank import (
     extract_confirmed_reservation,
 )
 from network_diagnostics import check_rejection
+from core.loan_workflow import workflow_for
+
+logger = logging.getLogger('mahanbot.bank_session')
 
 
 class BankSelectionSessionController:
@@ -38,6 +42,9 @@ class BankSelectionSessionController:
         self._last_observation = {}
         self._state_before_pause = None
         self._observation_issue = ""
+        self._next_bank_poll = 0.0
+        self._dom_failures = 0
+        workflow_for(bot).bind(owner.page)
         bot.bank_state_observer = self.transition
         owner.page.on("response", self._on_response)
         owner.page.on("request", self._on_request)
@@ -64,6 +71,8 @@ class BankSelectionSessionController:
 
     def _on_request(self, request):
         if self._is_final_request(request):
+            if not self._submitting:
+                DBHandler.claim_final_submission(self.bot.nid)
             self._requests.add(id(request))
 
     def _on_request_failed(self, request):
@@ -109,6 +118,18 @@ class BankSelectionSessionController:
         self._last_reason = reason
         previous = self.state
         self.state = owner.current_state = state
+        mapping = {State.BANK_PAGE_DETECTED: 'STEP3_ACTIVE', State.BANK_OPTIONS_READY: 'STEP3_CHECKING_BANKS',
+                   State.BANK_OPTIONS_LOADING: 'STEP3_CHECKING_BANKS', State.FINAL_SUBMIT_READY: 'STEP3_QUOTA_AVAILABLE',
+                   State.PREFERRED_BANK_NOT_FOUND: 'STEP3_NO_MATCH', State.CAPACITY_FULL: 'STEP3_NO_MATCH',
+                   State.FINAL_SUBMIT_IN_PROGRESS: 'FINAL_SUBMITTING', State.REGISTRATION_CONFIRMED: 'FINAL_SUBMIT_CONFIRMED',
+                   State.SESSION_EXPIRED: 'SESSION_EXPIRED', State.PAUSED: 'PAUSED', State.MANUAL_ACTION_REQUIRED: 'PAUSED'}
+        workflow = workflow_for(bot)
+        target = mapping.get(state)
+        if target and workflow.state != 'FINAL_SUBMIT_CONFIRMED':
+            from core.loan_workflow import TRANSITIONS
+            if target not in TRANSITIONS[workflow.state] and target != workflow.state:
+                workflow.transition('PAGE_REDETECTING', 'bank_state_observation')
+            workflow.transition(target, reason or state)
         owner.last_successful_transition = time.time()
         active = owner.bank_page_active and state != State.SESSION_EXPIRED
         selected = self._last_observation.get("selected_bank") or {}
@@ -177,7 +198,7 @@ class BankSelectionSessionController:
         elif stage in {"STEP_1_ENTRY_FORM", "STEP_2_OTP"}:
             self.owner.bank_page_active = False
             self.owner.validated_at = 0
-            return State.SESSION_EXPIRED, data
+            return stage, data
         return stage, data
 
     @staticmethod
@@ -291,6 +312,27 @@ class BankSelectionSessionController:
             while not owner.commands.empty():
                 commands.append(owner.commands.get_nowait())
             for command in commands:
+                if isinstance(command, dict) and command.get('action') == 'switch_city':
+                    cp = DBHandler.get_checkpoint(bot.nid)
+                    if self._requests or self._awaiting_result or cp.get('final_submit_status'):
+                        self.transition(State.MANUAL_ACTION_REQUIRED, 'previous_submission_requires_reconciliation')
+                        continue
+                    from core.step3_bank_page import Step3BankPage
+                    if not Step3BankPage().switch_city(owner.page, command['city_code']):
+                        self.transition(State.MANUAL_ACTION_REQUIRED, 'city_not_available_in_live_form')
+                    else:
+                        city = owner.page.locator(Step3BankPage.CITY_SELECTOR)
+                        name = city.locator('option:checked').inner_text(timeout=1000).strip()
+                        DBHandler.update_applicant_data(bot.nid, {'city': name, 'city_code': command['city_code']})
+                        bot.user_data['city'] = name
+                        bot.save_checkpoint('STEP_3_BANK_SELECT', city=name, city_code=command['city_code'])
+                    self._prepared = False
+                    force = True
+                    continue
+                if command == 'redetect':
+                    self._prepared = False
+                    force = True
+                    continue
                 if command == "reauthenticate":
                     owner.bank_page_active = False
                     return "reauthenticate"
@@ -311,13 +353,6 @@ class BankSelectionSessionController:
                                         bank_state=self.state, session_id=owner.session_id,
                                         session_active=owner.bank_page_active)
 
-            # Neutralize CBI unload logout trap immediately upon entering Step 3
-            try:
-                from core.step3_bank_page import Step3BankPage
-                Step3BankPage().disable_logout_trap(owner.page)
-            except Exception:
-                pass
-
             # Always pump/validate the current page, even while paused.
             stage, data = self.observe()
             if stage == "closed":
@@ -325,6 +360,22 @@ class BankSelectionSessionController:
             if self._observation_issue:
                 self.transition(State.MANUAL_ACTION_REQUIRED, self._observation_issue)
                 return "waiting"
+            if self._blocked:
+                self.transition(State.MANUAL_ACTION_REQUIRED, 'security_or_rate_limit')
+                return 'waiting'
+            if workflow_for(bot).http_status >= 500:
+                self.transition(State.MANUAL_ACTION_REQUIRED, 'server_error_requires_review')
+                return 'waiting'
+            if owner.paused:
+                self.transition(State.PAUSED)
+                return 'waiting'
+            if stage == 'STEP_2_OTP':
+                self._prepared = False
+                workflow_for(bot).redetect(owner.page, 'step3_navigation_to_otp')
+                return 'cycle_otp'
+            if stage == 'STEP_1_ENTRY_FORM':
+                workflow_for(bot).redetect(owner.page, 'step3_navigation_to_entry')
+                return 'entry_form'
             if self.state == State.SESSION_EXPIRED or stage == State.SESSION_EXPIRED or data.get("state") == State.SESSION_EXPIRED or bot.consume_recovery_flag("session_expired") or bot.consume_recovery_flag("otp_expired"):
                 owner.bank_page_active = False
                 owner.validated_at = 0
@@ -350,11 +401,6 @@ class BankSelectionSessionController:
                     return "reauthenticate"
                 self.transition(State.MANUAL_ACTION_REQUIRED, "unrecognized_live_dom")
                 return "waiting"
-
-            # ── UNIFIED 7-PIECE STEP 3 EXECUTION ──────────────────────────
-            res = self.evaluate_and_execute_bank_logic(owner.page)
-            if res in {"confirmed", "cycle_otp", "reauthenticate", "stopped"}:
-                return res
 
             bot.clear_otp_locks()
             bot.consume_recovery_flag("otp_expired")
@@ -417,6 +463,7 @@ class BankSelectionSessionController:
                 dom_capacity = (data.get('state') == State.CAPACITY_FULL and data.get('error_message') != self._unknown_error
                                 and response.get('status', 200) < 400)
                 if response_data.get('state') == State.CAPACITY_FULL or dialog_capacity or dom_capacity:
+                    DBHandler.release_final_submission_claim(bot.nid)
                     self._awaiting_result = False
                     self._last_attempt_completed = self._monotonic()
                     self._next_submit = self._last_attempt_completed + interval
@@ -436,59 +483,9 @@ class BankSelectionSessionController:
             observation = self._selection_signature(data)
             if self._prepared and observation != getattr(self, '_last_selection', None):
                 self._prepared = False
-            if self.state == State.PREFERRED_BANK_NOT_FOUND:
-                # ZERO CAMPING ON STEP 3:
-                # As proven by CBI server field tests and HTML analysis, bank quotas are provincial
-                # and cached in __VIEWSTATE on initial page entry (!IsPostBack). Staying on Step 3
-                # never fetches new bank quotas from the database.
-                # When priority bank is not available, we immediately disarm the unload trap
-                # and cycle back to the OTP/Captcha form to force the CBI server to reload
-                # the fresh provincial quota list from database.
-
-                target_names = self._get_target_bank_names()
-                target_display = " / ".join(target_names) or "بانک اولویت‌دار متقاضی"
-
-                try:
-                    from core.step3_bank_page import Step3BankPage
-                    Step3BankPage().disable_logout_trap(owner.page)
-                except Exception:
-                    pass
-
-                # Check if OTP has genuinely expired (> 115s from entry)
-                try:
-                    otp_entry_time = float(getattr(bot, "_otp_entry_time", 0) or 0)
-                except Exception:
-                    otp_entry_time = 0.0
-                try:
-                    otp_validity = float(bot.settings.get("otp_validity_seconds", 115))
-                except Exception:
-                    otp_validity = 115.0
-
-                otp_expired_by_time = otp_entry_time > 0 and (time.time() - otp_entry_time) >= otp_validity
-                has_otp_expired_flag = bot.consume_recovery_flag("otp_expired") or bot.consume_recovery_flag("session_expired")
-
-                if otp_expired_by_time or has_otp_expired_flag:
-                    bot.log(f"⏱️ مهلت پیامک جاری ({int(otp_validity)} ثانیه) به پایان رسید؛ بازگشت به مرحله ۱ جهت اخذ پیامک جدید...", "warning", owner.page)
-                    owner.bank_page_active = False
-                    self.transition(State.SESSION_EXPIRED, "otp_expired_refresh")
-                    return "reauthenticate"
-
-                elapsed_sec = int(time.time() - otp_entry_time) if otp_entry_time > 0 else 0
-                rem_sec = max(0, int(otp_validity - elapsed_sec))
-                bot.log(f"⚡ بانک ({target_display}) در سهمیه فعلی استان نیست؛ رفرش فوری و بازگشت به مرحله پیامک/کپچا (اعتبار پیامک: {rem_sec} ثانیه) جهت کوئری تازه دیتابیس سرور...", "info", owner.page)
-
-                # Disarm trap and reload page to go to OTP stage
-                try:
-                    from core.step3_bank_page import Step3BankPage
-                    Step3BankPage().disable_logout_trap(owner.page)
-                    owner.bank_page_active = False
-                    owner.page.reload()
-                except Exception as e:
-                    logger.warning(f"Reload failed: {e}")
-
-                self._prepared = False
-                self.transition(State.BANK_OPTIONS_LOADING, "cycled_back_to_otp")
-                return "cycle_otp"
+            if self.state == State.PREFERRED_BANK_NOT_FOUND and self._monotonic() >= self._next_bank_poll:
+                if cfg.get('bank_monitor_enabled', True):
+                    return self.reload_and_redetect()
 
             if not self._prepared:
                 self.transition(State.BANK_OPTIONS_READY)
@@ -535,282 +532,71 @@ class BankSelectionSessionController:
                 DBHandler.update_runtime(bot.nid, next_refresh=0, check_method='live_dom_only')
             return 'waiting' 
 
-    def perform_warm_tab_handover(self) -> bool:
-        """
-        Piece 6: Zero-Downtime Warm Tab Handover.
-        When OTP expires or session times out:
-        1. Opens new tab in browser context (context.new_page())
-        2. Navigates to SelTasCase.aspx (Step 1)
-        3. Fills National ID, solves primary captcha, requests fresh OTP
-        4. Closes old expired tab safely
-        5. Re-binds owner.page and bot.page to new_page
-        """
+    def reload_and_redetect(self):
+        """Native reload is not an authentication shortcut; classify its actual result."""
         bot, owner = self.bot, self.owner
-        old_page = owner.page
-        try:
-            context = getattr(owner, "context", None)
-            if context is None:
-                context = getattr(old_page, "context", None)
-            if context is None:
-                return False
-            new_page = context.new_page()
-            bot.log("🌐 باز کردن تب جدید موازی جهت تمدید سشن و اخذ پیامک تازه (Warm Tab Handover)...", "info", new_page)
-
-            entry_url = getattr(bot, "entry_url", "https://ve.cbi.ir/SelTasCase.aspx")
-            new_page.goto(entry_url, wait_until="commit", timeout=15000)
-
-            from browser_actions import BrowserActions
-            BrowserActions.fast_fill(new_page, "#ctl00_ContentPlaceHolder1_tbIDNo, input[name$='tbIDNo']", str(bot.nid))
-
-            from bot_select_captcha import solve_captcha_step
-            captcha_in = BrowserActions.find_captcha_input(new_page)
-            btn_sel = "#ctl00_ContentPlaceHolder1_btnCheck, input[type='submit']"
-            if captcha_in and captcha_in.is_visible():
-                solve_captcha_step(bot, new_page, captcha_in, btn_sel)
-                new_page.wait_for_timeout(500)
-
-            bot.log("📨 درخواست پیامک جدید در تب تازه با موفقیت ارسال شد؛ بستن تب منقضی‌شده قبلی...", "success", new_page)
-            try:
-                old_page.close()
-            except Exception:
-                pass
-
-            owner.page = new_page
-            bot.page = new_page
-            owner.bank_page_active = False
-            return True
-        except Exception as e:
-            logger.warning(f"Warm tab handover failed: {e}")
-            return False
-
-    def _attempt_submission_with_fallbacks(self, step3, page, matched_option, target_display: str, is_reserve: bool = False):
-        """
-        Attempts to submit bank selection.
-        If non-presential quota full error occurs, automatically switches to in-person (rbtnHozori)
-        and re-submits.
-        Returns tracking code string if confirmed, or None.
-        """
-        bot = self.bot
-        try:
-            step3.select_bank_option(page, matched_option.value)
-            step3.click_submit_btn(page)
-            res = step3.extract_tracking_or_error(page)
-
-            if res.get("is_success") and res.get("tracking_code"):
-                return res["tracking_code"]
-
-            # 1. Fallback: Non-presential capacity full -> switch to in-person (حضوری)
-            if res.get("is_non_presential_full"):
-                bot.log(f"⚠️ ظرفیت غیرحضوری {target_display} تکمیل شده؛ تغییر خودکار به گزینه حضوری...", "warning", page)
-                if step3.switch_to_in_person_mode(page):
-                    bot.log(f"🔄 حالت ثبت به حضوری تغییر یافت. تلاش مجدد برای ثبت نهایی {target_display}...", "info", page)
-                    step3.select_bank_option(page, matched_option.value)
-                    step3.click_submit_btn(page)
-                    res = step3.extract_tracking_or_error(page)
-                    if res.get("is_success") and res.get("tracking_code"):
-                        return res["tracking_code"]
-
-            err_msg = res.get("error_msg") or ""
-            if err_msg:
-                bot.log(f"⚠️ پیام سامانه پس از ارسال: {err_msg}", "warning", page)
-            return None
-        except Exception as e:
-            bot.log(f"❌ خطا در پردازش ارسال فرم بانک: {e}", "error", page)
-            return None
-
-    def evaluate_and_execute_bank_logic(self, page) -> str:
-        """
-        Piece 2, 3, 4, 5:
-        1. Read all options from ddlBankName via Step3BankPage
-        2. Differentiate active quota, reserve quota, and waiting count
-        3. Smart deduplication: check if banks changed before saving snapshot & updating banks_seen.json
-        4. Broadcast formatted radar notification to Telegram
-        5. Match applicant priority banks using PersianBankMatcher
-        6. Check auto_final_submit & allow_reserve rules:
-           - Active quota:
-             - If auto_final_submit is True -> select bank, wait for UpdatePanel2, click btnSave -> return 'confirmed'
-             - If auto_final_submit is False -> do NOT submit, reload & return 'cycle_otp'
-           - Reserve quota:
-             - If allow_reserve is True AND auto_final_submit is True -> select bank, wait for UpdatePanel2, click btnSave -> return 'confirmed'
-             - Else -> do NOT submit, reload & return 'cycle_otp'
-           - No match:
-             - reload & return 'cycle_otp' (or 'reauthenticate' if OTP expired)
-        """
-        bot, owner = self.bot, self.owner
-        from core.step3_bank_page import Step3BankPage
-        from core.bank_matcher import PersianBankMatcher, BankOptionInfo
-        from core.telegram_notifier import TelegramNotifierService
-        from database import DBHandler
-
-        step3 = Step3BankPage()
-        step3.disable_logout_trap(page)
-
-        # 1. Read live options
-        options = step3.read_live_bank_options(page)
-        prov, city = step3.get_location_names(page)
-
-        active_banks = [
-            {"bank_name": o.clean_title or o.text, "waiting_count": o.waiting_count, "value": o.value}
-            for o in options if o.has_active_quota
-        ]
-        reserve_banks = [
-            {"bank_name": o.clean_title or o.text, "waiting_count": o.waiting_count, "value": o.value}
-            for o in options if o.is_reserve
-        ]
-
-        # 2. Smart deduplicated archive (Piece 2)
-        if step3.should_save_page(bot, options):
-            step3.archive_banks_seen_nonblocking(bot, options, page=page)
-            # 3. Format and dispatch beautiful radar notification (Piece 3)
-            try:
-                notifier = TelegramNotifierService()
-                msg = notifier.format_beautiful_radar_message(
-                    province_name=prov,
-                    city_name=city,
-                    active_banks=active_banks,
-                    reserve_banks=reserve_banks,
-                    applicant_nid=str(bot.nid),
-                    action_status="پایش فعال ظرفیت"
-                )
-                admin_cid = notifier.get_admin_chat_id()
-                if admin_cid:
-                    notifier.send_raw_telegram(admin_cid, msg)
-                channel_cid = notifier.get_channel_id()
-                if channel_cid and channel_cid != admin_cid:
-                    notifier.send_raw_telegram(channel_cid, msg)
-            except Exception as e:
-                logger.warning(f"Radar telegram dispatch failed: {e}")
-
-        # 4. Check applicant priorities and toggles (Piece 4)
-        cfg = DBHandler.get_config()
-        auto_final_submit = bool(cfg.get("auto_final_submit", bot.settings.get("auto_final_submit", True)))
-        prefs = self._preferences()
-        p_banks = prefs.get("priority_banks") or prefs.get("banks") or []
-
-        matched_option = None
-        target_allow_reserve = False
-        target_display = ""
-
-        if isinstance(p_banks, list) and p_banks:
-            for item in p_banks:
-                p_name = ""
-                allow_res = False
-                if isinstance(item, dict):
-                    p_name = item.get("name") or item.get("bank_name") or ""
-                    allow_res = bool(item.get("allow_reserve", False))
-                elif isinstance(item, str):
-                    p_name = item
-                if not p_name:
-                    continue
-                match = PersianBankMatcher.match_best_bank(p_name, options, allow_reserve=allow_res)
-                if match:
-                    matched_option = match
-                    target_allow_reserve = allow_res
-                    target_display = p_name
-                    break
-
-        if not matched_option:
-            fallback = prefs.get("primary_bank") or prefs.get("bank_name") or (bot.user_data or {}).get("bank_name") or ""
-            if fallback:
-                target_allow_reserve = bool(prefs.get("allow_reserve", False))
-                matched_option = PersianBankMatcher.match_best_bank(fallback, options, allow_reserve=target_allow_reserve)
-                target_display = fallback
-
-        # Active Quota branch
-        if matched_option and matched_option.has_active_quota:
-            bot.log(f"🎯 بانک اولویت‌دار ({target_display}) با ظرفیت قطعی شناسایی شد!", "success", page)
-            if auto_final_submit:
-                bot.log(f"🚀 تیک ثبت نهایی فعال است؛ انتخاب بانک ({target_display}) و ارسال فرم نهایی...", "info", page)
-                tracking_code = self._attempt_submission_with_fallbacks(step3, page, matched_option, target_display, is_reserve=False)
-                if tracking_code:
-                    DBHandler.save_success_data(bot.nid, tracking_code)
-                    self.transition(State.REGISTRATION_CONFIRMED)
-                    bot.set_runtime_state("SUCCESS", State.REGISTRATION_CONFIRMED, browser_status="OPEN")
-                    bot.log(f"🎉 ثبت نهایی با موفقیت انجام شد! کد رهگیری: {tracking_code}", "success", page)
-                    return "confirmed"
-            else:
-                bot.log(f"⏸️ بانک اولویت‌دار ({target_display}) دارای ظرفیت است اما تیک «ثبت نهایی» غیرفعال است؛ ثبت انجام نشد (ادامه پایش)...", "warning", page)
-
-        # Reserve Quota branch
-        elif matched_option and matched_option.is_reserve:
-            if target_allow_reserve and auto_final_submit:
-                bot.log(f"📝 بانک اولویت‌دار ({target_display}) در حالت رزرو است و هر دو تیک (رزرو و ثبت نهایی) فعال هستند؛ ثبت درخواست رزرو...", "info", page)
-                tracking_code = self._attempt_submission_with_fallbacks(step3, page, matched_option, target_display, is_reserve=True)
-                if tracking_code:
-                    DBHandler.save_success_data(bot.nid, tracking_code)
-                    self.transition(State.REGISTRATION_CONFIRMED)
-                    bot.set_runtime_state("SUCCESS", State.REGISTRATION_CONFIRMED, browser_status="OPEN")
-                    bot.log(f"🎉 ثبت رزرو با موفقیت تایید شد! کد رهگیری: {tracking_code}", "success", page)
-                    return "confirmed"
-            else:
-                bot.log(f"⏸️ بانک ({target_display}) در حالت رزرو است اما شرایط ثبت (تیک رزرو و ثبت نهایی) برقرار نیست؛ ادامه پایش...", "info", page)
-
-        # Piece 5: Zero-camping OTP Cycle or Warm Handover
-        try:
-            otp_entry_time = float(getattr(bot, "_otp_entry_time", 0) or 0)
-        except Exception:
-            otp_entry_time = 0.0
-        try:
-            otp_validity = float(bot.settings.get("otp_validity_seconds", 115))
-        except Exception:
-            otp_validity = 115.0
-
-        otp_expired = (otp_entry_time > 0 and (time.time() - otp_entry_time) >= otp_validity) or bot.consume_recovery_flag("otp_expired")
-        if otp_expired:
-            bot.log(f"⏱️ مهلت پیامک جاری ({int(otp_validity)} ثانیه) به پایان رسید؛ خروج و بازگشت به مرحله ۱ جهت اخذ پیامک تازه...", "warning", page)
-            bot._last_retained_otp = None
-            owner.bank_page_active = False
-            self.transition(State.SESSION_EXPIRED, "otp_expired_refresh")
-            return "reauthenticate"
-
-        # 5-second interval: If preferred bank is not available, wait configured seconds then perform a full reload
-        poll_interval = float(bot.settings.get("bank_refresh_interval") or 5.0)
-        if poll_interval <= 0:
-            poll_interval = 5.0
-
-        try:
-            page.wait_for_timeout(int(poll_interval * 1000))
-        except Exception:
-            pass
-
-        # Check if OTP expired during the wait
-        if (otp_entry_time > 0 and (time.time() - otp_entry_time) >= otp_validity) or bot.consume_recovery_flag("otp_expired"):
-            bot.log(f"⏱️ مهلت پیامک جاری ({int(otp_validity)} ثانیه) به پایان رسید؛ خروج و بازگشت به مرحله ۱ جهت اخذ پیامک تازه...", "warning", page)
-            bot._last_retained_otp = None
-            owner.bank_page_active = False
-            self.transition(State.SESSION_EXPIRED, "otp_expired_refresh")
-            return "reauthenticate"
-
-        elapsed_sec = int(time.time() - otp_entry_time) if otp_entry_time > 0 else 0
-        rem_sec = max(0, int(otp_validity - elapsed_sec))
-        bot.log(f"🔄 بانک مدنظر در سهمیه نیست؛ ریلود کامل صفحه بعد از {int(poll_interval)} ثانیه و ورود مجدد از مرحله پیامک/کپچا (اعتبار پیامک: {rem_sec} ثانیه)...", "info", page)
-
-        step3.disable_logout_trap(page)
+        owner.assert_owner()
+        if owner.paused or owner.cancellation_token.is_set() or self._blocked:
+            return 'waiting'
+        from otp_form_detector import READY
+        if owner.page.evaluate(READY) is False:
+            return 'waiting'
+        cp = DBHandler.get_checkpoint(bot.nid)
+        if self._requests or self._awaiting_result or cp.get('final_submit_status') in {'pending', 'unknown'}:
+            self.transition(State.MANUAL_ACTION_REQUIRED, 'previous_submission_requires_reconciliation')
+            return 'waiting'
+        flow = workflow_for(bot)
+        flow.bind(owner.page)
+        interval = max(1.0, float(bot.settings.get('bank_list_refresh_seconds', bot.settings.get('bank_refresh_interval', 5))))
+        if self._monotonic() < self._next_bank_poll:
+            return 'waiting'
+        self._next_bank_poll = self._monotonic() + interval
+        flow.transition('RELOAD_PENDING', 'configured_native_reload')
+        bot.save_checkpoint('STEP_3_BANK_SELECT', page=owner.page, session_active=True,
+                            expected_next_step='PAGE_REDETECTING')
         owner.bank_page_active = False
         try:
-            try:
-                page.once("dialog", lambda dialog: dialog.accept())
-            except Exception:
-                pass
-            page.reload(wait_until="domcontentloaded", timeout=15000)
-        except Exception as e:
-            logger.warning(f"Reload failed: {e}")
-            try:
-                page.goto("https://ve.cbi.ir/SelectBnkShb.aspx", wait_until="domcontentloaded", timeout=15000)
-            except Exception:
-                pass
-
-        actual_after = bot.detect_actual_page_stage(page)
-        if actual_after == "STEP_1_ENTRY_FORM":
-            self.transition(State.SESSION_EXPIRED, "cycled_to_entry")
-            return "reauthenticate"
-        elif actual_after == "STEP_3_BANK_SELECT":
+            timeout = int(bot.settings.get('navigation_timeout_ms', 15000))
+            if flow.last_navigation_method == 'POST':
+                from urllib.parse import urlsplit
+                target = urlsplit(owner.page.url)
+                if target.hostname not in {'ve.cbi.ir', '127.0.0.1', 'localhost'} or target.scheme not in {'http', 'https'}:
+                    self.transition(State.MANUAL_ACTION_REQUIRED, 'unsafe_navigation_target')
+                    return 'waiting'
+                # Reloading a POST document resends its payload. Use the official GET entry instead.
+                target_url = target.scheme + '://' + target.netloc + getattr(bot, '_workflow_entry_path', '/SelectBnkShb.aspx')
+                if urlsplit(target_url).netloc != target.netloc:
+                    self.transition(State.MANUAL_ACTION_REQUIRED, 'unsafe_navigation_target')
+                    return 'waiting'
+                owner.page.goto(target_url, wait_until='domcontentloaded', timeout=timeout)
+            else:
+                owner.page.reload(wait_until='domcontentloaded', timeout=timeout)
+        except Exception:
+            if owner.page.is_closed():
+                flow.transition('FAILED', 'target_closed')
+                return 'stopped'
+            # A timeout can occur after navigation commits. Inspect before acting.
+        self._prepared = False
+        detection = flow.redetect(owner.page, 'post_reload_navigation')
+        self._next_bank_poll = self._monotonic() + interval
+        if detection.state in {'STEP2_OTP_REQUIRED', 'STEP2_CAPTCHA_REQUIRED', 'STEP2_READY_TO_CONTINUE'}:
+            return 'cycle_otp'
+        if detection.state in {'STEP1_IDENTIFICATION', 'STEP1_CAPTCHA_REQUIRED'}:
+            return 'entry_form'
+        if detection.state == 'SESSION_EXPIRED':
+            return 'reauthenticate'
+        if detection.state == 'STEP3_ACTIVE':
             owner.bank_page_active = True
-            self.transition(State.BANK_OPTIONS_READY, "refreshed_step3")
-            return "waiting"
-        else:
-            self.transition(State.BANK_OPTIONS_LOADING, "cycled_back_to_otp")
-            return "cycle_otp"
+            self.transition(State.BANK_OPTIONS_READY, 'refreshed_step3')
+            return 'waiting'
+        self.transition(State.MANUAL_ACTION_REQUIRED, detection.reason)
+        return 'waiting'
+
+    def evaluate_and_execute_bank_logic(self, page):
+        """Compatibility adapter; all selection and submit guards live in tick()."""
+        if page is not self.owner.page:
+            raise RuntimeError('Bank page does not belong to the applicant owner')
+        return self.tick(force=True)
 
     def run(self):
         self.owner.bank_page_active = True
@@ -819,12 +605,15 @@ class BankSelectionSessionController:
             while not self.owner.cancellation_token.is_set():
                 try:
                     result = self.tick()
-                    if result in {"stopped", "confirmed", "reauthenticate", "cycle_otp"}:
+                    if result in {"stopped", "confirmed", "reauthenticate", "cycle_otp", "entry_form"}:
                         return result
                 except Exception as exc:
                     # A snapshot/DOM failure must never unwind into browser teardown/retry.
                     self.owner.validated_at = 0
-                    self._blocked = True
+                    self._dom_failures += 1
+                    if self._dom_failures >= 3:
+                        self.owner.paused = True
+                    workflow_for(self.bot).diagnostic(self.owner.page, type(exc).__name__)
                     self.transition(State.MANUAL_ACTION_REQUIRED, type(exc).__name__)
                 try:
                     self.owner.page.wait_for_timeout(200)
@@ -834,3 +623,10 @@ class BankSelectionSessionController:
         finally:
             if hasattr(self, "capacity_monitor"):
                 self.capacity_monitor.cleanup()
+            for event, handler in (('response', self._on_response), ('request', self._on_request),
+                                   ('requestfailed', self._on_request_failed), ('requestfinished', self._on_request_finished)):
+                try:
+                    self.owner.page.remove_listener(event, handler)
+                except Exception:
+                    pass
+            self.bot.bank_state_observer = None

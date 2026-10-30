@@ -1,5 +1,6 @@
 """Bounded OTP polling with local fallback, freshness checks and redacted diagnostics."""
 import hashlib
+import math
 import os
 import time
 from email.utils import parsedate_to_datetime
@@ -12,6 +13,17 @@ def normalized_code(value):
     return str(value or "").translate(str.maketrans("۰۱۲۳۴۵۶۷۸۹٠١٢٣٤٥٦٧٨٩", "01234567890123456789")).strip()
 
 
+def invalidate_otp(bot, status='expired'):
+    record = DBHandler.get_otp_record(bot.nid) or {}
+    code = normalized_code(record.get('otp') or getattr(bot, '_last_retained_otp', None))
+    if code:
+        bot._consumed_otp_digests = getattr(bot, '_consumed_otp_digests', set()) | {
+            hashlib.sha256(code.encode()).hexdigest()}
+        DBHandler.set_otp(bot.nid, code, ts=record.get('ts'), status=status,
+                          request_id=record.get('request_id'), otp_type=record.get('otp_type'))
+    bot._last_retained_otp = None
+
+
 def fresh_record(bot, record, now=None):
     if not isinstance(record, dict):
         return None
@@ -21,28 +33,29 @@ def fresh_record(bot, record, now=None):
         ts = float(record.get("ts") or 0)
     except (TypeError, ValueError):
         return None
+    if not math.isfinite(ts):
+        return None
     if record.get("nid") and str(record["nid"]) != str(bot.nid):
+        return None
+    owner = getattr(bot, 'live_owner', None)
+    if record.get('session_id') and owner is not None and record['session_id'] != owner.session_id:
         return None
     request_id = record.get("request_id")
     if request_id and request_id != getattr(bot, "_otp_request_id", None):
         return None
     issued = float(getattr(bot, "_otp_entry_time", 0) or 0)
     ttl = float(bot.settings.get("otp_validity_seconds", 120))
-    if record.get("status") == "consumed":
-        if code and code == getattr(bot, "_last_retained_otp", None) and issued > 0 and (now - issued < ttl):
-            pass
-        else:
-            return None
+    if record.get("status") in {"consumed", "expired", "rejected", "submitted"}:
+        return None
     is_manual = record.get("status") == "manual" or record.get("source") == "manual"
     operation = getattr(bot, "OTP_TYPE", "REGISTRATION_OTP")
+    if record.get('otp_type') and record['otp_type'] != operation:
+        return None
     if not is_manual and record.get("otp_type", "REGISTRATION_OTP") != operation:
         return None
     digest = hashlib.sha256(code.encode()).hexdigest()
-    if not is_manual and digest in getattr(bot, "_consumed_otp_digests", set()):
-        if code and code == getattr(bot, "_last_retained_otp", None) and issued > 0 and (now - issued < ttl):
-            pass
-        else:
-            return None
+    if digest in getattr(bot, "_consumed_otp_digests", set()):
+        return None
     issued = float(getattr(bot, "_otp_entry_time", 0) or 0)
     ttl = float(bot.settings.get("otp_validity_seconds", 120))
     if not code.isascii() or not code.isdigit() or not 4 <= len(code) <= 8:
@@ -51,11 +64,10 @@ def fresh_record(bot, record, now=None):
         return None
     if is_manual:
         # User manually entered the OTP: accept immediately if within 120s validity window
-        if now - ts > ttl or now - ts < -5:
+        if now - ts > ttl or now - ts < -5 or ts < issued:
             return None
         return code
-    # Automated SMS: allow 15s grace window before issued to accommodate SMS arriving during page transition
-    if ts < (issued - 15.0) or not -2 <= now - ts <= ttl or (issued and now - issued >= ttl):
+    if ts < issued or not -2 <= now - ts <= ttl or (issued and now - issued >= ttl):
         return None
     return code
 
@@ -74,7 +86,8 @@ def poll_once(bot, stop_event=None, timeout=1):
             return None
         code = fresh_record(bot, remote)
         if code:
-            DBHandler.set_otp(bot.nid, code, ts=float(remote["ts"]), request_id=getattr(bot, "_otp_request_id", None))
+            DBHandler.set_otp(bot.nid, code, ts=float(remote["ts"]), request_id=getattr(bot, "_otp_request_id", None),
+                              otp_type=remote.get('otp_type', 'REGISTRATION_OTP'))
             DBHandler.update_runtime(bot.nid, otp_transport_error="", otp_state="SMS_RECEIVED")
             return code
     headers = {}
@@ -117,7 +130,8 @@ def poll_once(bot, stop_event=None, timeout=1):
                     DBHandler.update_runtime(bot.nid, otp_clock_skew_seconds=round(skew, 1))
             code = fresh_record(bot, data)
             if code:
-                DBHandler.set_otp(bot.nid, code, ts=float(data["ts"]), request_id=getattr(bot, "_otp_request_id", None))
+                DBHandler.set_otp(bot.nid, code, ts=float(data["ts"]), request_id=getattr(bot, "_otp_request_id", None),
+                                  otp_type=data.get('otp_type', 'REGISTRATION_OTP'))
                 DBHandler.update_runtime(bot.nid, otp_transport_error="", otp_state="SMS_RECEIVED")
                 return code
             DBHandler.update_runtime(bot.nid, otp_transport_error="stale_or_mismatched_record")

@@ -1,5 +1,28 @@
 # MAHANBOT Architecture Modernization & Optimization Tasks
 
+## Step 3 / OTP recovery — 2026-10-30
+
+Scope: one live DOM detector and OTP workflow for first entry and re-entry; retain
+the current context, bank preferences, manual input, and final-submit guards.
+Acceptance: isolated Chromium scenarios 1–10 in the supplied mission; no production
+submission/deployment, no security-control changes, no reuse of consumed OTPs.
+
+- [x] Reproduce changed OTP IDs, Step 3 → OTP misclassification, and consumed-code reuse.
+- [x] Add structured detection and explicit workflow transitions; test ambiguous DOM.
+- [x] Unify OTP form resolution, challenge correlation, manual input and result verification.
+- [x] Integrate bounded recovery, safe reload and owner/page synchronization.
+- [x] Surface workflow status and redacted diagnostics in the existing dashboard.
+- [x] Run browser acceptance scenarios, regression suite, compile and security review.
+- [x] Deliver the seven requested documents with evidence and deployment limitations.
+
+Release is NOT approved: the last full run has 19 failures/errors reproduced at the
+original commit. Real Android and CBI acceptance, storage/deployment hardening and
+the pre-existing global test failures remain release gates; no production submission
+or service restart was performed. See docs/step3-final-report-fa.md and test-results.
+
+Verification: `python scripts/run_tests.py test_unified_otp_workflow` per slice;
+`python scripts/run_tests.py` before delivery. Existing task history below is preserved.
+
 ## Task Checklist & Execution State
 
 - [x] **Phase 0: کشف، بررسی و تدوین گزارش مهارت‌ها (Skills Discovery & Usage Report)**

@@ -272,5 +272,7 @@ class VideoStateTests(repair.RepairTestCase):
              patch('bot_select_otp._solve_otp_captcha_fast', return_value=True) as submit, \
              patch('bot_select_otp._post_submit_watch', side_effect=watch), \
              patch.object(self.bot, '_firewall_gate', return_value=False):
-            fast_otp_sync_and_inject(self.bot, Mock(), self.stop, lambda *_: False)
+            page = Mock()
+            self.owner.bind(None, page)
+            fast_otp_sync_and_inject(self.bot, page, self.stop, lambda *_: False)
         self.assertEqual(submit.call_count, 1)

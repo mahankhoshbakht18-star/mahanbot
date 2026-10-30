@@ -152,3 +152,12 @@ class DashboardUiTests(unittest.TestCase):
         with self.page.expect_request('**/api/capacity/interval'):
             self.page.evaluate('updateCapacityInterval()')
         self.assertEqual(self.requests[-1], ('/api/capacity/interval', {'interval_seconds': 1.5}))
+
+    def test_workflow_badge_shows_current_phase_and_escapes_server_reason(self):
+        self.users[1]['runtime'].update(workflow_state='STEP2_OTP_REQUIRED',
+            workflow_reason='"><img src=x onerror=alert(1)>', workflow_checked_at=1700000000)
+        self.page.evaluate('users=>renderMainList(users)', self.users)
+        badge = self.page.locator('#applicantsListBody [role="status"]')
+        self.assertEqual(badge.inner_text(), 'در انتظار پیامک')
+        self.assertIn('<img', badge.get_attribute('title'))
+        self.assertEqual(self.page.locator('#applicantsListBody img').count(), 0)
