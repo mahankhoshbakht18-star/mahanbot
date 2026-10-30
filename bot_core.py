@@ -199,17 +199,6 @@ class BotCore:
         except Exception:
             pass
 
-    def log_exception(self, exc, page=None, meta=None):
-        """Logs an exception with full traceback and context."""
-        details = {
-            "error": sanitize_log_text(str(exc)),
-            "traceback": sanitize_log_text(traceback.format_exc()),
-            "url": page.url if page else "unknown"
-        }
-        if meta:
-            details.update(meta)
-        self.log(f"Exception occurred: {sanitize_log_text(str(exc))}", "error", page, meta=details)
-
     def _load_user_data(self):
         row = DBHandler.get_applicant(self.nid)
         if not row:
@@ -598,16 +587,6 @@ class BotCore:
         except Exception as exc:
             self.log(f"خطا در حل محلی کپچا: {exc}", "warning", page)
             return False
-
-    def wait_for_manual_captcha(self, page, input_selector, button_selector, stop_event, source="general"):
-        """Compatibility alias for code migrated from the former manual flow."""
-        return self.solve_captcha_with_model(
-            page,
-            input_selector,
-            button_selector,
-            stop_event=stop_event,
-            source=source,
-        )
 
     def wait_for_nid_input_priority(self, page, timeout_ms: int = 3000):
         selectors = ["#ctl00_ContentPlaceHolder1_tbIDNo", "input[name$='tbIDNo']"]

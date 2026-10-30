@@ -40,6 +40,8 @@ class CapacityMonitoringEngineTests(repair.RepairTestCase):
         self.client = TestClient(app)
         self.auth_token = "test-session-token"
         DBHandler.save_app_session(self.auth_token, "admin", time.time() + 3600)
+        from core.state import AUTH_COOKIE
+        self.client.cookies.set(AUTH_COOKIE, self.auth_token)
         self.client.cookies.set("mahan_auth", self.auth_token)
 
     def tearDown(self):

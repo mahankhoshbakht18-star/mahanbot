@@ -231,7 +231,7 @@ def transition_state(
     # 2. Update runtime state
     runtime_updates = {
         "fsm_state": norm_new_state,
-        "current_step": norm_new_state,
+        "current_step": (DBHandler.get_runtime(clean_nid) or {}).get("current_step") if target_state in {BotState.FAILED, BotState.PAUSED} and (DBHandler.get_runtime(clean_nid) or {}).get("current_step") else norm_new_state,
         "last_state_reason": actual_reason,
         "last_activity_at": now,
     }

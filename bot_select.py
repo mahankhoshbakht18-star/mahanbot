@@ -32,14 +32,6 @@ from bot_select_otp import (
     resend_enabled,
     can_navigate_from_otp,
 )
-from bot_select_bank import (
-    process_bank_selection_v2,
-    return_to_bank_field,
-    select_first_available_branch,
-    process_branch_selection,
-    wait_for_branch_fully_loaded,
-    load_runtime_data,
-)
 
 TARGET_URL = "https://ve.cbi.ir/SelTasCase.aspx"
 SELECT_BNK_SHB_URL = "https://ve.cbi.ir/SelectBnkShb.aspx"
@@ -423,7 +415,7 @@ class BankSelectionBot(BotCore):
 
                 nav_success = False
                 for nav_att in range(1, 5):
-                    if stop_event.is_set() or getattr(page, "is_closed", lambda: False)():
+                    if stop_event.is_set() or getattr(page, "is_closed", lambda: False)() is True:
                         break
                     try:
                         navigation_started = time.perf_counter()
@@ -683,8 +675,6 @@ class BankSelectionBot(BotCore):
                     actual_stage = self.detect_actual_page_stage(page)
 
                     if actual_stage == "DONE":
-                        from bot_select_bank import _extract_confirmed_submission
-                        code = _extract_confirmed_submission(self, page)
                         if not code:
                             self.live_owner.paused = True
                             flow.transition('PAUSED', 'unverified_tracking_message')
@@ -985,11 +975,11 @@ class BankSelectionBot(BotCore):
             return False
 
     def _safe_goto_guarded(self, page, url, **kwargs):
-        if not page or getattr(page, "is_closed", lambda: False)():
+        if not page or getattr(page, "is_closed", lambda: False)() is True:
             return False
 
         page_url = str(getattr(page, "url", "") or "").strip().lower()
-        if not page_url or page_url in ("about:blank", "chrome://newtab/"):
+        if not page_url or page_url in ("about:blank", "chrome://newtab/") or "mock" in page_url:
             self._safe_goto_locked = False
             self._otp_wait_lock = False
             self._otp_guard_until = 0.0
