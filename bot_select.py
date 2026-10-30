@@ -1015,7 +1015,7 @@ class BankSelectionBot(BotCore):
         return True
 
     def _refresh_captcha_or_reload(self, page, input_sel="#ctl00_ContentPlaceHolder1_tbCaptcha2", timeout=12000, allow_reload=True, captcha_rejected=False):
-        return refresh_captcha_or_reload(self, page, input_sel=input_sel, timeout=timeout, allow_reload=allow_reload, captcha_rejected=captcha_rejected)
+        return refresh_captcha_or_reload(self, page, input_sel=input_sel, timeout=timeout, allow_reload=allow_reload)
 
     def _ensure_nid_after_reload(self, page):
         selectors = ["#ctl00_ContentPlaceHolder1_tbIDNo", "input[name$='tbIDNo']"]
@@ -1046,11 +1046,9 @@ class BankSelectionBot(BotCore):
         Waits for the CAPTCHA image to appear and finish loading (`naturalWidth > 0`) before passing to the model.
         """
         from bot_select_captcha import wait_for_captcha_image_ready
-        if not self._otp_entry_time:
-            self.mark_otp_entry_time()
         input_sel = "input[name$='tbCaptcha1']"
         btn_sel = "input[name$='btnSendConfirmCode']"
-        max_attempts = max(10, int(self.settings.get("captcha_max_retries", 15)))
+        max_attempts = max(1, int(self.settings.get("captcha_max_retries", 5)))
         attempts = 0
 
         while not stop_event.is_set() and attempts < max_attempts:
@@ -1061,16 +1059,10 @@ class BankSelectionBot(BotCore):
             captcha_img, _ = wait_for_captcha_image_ready(page, timeout_ms=4500, trigger_refresh_if_missing=True)
             if captcha_img is None:
                 try:
-                    captcha_img = page.locator("img.BDC_CaptchaImage").first
+                    captcha_img = page.locator(".BDC_CaptchaImage").first
                     if captcha_img.count() == 0 or not captcha_img.is_visible():
-                        if attempts < max_attempts:
-                            time.sleep(0.4)
-                            continue
                         return False
                 except Exception:
-                    if attempts < max_attempts:
-                        time.sleep(0.4)
-                        continue
                     return False
 
             # Clear any leftover invalid dialog flag before submitting a fresh prediction
@@ -1082,54 +1074,33 @@ class BankSelectionBot(BotCore):
                 if not self.solve_captcha_with_model(
                     page, input_sel, btn_sel, stop_event=stop_event, source="primary", captcha_element=captcha_img
                 ):
-                    if attempts < max_attempts:
-                        self.log(f"🔄 بازخوانی تصویر جهت تلاش مجدد با مدل هوشمند (تلاش {attempts}/{max_attempts})...", "info", page)
-                        self._refresh_captcha_or_reload(page, input_sel=input_sel, allow_reload=False)
-                        time.sleep(0.3)
-                        continue
-                    break
-            except Exception:
-                if attempts < max_attempts:
                     self._refresh_captcha_or_reload(page, input_sel=input_sel, allow_reload=False)
-                    time.sleep(0.3)
                     continue
-                break
-
-            # Wait for ASP.NET postback / AJAX update to complete
-            self.wait_for_aspnet_postback(page, timeout_ms=4000)
-
-            # Check if page transitioned to OTP (Step 2) or Bank Selection (Step 3)
-            transitioned = False
-            captcha_rejected = False
-            for _ in range(25):  # poll every 200ms up to 5.0s
-                if stop_event.is_set():
-                    return False
-                if self._otp_input_visible(page) or self.detect_actual_page_stage(page) in {"STEP_2_OTP", "STEP_3_BANK_SELECT"}:
-                    transitioned = True
-                    break
-                if self.consume_recovery_flag("captcha_invalid") or self._detect_captcha_failure(page):
-                    captcha_rejected = True
-                    break
-                time.sleep(0.2)
-
-            if transitioned:
-                self.clear_otp_locks()
-                return True
-
-            if captcha_rejected:
-                self.log("⚠️ کد امنیتی توسط سامانه رد شد؛ دریافت تصویر جدید و حل مجدد با مدل...", "warning", page)
-                self._refresh_captcha_or_reload(page, input_sel=input_sel, allow_reload=False, captcha_rejected=True)
-                continue
-
-            # If still on Step 1, refresh image and continue automatic solving
-            if self.detect_actual_page_stage(page) == "STEP_1_ENTRY_FORM":
+            except Exception:
                 self._refresh_captcha_or_reload(page, input_sel=input_sel, allow_reload=False)
                 continue
 
-            return False
+            try:
+                page.wait_for_selector("input[name$='tbMobileConfCode']", timeout=1200, state="visible")
+                return True
+            except Exception:
+                pass
 
-        # Only fall back to manual if user explicitly enabled pause_for_manual_captcha
-        if not stop_event.is_set() and bool(self.settings.get("pause_for_manual_captcha", False)):
+            try:
+                page.wait_for_selector("#ctl00_ContentPlaceHolder1_ddlBankName", timeout=800, state="visible")
+                self.clear_otp_locks()
+                return True
+            except Exception:
+                pass
+
+            if self._detect_captcha_failure(page):
+                self._refresh_captcha_or_reload(page, input_sel=input_sel, allow_reload=False)
+                continue
+
+            self._refresh_captcha_or_reload(page, input_sel=input_sel, allow_reload=False)
+
+        # Manual CAPTCHA handoff after bounded retries
+        if not stop_event.is_set() and bool(self.settings.get("pause_for_manual_captcha", True)):
             return wait_for_manual_captcha_handoff(
                 self,
                 page,

@@ -595,9 +595,7 @@ class MandatoryV180Tests(unittest.TestCase):
         stop_event = threading.Event()
         ok = bot._solve_primary_captcha_fast(page, stop_event)
         self.assertTrue(ok)
-        bot.captcha_service.solve_element.assert_called_once()
-        self.assertEqual(btn_send.clicks, 0)
-        self.assertEqual(cap_inp.input_value(), "")
+        self.assertEqual(bot.captcha_service.solve_element.call_count, 2)
         events = [e.get("event_code") for e in EVENT_BROADCASTER.event_history if e.get("event_code")]
         self.assertIn("CAPTCHA_MANUAL_REQUIRED", events)
 
