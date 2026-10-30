@@ -218,6 +218,72 @@ class Step3BankPage:
             logger.warning(f"Failed to select bank option {bank_value}: {e}")
             return False
 
+    def switch_to_in_person_mode(self, page) -> bool:
+        """
+        Switch registration mode from non-presential (غیرحضوری) to in-person (حضوری)
+        via #ctl00_ContentPlaceHolder1_rbtnHozori and wait for UpdatePanel2.
+        """
+        if page is None or getattr(page, "is_closed", lambda: False)():
+            return False
+        script = """() => {
+            const rbtnHozori = document.querySelector('#ctl00_ContentPlaceHolder1_rbtnHozori') || 
+                               document.querySelector("input[name$='rbtnHozori']") ||
+                               document.querySelector("input[value*='Hozori']");
+            if (rbtnHozori) {
+                if (rbtnHozori.checked) {
+                    return true;
+                }
+                rbtnHozori.checked = true;
+                rbtnHozori.click();
+                if (typeof __doPostBack === 'function') {
+                    __doPostBack('ctl00$ContentPlaceHolder1$rbtnHozori', '');
+                } else {
+                    rbtnHozori.dispatchEvent(new Event('change', { bubbles: true }));
+                }
+                return true;
+            }
+            return false;
+        }"""
+        try:
+            switched = bool(page.evaluate(script))
+            if switched:
+                self.wait_for_update_panel(page, timeout_ms=3000)
+                logger.info("Successfully switched registration mode to in-person (حضوری)")
+                return True
+            return False
+        except Exception as e:
+            logger.warning(f"Failed to switch to in-person mode: {e}")
+            return False
+
+    def switch_city(self, page, target_city_code: str) -> bool:
+        """
+        Switch city dropdown #ctl00_ContentPlaceHolder1_ddlCity to target_city_code
+        and trigger __doPostBack to reload city branches and quota.
+        """
+        if page is None or getattr(page, "is_closed", lambda: False)() or not target_city_code:
+            return False
+        script = f"""(cityCode) => {{
+            const ddl = document.querySelector('{self.CITY_SELECTOR}');
+            if (!ddl) return false;
+            ddl.value = String(cityCode);
+            if (typeof __doPostBack === 'function') {{
+                __doPostBack('{self.CITY_SELECTOR}'.replace('#', '').replace(/_/g, '$'), '');
+            }} else {{
+                ddl.dispatchEvent(new Event('change', {{ bubbles: true }}));
+            }}
+            return true;
+        }}"""
+        try:
+            switched = bool(page.evaluate(script, str(target_city_code)))
+            if switched:
+                self.wait_for_update_panel(page, timeout_ms=4000)
+                logger.info(f"Switched city to code {target_city_code}")
+                return True
+            return False
+        except Exception as e:
+            logger.warning(f"Failed to switch city to {target_city_code}: {e}")
+            return False
+
     def click_submit_btn(self, page) -> bool:
         """Click final submit button btnSave."""
         try:
@@ -274,7 +340,29 @@ class Step3BankPage:
         }}"""
         try:
             res = page.evaluate(script)
-            return res or {"is_success": False, "tracking_code": None, "error_msg": ""}
+            if not res:
+
+                res = {"is_success": False, "tracking_code": None, "error_msg": ""}
+
+            err_text = str(res.get("error_msg") or "")
+
+            res["is_non_presential_full"] = any(k in err_text for k in [
+
+                "تکمیل شده و امکان ثبت نام به صورت غیرحضوری را ندارید",
+
+                "گزینه حضوری را انتخاب نمایید",
+
+                "ظرفیت غیرحضوری",
+
+            ])
+            res["is_no_branch_in_city"] = any(k in err_text for k in [
+                "شعبه ای جهت ثبت نام یافت نشد",
+                "شعبه ای برای شهر",
+                "در این شهر شعبه ای وجود ندارد",
+                "شعبه ای یافت نشد"
+            ])
+
+            return res
         except Exception as e:
             logger.warning(f"Failed to extract tracking or error: {e}")
             return {"is_success": False, "tracking_code": None, "error_msg": str(e)}

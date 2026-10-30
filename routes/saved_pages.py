@@ -9,7 +9,7 @@ import time
 import logging
 from typing import Dict, Any, List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, Body
 from fastapi.responses import FileResponse, JSONResponse
 
 from core.deps import require_api_key
@@ -22,6 +22,8 @@ from bank_page_manager import (
     normalize_persian,
     is_reserve_text,
     classify_capacity_or_error,
+    extract_province_cities,
+    repair_html_snapshot,
 )
 from bot_select_bank import repair_saved_pages
 from live_sessions import LIVE_SESSIONS
@@ -88,7 +90,41 @@ def list_saved_pages(_: bool = Depends(require_api_key)):
 
     subdirs = [d for d in os.listdir(SAVED_PAGES_DIR) if os.path.isdir(os.path.join(SAVED_PAGES_DIR, d))]
 
-    for folder in sorted(subdirs):
+    # Group folders by canonical applicant / national_id to eliminate duplicate rows
+    # and skip ghost folders with 0 snapshots.
+    grouped_folders: Dict[str, List[str]] = {}
+    for d in sorted(subdirs):
+        d_path = os.path.join(SAVED_PAGES_DIR, d)
+        all_f = [f for f in os.listdir(d_path) if os.path.isfile(os.path.join(d_path, f))]
+        # Check if folder has actual html/png files
+        if not any(f.endswith((".html", ".htm", ".png", ".jpg")) for f in all_f):
+            continue
+        app_rec = _match_applicant_record(d)
+        canon_id = (app_rec.get("national_id") if app_rec else None) or d
+        grouped_folders.setdefault(canon_id, []).append(d)
+
+    for canon_id, member_folders in grouped_folders.items():
+        # Pick the folder with the latest modified HTML snapshot as the primary folder
+        best_folder = member_folders[0]
+        best_mtime = -1.0
+        total_member_html_files = []
+        total_member_png_files = []
+
+        for fld in member_folders:
+            fld_p = os.path.join(SAVED_PAGES_DIR, fld)
+            f_list = [f for f in os.listdir(fld_p) if os.path.isfile(os.path.join(fld_p, f))]
+            h_files = [f for f in f_list if f.endswith(".html")]
+            p_files = [f for f in f_list if f.endswith(".png")]
+            total_member_html_files.extend(h_files)
+            total_member_png_files.extend(p_files)
+            if h_files:
+                newest_f = sorted(h_files, reverse=True)[0]
+                mtime = os.path.getmtime(os.path.join(fld_p, newest_f))
+                if mtime > best_mtime:
+                    best_mtime = mtime
+                    best_folder = fld
+
+        folder = best_folder
         folder_path = os.path.join(SAVED_PAGES_DIR, folder)
         manifest_path = os.path.join(folder_path, "banks_seen.json")
 
@@ -200,7 +236,7 @@ def list_saved_pages(_: bool = Depends(require_api_key)):
             "badge_color": meta["color"],
             "state_description": meta["description"],
             "app_status": app_status,
-            "snapshot_count": len(html_files),
+            "snapshot_count": len(total_member_html_files),
             "latest_html": latest_html,
             "latest_png": latest_png,
             "last_updated": latest_html_mtime or (os.path.getmtime(manifest_path) if os.path.exists(manifest_path) else 0.0),
@@ -352,8 +388,17 @@ def repair_saved_page_single(folder_name: str, _: bool = Depends(require_api_key
     if nid:
         html_files = sorted((f for f in os.listdir(folder_path) if f.endswith('.html')), reverse=True)
         if html_files:
-            with open(os.path.join(folder_path, html_files[0]), encoding="utf-8") as stream:
-                analysis = analyze_bank_page_html(stream.read())
+            latest_file_path = os.path.join(folder_path, html_files[0])
+            with open(latest_file_path, "r", encoding="utf-8", errors="replace") as stream:
+                raw_html = stream.read()
+            repaired_html = repair_html_snapshot(raw_html)
+            if repaired_html != raw_html:
+                try:
+                    with open(latest_file_path, "w", encoding="utf-8") as stream:
+                        stream.write(repaired_html)
+                except Exception:
+                    pass
+            analysis = analyze_bank_page_html(repaired_html)
             if analysis.get("is_bank_page"):
                 bank = analysis.get("selected_bank") or {}
                 DBHandler.save_checkpoint(nid, {"last_verified_step": "STEP_3_BANK_SELECT",
@@ -462,3 +507,101 @@ def live_session_logs(nid: str, _: bool = Depends(require_api_key)):
     events = [sanitize_meta(dict(e)) for e in EVENT_BROADCASTER.event_history
               if str(e.get("nid") or e.get("national_id") or "") == nid]
     return {"status": "ok", "events": events[-100:]}
+
+
+@router.get("/saved-pages/{folder_name}/gallery")
+def get_snapshot_gallery(folder_name: str, _: bool = Depends(require_api_key)):
+    """Return all HTML and PNG snapshots for a saved applicant folder (including merged folders)."""
+    folder_path = _get_safe_folder_path(folder_name)
+    app_rec = _match_applicant_record(folder_name)
+    target_folders = [folder_name]
+    if app_rec and app_rec.get("national_id"):
+        nid = app_rec.get("national_id")
+        for d in os.listdir(SAVED_PAGES_DIR):
+            if d != folder_name and (d == nid or d == app_rec.get("full_name")):
+                target_folders.append(d)
+
+    snapshots = []
+    for fld in target_folders:
+        fld_path = os.path.join(SAVED_PAGES_DIR, fld)
+        if not os.path.isdir(fld_path):
+            continue
+        for fname in os.listdir(fld_path):
+            p = os.path.join(fld_path, fname)
+            if not os.path.isfile(p):
+                continue
+            ext = os.path.splitext(fname)[1].lower()
+            if ext in {".html", ".htm", ".png", ".jpg", ".jpeg"}:
+                mtime = os.path.getmtime(p)
+                sz = os.path.getsize(p)
+                snapshots.append({
+                    "folder": fld,
+                    "filename": fname,
+                    "type": "html" if ext in {".html", ".htm"} else "image",
+                    "size_bytes": sz,
+                    "size_kb": round(sz / 1024, 1),
+                    "mtime": mtime,
+                    "date_str": time.strftime("%Y/%m/%d %H:%M:%S", time.localtime(mtime)),
+                    "url": f"/saved-pages/{fld}/snapshot/{fname}"
+                })
+
+    snapshots.sort(key=lambda x: x["mtime"], reverse=True)
+    return {"status": "ok", "folder": folder_name, "total": len(snapshots), "snapshots": snapshots}
+
+
+@router.get("/saved-pages/{folder_name}/cities")
+def get_saved_page_cities(folder_name: str, _: bool = Depends(require_api_key)):
+    """Extract all available city options for the applicant province from latest HTML snapshot."""
+    folder_path = _get_safe_folder_path(folder_name)
+    html_files = sorted([f for f in os.listdir(folder_path) if f.endswith(".html")], reverse=True)
+    if not html_files:
+        app_rec = _match_applicant_record(folder_name)
+        if app_rec and app_rec.get("national_id"):
+            alt_fld = os.path.join(SAVED_PAGES_DIR, app_rec["national_id"])
+            if os.path.isdir(alt_fld):
+                html_files = sorted([f for f in os.listdir(alt_fld) if f.endswith(".html")], reverse=True)
+                if html_files:
+                    folder_path = alt_fld
+
+    if not html_files:
+        return {"status": "ok", "cities": [], "message": "هیچ فایل اسنپ‌شاتی یافت نشد"}
+
+    with open(os.path.join(folder_path, html_files[0]), "r", encoding="utf-8", errors="replace") as f:
+        content = f.read()
+
+    cities = extract_province_cities(content)
+    return {"status": "ok", "cities": cities, "count": len(cities)}
+
+
+@router.post("/saved-pages/switch-city/{nid}")
+def switch_saved_page_city(nid: str, payload: Dict[str, Any] = Body(...), _: bool = Depends(require_api_key)):
+    """Switch city dropdown on live browser session for applicant nid."""
+    city_code = str(payload.get("city_code") or "").strip()
+    if not city_code:
+        raise HTTPException(status_code=400, detail="کد شهر الزامی است")
+
+    owner = LIVE_SESSIONS.get(nid)
+    if not owner or not owner.page or getattr(owner.page, "is_closed", lambda: False)():
+        raise HTTPException(status_code=400, detail="نشست زنده فعالی برای این متقاضی یافت نشد")
+
+    from core.step3_bank_page import Step3BankPage
+    step3 = Step3BankPage()
+    ok = step3.switch_city(owner.page, city_code)
+    if ok:
+        return {"status": "ok", "message": f"شهر با موفقیت به کد {city_code} تغییر یافت"}
+    raise HTTPException(status_code=500, detail="خطا در تغییر شهر در صفحه بانک مرکزی")
+
+
+@router.post("/saved-pages/live-repair/{nid}")
+def live_repair_saved_page(nid: str, _: bool = Depends(require_api_key)):
+    """Safely reset or re-arm live session for applicant nid without throwing TargetClosedError."""
+    owner = LIVE_SESSIONS.get(nid)
+    if owner and owner.page and not getattr(owner.page, "is_closed", lambda: False)():
+        from core.step3_bank_page import Step3BankPage
+        step3 = Step3BankPage()
+        step3.disable_logout_trap(owner.page)
+        return {"status": "ok", "message": "نشست زنده با موفقیت ایمن‌سازی و احیا شد"}
+
+    if owner:
+        LIVE_SESSIONS.pop(nid, None)
+    return {"status": "ok", "message": "نشست قدیمی پاکسازی شد. اکنون می‌توانید پایش مجدد را آغاز نمایید."}

@@ -202,9 +202,9 @@ async function loadSmsGatewayConfig() {
         if (document.getElementById('sms_provider_select')) document.getElementById('sms_provider_select').value = cfg.sms_provider || 'mock';
         if (document.getElementById('sms_sender_line_input')) document.getElementById('sms_sender_line_input').value = cfg.sms_sender_line || '';
         if (document.getElementById('sms_pattern_code_input')) document.getElementById('sms_pattern_code_input').value = cfg.sms_pattern_code || '';
-        if (document.getElementById('sms_otp_template_input')) document.getElementById('sms_otp_template_input').value = cfg.sms_otp_template || '?? ???? ?? ?????????: {code}\n??????: ? ?????';
+        if (document.getElementById('sms_otp_template_input')) document.getElementById('sms_otp_template_input').value = cfg.sms_otp_template || 'کد تأیید ورود ماهان‌بات: {code}\nاعتبار: ۵ دقیقه';
         if (document.getElementById('sms_api_key_input') && cfg.has_api_key) {
-            document.getElementById('sms_api_key_input').placeholder = '???????????????? (??? ???)';
+            document.getElementById('sms_api_key_input').placeholder = '•••••••••••••••• (کلید فعلی ذخیره است)';
         }
     } catch (e) {
         console.warn('loadSmsGatewayConfig error:', e);
@@ -228,10 +228,10 @@ async function saveSmsGatewayConfig() {
             body: JSON.stringify(payload)
         });
         const res = await resp.json();
-        if (!resp.ok) throw new Error(res.detail || '??? ?? ????? ???????');
+        if (!resp.ok) throw new Error(res.detail || 'خطا در ذخیره تنظیمات');
         if (alertBox) {
             alertBox.className = 'small mt-2 alert alert-success';
-            alertBox.textContent = res.message || '??????? ??? ????? ????? ??.';
+            alertBox.textContent = res.message || 'تنظیمات وب‌سرویس پیامک با موفقیت ذخیره شد.';
             alertBox.style.display = 'block';
             setTimeout(() => alertBox.style.display = 'none', 4000);
         }
@@ -246,7 +246,7 @@ async function saveSmsGatewayConfig() {
 }
 
 async function testSendSmsPrompt() {
-    const mobile = prompt('????? ?????? ?????? ?? ???? ?????? (????: 09123456789):');
+    const mobile = prompt('شماره موبایل گیرنده را وارد نمایید (مثال: 09123456789):');
     if (!mobile) return;
     const alertBox = document.getElementById('smsGatewayAlert');
     try {
@@ -256,10 +256,10 @@ async function testSendSmsPrompt() {
             body: JSON.stringify({mobile: mobile.trim()})
         });
         const res = await resp.json();
-        if (!resp.ok) throw new Error(res.detail || '??? ?? ????? ????? ???????');
-        alert(res.message || '????? ??????? ?? ?????? ????? ??.');
+        if (!resp.ok) throw new Error(res.detail || 'خطا در ارسال پیامک آزمایشی');
+        alert(res.message || 'پیامک آزمایشی با موفقیت ارسال شد.');
     } catch (err) {
-        alert('???: ' + err.message);
+        alert('خطا: ' + err.message);
     }
 }
 
@@ -4015,9 +4015,13 @@ function renderSavedPagesTable(pages) {
     }).join('');
 }
 
+let currentSpFolder = '';
+let currentSpNid = '';
+
 async function viewSavedPage(folder, htmlFile, pngFile) {
     const modalEl = document.getElementById('savedPageModal');
     if (!modalEl) return;
+    currentSpFolder = folder;
 
     const applicantEl = document.getElementById('spModalApplicant');
     const badgeEl = document.getElementById('spModalBadge');
@@ -4028,6 +4032,7 @@ async function viewSavedPage(folder, htmlFile, pngFile) {
     const directLink = document.getElementById('spDirectLink');
 
     const pageObj = allSavedPages.find(p => p.folder === folder) || {};
+    currentSpNid = pageObj.nid || '';
     if (applicantEl) applicantEl.textContent = pageObj.full_name || folder;
     if (badgeEl) {
         badgeEl.className = `badge ms-2 ${pageObj.badge_class || 'bg-secondary'}`;
@@ -5411,4 +5416,123 @@ function togglePasswordVisibility(id) {
 function escapeJs(str) {
     if (!str) return '';
     return str.replace(/'/g, "\\'").replace(/"/g, '&quot;');
+}
+
+
+async function loadSpGallery() {
+    if (!currentSpFolder) return;
+    const loading = document.getElementById('spGalleryLoading');
+    const content = document.getElementById('spGalleryContent');
+    const tbody = document.getElementById('spGalleryTableBody');
+    const stats = document.getElementById('spGalleryStats');
+    if (loading) loading.style.display = 'block';
+    if (content) content.style.display = 'none';
+
+    try {
+        const res = await apiCall(`/saved-pages/${encodeURIComponent(currentSpFolder)}/gallery`, 'GET');
+        if (loading) loading.style.display = 'none';
+        if (content) content.style.display = 'block';
+
+        if (res && res.status === 'ok') {
+            if (stats) stats.textContent = `تعداد اسنپ‌شات‌های ثبت‌شده: ${(res.total || 0).toLocaleString('fa-IR')} فایل`;
+            const items = res.snapshots || [];
+            if (!items.length) {
+                if (tbody) tbody.innerHTML = '<tr><td colspan="5" class="text-center py-3 text-muted">اسنپ‌شاتی یافت نشد.</td></tr>';
+                return;
+            }
+            if (tbody) {
+                tbody.innerHTML = items.map(s => {
+                    const icon = s.type === 'html' ? '<i class="fa-solid fa-code text-primary ms-1"></i> HTML' : '<i class="fa-solid fa-image text-info ms-1"></i> عکس';
+                    return `<tr>
+                        <td>${icon}</td>
+                        <td class="font-monospace small">${escapeHtml(s.filename)}</td>
+                        <td class="small">${escapeHtml(s.date_str)}</td>
+                        <td class="small">${s.size_kb} KB</td>
+                        <td>
+                            <a href="${s.url}" target="_blank" class="btn btn-sm btn-outline-primary py-0 px-2" title="مشاهده">
+                                <i class="fa-solid fa-arrow-up-right-from-square"></i>
+                            </a>
+                            <a href="${s.url}" download class="btn btn-sm btn-outline-secondary py-0 px-2" title="دانلود">
+                                <i class="fa-solid fa-download"></i>
+                            </a>
+                        </td>
+                    </tr>`;
+                }).join('');
+            }
+        }
+    } catch (e) {
+        if (loading) loading.style.display = 'none';
+        if (content) content.style.display = 'block';
+        if (tbody) tbody.innerHTML = `<tr><td colspan="5" class="text-center text-danger py-3">خطا در بارگذاری گالری: ${escapeHtml(e.message || String(e))}</td></tr>`;
+    }
+}
+
+async function loadSpCities() {
+    if (!currentSpFolder) return;
+    const loading = document.getElementById('spCityLoading');
+    const content = document.getElementById('spCityContent');
+    const select = document.getElementById('spCitySelect');
+    const alertBox = document.getElementById('spCityAlert');
+    if (loading) loading.style.display = 'block';
+    if (content) content.style.display = 'none';
+    if (alertBox) alertBox.style.display = 'none';
+
+    try {
+        const res = await apiCall(`/saved-pages/${encodeURIComponent(currentSpFolder)}/cities`, 'GET');
+        if (loading) loading.style.display = 'none';
+        if (content) content.style.display = 'block';
+
+        if (res && res.status === 'ok') {
+            const cities = res.cities || [];
+            if (select) {
+                if (!cities.length) {
+                    select.innerHTML = '<option value="">هیچ شهری در این اسنپ‌شات یافت نشد</option>';
+                } else {
+                    select.innerHTML = cities.map(c => `<option value="${c.code}" ${c.selected ? 'selected' : ''}>${c.name} (کد: ${c.code})</option>`).join('');
+                }
+            }
+        }
+    } catch (e) {
+        if (loading) loading.style.display = 'none';
+        if (content) content.style.display = 'block';
+        if (alertBox) {
+            alertBox.className = 'alert alert-danger small mt-2';
+            alertBox.textContent = `خطا در دریافت فهرست شهرها: ${e.message || String(e)}`;
+            alertBox.style.display = 'block';
+        }
+    }
+}
+
+async function applyCitySwitch() {
+    if (!currentSpNid) {
+        alert('کد ملی برای این پرونده معتبر نیست یا نشست زنده فعال وجود ندارد.');
+        return;
+    }
+    const select = document.getElementById('spCitySelect');
+    const cityCode = select ? select.value : '';
+    const alertBox = document.getElementById('spCityAlert');
+    const btn = document.getElementById('btnApplyCitySwitch');
+
+    if (!cityCode) {
+        alert('لطفاً یک شهر را انتخاب کنید.');
+        return;
+    }
+
+    if (btn) btn.disabled = true;
+    try {
+        const res = await apiCall(`/saved-pages/switch-city/${encodeURIComponent(currentSpNid)}`, 'POST', { city_code: cityCode });
+        if (alertBox) {
+            alertBox.className = 'alert alert-success small mt-2';
+            alertBox.textContent = res.message || 'شهر با موفقیت تغییر یافت و صفحه به‌روزرسانی شد.';
+            alertBox.style.display = 'block';
+        }
+    } catch (e) {
+        if (alertBox) {
+            alertBox.className = 'alert alert-danger small mt-2';
+            alertBox.textContent = `خطا در تغییر شهر: ${e.message || String(e)}`;
+            alertBox.style.display = 'block';
+        }
+    } finally {
+        if (btn) btn.disabled = false;
+    }
 }

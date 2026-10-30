@@ -581,6 +581,41 @@ class BankSelectionSessionController:
             logger.warning(f"Warm tab handover failed: {e}")
             return False
 
+    def _attempt_submission_with_fallbacks(self, step3, page, matched_option, target_display: str, is_reserve: bool = False):
+        """
+        Attempts to submit bank selection.
+        If non-presential quota full error occurs, automatically switches to in-person (rbtnHozori)
+        and re-submits.
+        Returns tracking code string if confirmed, or None.
+        """
+        bot = self.bot
+        try:
+            step3.select_bank_option(page, matched_option.value)
+            step3.click_submit_btn(page)
+            res = step3.extract_tracking_or_error(page)
+
+            if res.get("is_success") and res.get("tracking_code"):
+                return res["tracking_code"]
+
+            # 1. Fallback: Non-presential capacity full -> switch to in-person (حضوری)
+            if res.get("is_non_presential_full"):
+                bot.log(f"⚠️ ظرفیت غیرحضوری {target_display} تکمیل شده؛ تغییر خودکار به گزینه حضوری...", "warning", page)
+                if step3.switch_to_in_person_mode(page):
+                    bot.log(f"🔄 حالت ثبت به حضوری تغییر یافت. تلاش مجدد برای ثبت نهایی {target_display}...", "info", page)
+                    step3.select_bank_option(page, matched_option.value)
+                    step3.click_submit_btn(page)
+                    res = step3.extract_tracking_or_error(page)
+                    if res.get("is_success") and res.get("tracking_code"):
+                        return res["tracking_code"]
+
+            err_msg = res.get("error_msg") or ""
+            if err_msg:
+                bot.log(f"⚠️ پیام سامانه پس از ارسال: {err_msg}", "warning", page)
+            return None
+        except Exception as e:
+            bot.log(f"❌ خطا در پردازش ارسال فرم بانک: {e}", "error", page)
+            return None
+
     def evaluate_and_execute_bank_logic(self, page) -> str:
         """
         Piece 2, 3, 4, 5:
@@ -684,15 +719,12 @@ class BankSelectionSessionController:
             bot.log(f"🎯 بانک اولویت‌دار ({target_display}) با ظرفیت قطعی شناسایی شد!", "success", page)
             if auto_final_submit:
                 bot.log(f"🚀 تیک ثبت نهایی فعال است؛ انتخاب بانک ({target_display}) و ارسال فرم نهایی...", "info", page)
-                step3.select_bank_option(page, matched_option.value)
-                step3.click_submit_btn(page)
-                res = step3.extract_tracking_or_error(page)
-                if res.get("is_success") and res.get("tracking_code"):
-                    code = res["tracking_code"]
-                    DBHandler.save_success_data(bot.nid, code)
+                tracking_code = self._attempt_submission_with_fallbacks(step3, page, matched_option, target_display, is_reserve=False)
+                if tracking_code:
+                    DBHandler.save_success_data(bot.nid, tracking_code)
                     self.transition(State.REGISTRATION_CONFIRMED)
                     bot.set_runtime_state("SUCCESS", State.REGISTRATION_CONFIRMED, browser_status="OPEN")
-                    bot.log(f"🎉 ثبت نهایی با موفقیت انجام شد! کد رهگیری: {code}", "success", page)
+                    bot.log(f"🎉 ثبت نهایی با موفقیت انجام شد! کد رهگیری: {tracking_code}", "success", page)
                     return "confirmed"
             else:
                 bot.log(f"⏸️ بانک اولویت‌دار ({target_display}) دارای ظرفیت است اما تیک «ثبت نهایی» غیرفعال است؛ ثبت انجام نشد (ادامه پایش)...", "warning", page)
@@ -701,15 +733,12 @@ class BankSelectionSessionController:
         elif matched_option and matched_option.is_reserve:
             if target_allow_reserve and auto_final_submit:
                 bot.log(f"📝 بانک اولویت‌دار ({target_display}) در حالت رزرو است و هر دو تیک (رزرو و ثبت نهایی) فعال هستند؛ ثبت درخواست رزرو...", "info", page)
-                step3.select_bank_option(page, matched_option.value)
-                step3.click_submit_btn(page)
-                res = step3.extract_tracking_or_error(page)
-                if res.get("is_success") and res.get("tracking_code"):
-                    code = res["tracking_code"]
-                    DBHandler.save_success_data(bot.nid, code)
+                tracking_code = self._attempt_submission_with_fallbacks(step3, page, matched_option, target_display, is_reserve=True)
+                if tracking_code:
+                    DBHandler.save_success_data(bot.nid, tracking_code)
                     self.transition(State.REGISTRATION_CONFIRMED)
                     bot.set_runtime_state("SUCCESS", State.REGISTRATION_CONFIRMED, browser_status="OPEN")
-                    bot.log(f"🎉 ثبت رزرو با موفقیت تایید شد! کد رهگیری: {code}", "success", page)
+                    bot.log(f"🎉 ثبت رزرو با موفقیت تایید شد! کد رهگیری: {tracking_code}", "success", page)
                     return "confirmed"
             else:
                 bot.log(f"⏸️ بانک ({target_display}) در حالت رزرو است اما شرایط ثبت (تیک رزرو و ثبت نهایی) برقرار نیست؛ ادامه پایش...", "info", page)

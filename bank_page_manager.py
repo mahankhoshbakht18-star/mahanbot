@@ -293,8 +293,19 @@ def analyze_bank_page_html(html: str) -> Dict[str, Any]:
     if not html:
         return res
 
-    # 1. Check if this is indeed the Page 3 (SelectBnkShb.aspx)
-    if "SelectBnkShb" in html or "ctl00_ContentPlaceHolder1_ddlBankName" in html or "فرم انتخاب بانک" in html:
+    # 1. Check if this is indeed the Page 3 (SelectBnkShb.aspx / ChildSelectBnkShb.aspx)
+    step3_indicators = (
+        "SelectBnkShb",
+        "ChildSelectBnkShb",
+        "ctl00_ContentPlaceHolder1_ddlBankName",
+        "ddlBankName",
+        "ctl00_ContentPlaceHolder1_ddlCity",
+        "ctl00_ContentPlaceHolder1_UpdatePanel2",
+        "ctl00_ContentPlaceHolder1_btnSave",
+        "فرم انتخاب بانک",
+        "انتخاب بانک",
+    )
+    if any(ind in html for ind in step3_indicators):
         res["is_bank_page"] = True
 
     # 2. Extract applicant info if present
@@ -400,3 +411,60 @@ for _state, _label in {
     BankPageState.PAUSED: "پایش متوقف؛ نشست حفظ شده",
 }.items():
     STATE_METADATA[_state] = {"fa": _label, "badge_class": "badge-info", "color": "#60A5FA", "description": _label}
+
+def extract_province_cities(html: str) -> List[Dict[str, Any]]:
+    """
+    Extract all city options from #ctl00_ContentPlaceHolder1_ddlCity in Step 3 HTML.
+    Returns list of dicts: [{"code": "830", "name": "\xd8\xb2\xd8\xa7\xd9\x87\xd8\xaf\xd8\xa7\xd9\x86", "selected": False}, ...]
+    """
+    if not html:
+        return []
+    cities: List[Dict[str, Any]] = []
+    city_m = re.search(r'<select[^>]*id=[^>]*ddlCity[^>]*>(.*?)</select>', html, re.DOTALL | re.IGNORECASE)
+    if not city_m:
+        city_m = re.search(r'<select[^>]*name=[^>]*ddlCity[^>]*>(.*?)</select>', html, re.DOTALL | re.IGNORECASE)
+    if not city_m:
+        return []
+
+    opts = re.findall(r'<option\s+([^>]*)>(.*?)</option>', city_m.group(1), re.DOTALL | re.IGNORECASE)
+    for attrs, raw_text in opts:
+        val_m = re.search(r'value=[\'\"]?([^\'\"\s>]+)', attrs, re.IGNORECASE)
+        val = val_m.group(1).strip() if val_m else ""
+        if not val or val in ("0", "-1", ""):
+            continue
+        clean_text = normalize_persian(re.sub(r'<[^>]+>', '', raw_text)).strip()
+        is_sel = "selected" in attrs.lower()
+        cities.append({
+            "code": val,
+            "name": clean_text,
+            "selected": is_sel
+        })
+    return cities
+
+
+def repair_html_snapshot(html: str) -> str:
+    """
+    Ensures HTML snapshot:
+    1. Contains <base href="https://ve.cbi.ir/"> for proper asset/CSS loading.
+    2. Neutralizes CloseSession() and onunload traps to prevent session kill.
+    3. Prevents auto-logout on review.
+    """
+    if not html:
+        return html
+    # 1. Base href
+    if "<base " not in html.lower():
+        head_m = re.search(r'<head[^>]*>', html, re.IGNORECASE)
+        if head_m:
+            pos = head_m.end()
+            html = html[:pos] + '\n<base href="https://ve.cbi.ir/">\n' + html[pos:]
+    # 2. Neutralize CloseSession
+    if "CloseSession" in html:
+        html = re.sub(
+            r'function\s+CloseSession\s*\(\)\s*\{[^}]*\}',
+            'function CloseSession() { /* neutralized */ }',
+            html,
+            flags=re.IGNORECASE
+        )
+    # 3. Disarm onbeforeunload
+    html = re.sub(r'window\.onbeforeunload\s*=\s*CloseSession;', 'window.onbeforeunload = null;', html, flags=re.IGNORECASE)
+    return html

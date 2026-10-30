@@ -33,12 +33,20 @@ class BrowserSessionOwner:
         self.context, self.page = context, page
 
     def summary(self):
-        # Do not probe Playwright from the HTTP/event-loop thread.
+        # Safely detect if page or context is closed without blocking
+        is_live = self.alive and not self.cancellation_token.is_set()
+        try:
+            if self.page is not None and getattr(self.page, "is_closed", lambda: False)():
+                is_live = False
+                self.alive = False
+                self.bank_page_active = False
+        except Exception:
+            pass
         return {"session_id": self.session_id, "state": self.current_state,
-                "live": self.alive and not self.cancellation_token.is_set(),
-                "bank_page_active": self.bank_page_active, "paused": self.paused,
+                "live": is_live,
+                "bank_page_active": self.bank_page_active and is_live, "paused": self.paused,
                 "validated_at": self.validated_at,
-                "validated": self.validated_at > 0 and time.time() - self.validated_at < 10}
+                "validated": self.validated_at > 0 and time.time() - self.validated_at < 10 and is_live}
 
 
 class LiveSessionRegistry:

@@ -1538,6 +1538,53 @@
                 <span id="gsmStatusText">وضعیت: غیرفعال</span>
               </div>
             </div>
+
+            <!-- Tab 4: Snapshots Gallery -->
+            <div class="tab-pane fade p-3" id="spTabGallery" role="tabpanel">
+              <div id="spGalleryLoading" class="text-center py-4 text-muted"><i class="fa-solid fa-spinner fa-spin ms-2"></i> در حال بارگذاری لیست اسنپ‌شات‌ها...</div>
+              <div id="spGalleryContent" style="display:none;">
+                <div class="d-flex justify-content-between align-items-center mb-3">
+                  <span class="small text-muted" id="spGalleryStats">تعداد اسنپ‌شات‌ها: ۰</span>
+                </div>
+                <div class="table-responsive" style="max-height: 480px; overflow-y: auto;">
+                  <table class="table table-sm table-hover table-bordered align-middle">
+                    <thead class="table-light sticky-top">
+                      <tr>
+                        <th>نوع</th>
+                        <th>نام فایل</th>
+                        <th>تاریخ و زمان ذخیره</th>
+                        <th>حجم</th>
+                        <th>عملیات</th>
+                      </tr>
+                    </thead>
+                    <tbody id="spGalleryTableBody"></tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+
+            <!-- Tab 5: City Switcher -->
+            <div class="tab-pane fade p-3" id="spTabCity" role="tabpanel">
+              <div id="spCityLoading" class="text-center py-4 text-muted"><i class="fa-solid fa-spinner fa-spin ms-2"></i> در حال دریافت فهرست شهرهای استان...</div>
+              <div id="spCityContent" style="display:none;">
+                <div class="alert alert-info py-2 mb-3 small">
+                  <i class="fa-solid fa-circle-info ms-1"></i>
+                  با تغییر شهر، لیست شعب و وضعیت ظرفیت بانک‌ها برای شهر جدید در نشست زنده مرورگر بارگذاری مجدد خواهد شد.
+                </div>
+                <div class="row g-3 align-items-end mb-3">
+                  <div class="col-md-8">
+                    <label class="form-label fw-bold">انتخاب شهر جدید از استان:</label>
+                    <select id="spCitySelect" class="form-select"></select>
+                  </div>
+                  <div class="col-md-4">
+                    <button type="button" class="btn btn-primary w-100" id="btnApplyCitySwitch" onclick="applyCitySwitch()">
+                      <i class="fa-solid fa-arrows-rotate ms-1"></i> اعمال تغییر شهر در مرورگر
+                    </button>
+                  </div>
+                </div>
+                <div id="spCityAlert" class="alert small mt-2" style="display:none;"></div>
+              </div>
+            </div>
           </div>
 
           <!-- SMS Simulator & Test Tool -->
@@ -2197,6 +2244,16 @@
             <li class="nav-item" role="presentation">
               <button class="nav-link" id="spTabAnalysis-tab" data-bs-toggle="tab" data-bs-target="#spTabAnalysis" type="button" role="tab">
                 <i class="fa-solid fa-chart-pie ms-1 text-success"></i> تحلیل بانک‌ها و ظرفیت
+              </button>
+            </li>
+            <li class="nav-item" role="presentation">
+              <button class="nav-link" id="spTabGallery-tab" data-bs-toggle="tab" data-bs-target="#spTabGallery" type="button" role="tab" onclick="loadSpGallery()">
+                <i class="fa-solid fa-images ms-1 text-warning"></i> گالری اسنپ‌شات‌ها
+              </button>
+            </li>
+            <li class="nav-item" role="presentation">
+              <button class="nav-link" id="spTabCity-tab" data-bs-toggle="tab" data-bs-target="#spTabCity" type="button" role="tab" onclick="loadSpCities()">
+                <i class="fa-solid fa-city ms-1 text-primary"></i> تغییر شهر استان
               </button>
             </li>
           </ul>
