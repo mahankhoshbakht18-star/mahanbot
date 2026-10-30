@@ -804,7 +804,7 @@ def solve_captcha_wrapper(bot, page, input_sel, btn_sel, mode):
             return True
         if not refresh_captcha_or_reload(bot, page, input_sel=input_sel, captcha_rejected=True):
             break
-    if bool(bot.settings.get("pause_for_manual_captcha", True)):
+    if bool(bot.settings.get("pause_for_manual_captcha", False)):
         return wait_for_manual_captcha_handoff(bot, page, input_sel, btn_sel, stop_event, source="wrapper")
     return False
 

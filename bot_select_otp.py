@@ -517,7 +517,7 @@ def fast_otp_sync_and_inject(bot, page, stop_event, sleep_with_stop_fn):
             DBHandler.update_runtime(bot.nid, otp_state="OTP_SUBMITTED")
             if not submission_pending and not _solve_otp_captcha_fast(bot, page):
                 captcha_failures += 1
-                if captcha_failures >= max_captcha_retries and bool(bot.settings.get("pause_for_manual_captcha", True)):
+                if captcha_failures >= max_captcha_retries and bool(bot.settings.get("pause_for_manual_captcha", False)):
                     from bot_select_captcha import wait_for_manual_captcha_handoff
                     if wait_for_manual_captcha_handoff(
                         bot,
@@ -532,6 +532,8 @@ def fast_otp_sync_and_inject(bot, page, stop_event, sleep_with_stop_fn):
                             bot.clear_otp_locks()
                         return "bank_ready"
                     return None
+                # Auto-retry with model: refresh image and continue
+                _refresh_captcha_image(bot, page, captcha_rejected=True)
                 if sleep_with_stop_fn(stop_event, 0.4):
                     break
                 continue

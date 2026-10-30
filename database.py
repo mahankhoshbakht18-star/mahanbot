@@ -33,7 +33,7 @@ DEFAULT_CONFIG = {
     "captcha_retry_delay": 0.25,
     "captcha_max_retries": 3,
     "captcha_manual_timeout": 300,
-    "pause_for_manual_captcha": True,
+    "pause_for_manual_captcha": False,
     "pause_for_manual_otp": True,
     "otp_validity_seconds": 120,
     "otp_retry_limit": 5,
@@ -164,7 +164,7 @@ def normalize_config(stored: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         auto_sub = False
     merged["auto_final_submit"] = auto_sub
     merged["final_submit"] = auto_sub
-    merged["pause_for_manual_captcha"] = bool(merged.get("pause_for_manual_captcha", True))
+    merged["pause_for_manual_captcha"] = bool(merged.get("pause_for_manual_captcha", False))
     merged["pause_for_manual_otp"] = bool(merged.get("pause_for_manual_otp", True))
     merged["allow_reserve_bank"] = bool(merged.get("allow_reserve_bank", False))
     merged["sniper_mode_enabled"] = bool(merged.get("sniper_mode_enabled", False))

@@ -514,7 +514,7 @@ class BotCore:
             max_length = min(8, max(min_length, int(self.settings.get("captcha_max_length", 8))))
             if not validate_captcha_prediction(code, min_length, max_length):
                 DBHandler.append_captcha_attempt(self.nid, code, "failed", source=source)
-                self.log("مدل محلی کپچا پاسخ معتبری نداد؛ تصویر برای ورود دستی حفظ شد.", "warning", page)
+                self.log(f"مدل محلی کپچا پاسخ معتبری نداد (کد: '{code}')؛ تلاش مجدد با مدل هوشمند...", "warning", page)
                 solver_error = getattr(getattr(self.captcha_service, "solver", None), "last_error", None)
                 if isinstance(solver_error, str) and solver_error:
                     self.log(f"خطای موتور کپچا: {solver_error}", "warning", page)

@@ -613,7 +613,7 @@ class BankSelectionBot(BotCore):
                             if self.detect_actual_page_stage(page) == "STEP_1_ENTRY_FORM":
                                 self._solve_primary_captcha_fast(page, stop_event)
                         else:
-                            if bool(self.settings.get("pause_for_manual_captcha", True)):
+                            if bool(self.settings.get("pause_for_manual_captcha", False)):
                                 wait_for_manual_captcha_handoff(
                                     self,
                                     page,
@@ -1050,7 +1050,7 @@ class BankSelectionBot(BotCore):
             self.mark_otp_entry_time()
         input_sel = "input[name$='tbCaptcha1']"
         btn_sel = "input[name$='btnSendConfirmCode']"
-        max_attempts = max(1, int(self.settings.get("captcha_max_retries", 5)))
+        max_attempts = max(10, int(self.settings.get("captcha_max_retries", 15)))
         attempts = 0
 
         while not stop_event.is_set() and attempts < max_attempts:
@@ -1063,8 +1063,14 @@ class BankSelectionBot(BotCore):
                 try:
                     captcha_img = page.locator("img.BDC_CaptchaImage").first
                     if captcha_img.count() == 0 or not captcha_img.is_visible():
+                        if attempts < max_attempts:
+                            time.sleep(0.4)
+                            continue
                         return False
                 except Exception:
+                    if attempts < max_attempts:
+                        time.sleep(0.4)
+                        continue
                     return False
 
             # Clear any leftover invalid dialog flag before submitting a fresh prediction
@@ -1077,10 +1083,16 @@ class BankSelectionBot(BotCore):
                     page, input_sel, btn_sel, stop_event=stop_event, source="primary", captcha_element=captcha_img
                 ):
                     if attempts < max_attempts:
+                        self.log(f"🔄 بازخوانی تصویر جهت تلاش مجدد با مدل هوشمند (تلاش {attempts}/{max_attempts})...", "info", page)
                         self._refresh_captcha_or_reload(page, input_sel=input_sel, allow_reload=False)
+                        time.sleep(0.3)
                         continue
                     break
             except Exception:
+                if attempts < max_attempts:
+                    self._refresh_captcha_or_reload(page, input_sel=input_sel, allow_reload=False)
+                    time.sleep(0.3)
+                    continue
                 break
 
             # Wait for ASP.NET postback / AJAX update to complete
@@ -1105,14 +1117,19 @@ class BankSelectionBot(BotCore):
                 return True
 
             if captcha_rejected:
+                self.log("⚠️ کد امنیتی توسط سامانه رد شد؛ دریافت تصویر جدید و حل مجدد با مدل...", "warning", page)
                 self._refresh_captcha_or_reload(page, input_sel=input_sel, allow_reload=False, captcha_rejected=True)
                 continue
 
-            # Submission was sent; an unknown response is not grounds for a retry.
+            # If still on Step 1, refresh image and continue automatic solving
+            if self.detect_actual_page_stage(page) == "STEP_1_ENTRY_FORM":
+                self._refresh_captcha_or_reload(page, input_sel=input_sel, allow_reload=False)
+                continue
+
             return False
 
-        # Manual CAPTCHA handoff after bounded retries
-        if not stop_event.is_set() and bool(self.settings.get("pause_for_manual_captcha", True)):
+        # Only fall back to manual if user explicitly enabled pause_for_manual_captcha
+        if not stop_event.is_set() and bool(self.settings.get("pause_for_manual_captcha", False)):
             return wait_for_manual_captcha_handoff(
                 self,
                 page,
