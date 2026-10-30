@@ -29,9 +29,11 @@ BLANK_LABEL = 0
 IDX2CHAR = {index + 1: char for index, char in enumerate(CHARS)}
 
 CAPTCHA_IMAGE_SELECTORS: Tuple[str, ...] = (
-    ".BDC_CaptchaImage",
+    "img.BDC_CaptchaImage",
     "img[id*='CaptchaImage' i]",
     "img[src*='BotDetectCaptcha' i]",
+    ".BDC_CaptchaImage img",
+    ".BDC_CaptchaImage",
     "#captchaImage",
     "#captchaImg",
     "img[src*='captcha' i]",
@@ -130,37 +132,65 @@ class ModelCaptchaSolver:
 
     CONFIDENCE_THRESHOLD = 0.45
     MAX_RETRY_ATTEMPTS = 2
+    _SHARED_MODEL = None
+    _SHARED_LOCK = threading.RLock()
+    _SHARED_DDDDOCR = None
 
     def __init__(self, model_path=None, device=None, model=None):
         self.model_path = _resolve_captcha_model_path(model_path)
+        # Default to CPU: deterministic, rock-solid, zero VRAM contention or device mismatch
         if TORCH_AVAILABLE:
-            self.device = torch.device(device or ("cuda" if torch.cuda.is_available() else "cpu"))
+            self.device = torch.device(device or "cpu")
         else:
             self.device = device or "cpu"
         self._model = model
         self._lock = threading.RLock()
         self.last_error: Optional[str] = None
+        self._ddddocr = None
+
         if self._model is not None and TORCH_AVAILABLE and hasattr(self._model, "to"):
             self._model.to(self.device)
             self._model.eval()
+        else:
+            try:
+                self.load_model()
+            except Exception:
+                pass
 
     @property
     def is_loaded(self):
-        return self._model is not None
+        return self._model is not None or ModelCaptchaSolver._SHARED_MODEL is not None
+
+    def _get_ddddocr(self):
+        if self._ddddocr is not None:
+            return self._ddddocr
+        with ModelCaptchaSolver._SHARED_LOCK:
+            if ModelCaptchaSolver._SHARED_DDDDOCR is not None:
+                self._ddddocr = ModelCaptchaSolver._SHARED_DDDDOCR
+                return self._ddddocr
+            try:
+                import ddddocr
+                ocr = ddddocr.DdddOcr(show_ad=False)
+                ModelCaptchaSolver._SHARED_DDDDOCR = ocr
+                self._ddddocr = ocr
+                return self._ddddocr
+            except Exception:
+                return None
 
     def load_model(self):
         """Load and cache model weights on the configured local device."""
         if self._model is not None:
             return self._model
 
-        with self._lock:
-            if self._model is not None:
+        with ModelCaptchaSolver._SHARED_LOCK:
+            if ModelCaptchaSolver._SHARED_MODEL is not None and str(self.device) == "cpu":
+                self._model = ModelCaptchaSolver._SHARED_MODEL
                 return self._model
+
             if not TORCH_AVAILABLE:
                 self.last_error = "کتابخانه PyTorch (torch) نصب نیست"
                 raise FileNotFoundError(self.last_error)
             if not os.path.isfile(self.model_path):
-                # Re-attempt dynamic discovery in case user copied the file after startup
                 resolved = _resolve_captcha_model_path()
                 if os.path.isfile(resolved):
                     self.model_path = resolved
@@ -194,18 +224,34 @@ class ModelCaptchaSolver:
             model.load_state_dict(state_dict, strict=True)
             model.eval()
             self._model = model
+            if str(self.device) == "cpu":
+                ModelCaptchaSolver._SHARED_MODEL = model
             self.last_error = None
             return self._model
 
     @staticmethod
     def _open_image(image_source):
-        if isinstance(image_source, (bytes, bytearray, memoryview)):
-            return Image.open(io.BytesIO(bytes(image_source)))
-        if isinstance(image_source, (str, os.PathLike)):
-            return Image.open(os.fspath(image_source))
-        if hasattr(image_source, "read"):
-            return Image.open(image_source)
-        raise TypeError("CAPTCHA image must be bytes, a path, or a readable binary stream")
+        if isinstance(image_source, Image.Image):
+            img = image_source.copy()
+        elif isinstance(image_source, (bytes, bytearray, memoryview)):
+            img = Image.open(io.BytesIO(bytes(image_source)))
+        elif isinstance(image_source, (str, os.PathLike)):
+            img = Image.open(os.fspath(image_source))
+        elif hasattr(image_source, "read"):
+            img = Image.open(image_source)
+        else:
+            raise TypeError("CAPTCHA image must be bytes, a path, or a readable binary stream")
+
+        # Composite transparent pixels onto a clean white background
+        if img.mode in ("RGBA", "LA") or (img.mode == "P" and "transparency" in img.info):
+            bg = Image.new("RGB", img.size, (255, 255, 255))
+            if img.mode == "P":
+                img = img.convert("RGBA")
+            bg.paste(img, mask=img.split()[-1])
+            return bg
+        elif img.mode != "RGB" and img.mode != "L":
+            img = img.convert("RGB")
+        return img
 
     @staticmethod
     def _enhance_image(image: Image.Image, mode: str = "raw") -> Image.Image:
@@ -276,53 +322,79 @@ class ModelCaptchaSolver:
 
     def solve(self, image_source, use_enhanced: bool = True, min_confidence: float = None) -> Optional[str]:
         """
-        Solve CAPTCHA image using the trained CRNN model:
-        1. Pass 1: Standard raw grayscale ('raw') — matches exact CRNN training distribution!
-        2. Pass 2: Gentle autocontrast + sharpen ('contrast')
-        3. Pass 3: Adaptive threshold ('binarize')
-        Picks the highest-confidence valid prediction across passes.
+        Solve CAPTCHA image using local models:
+        1. CRNN Primary: Evaluates PyTorch CRNN model across standard preprocessing modes.
+        2. DdddOcr Fallback: If CRNN does not output a valid code, invokes local offline OCR engine.
         """
         if min_confidence is None:
             min_confidence = self.CONFIDENCE_THRESHOLD
 
-        try:
-            model = self.load_model()
-        except (FileNotFoundError, OSError, TypeError, ValueError):
-            return None
-
-        modes = ["raw", "contrast", "binarize"] if use_enhanced else ["raw"]
         best_prediction = None
         best_confidence = -1.0
 
-        for mode in modes:
-            try:
-                tensor = self.preprocess(image_source, enhance=mode)
-                with self._lock, torch.inference_mode():
-                    logits = model(tensor)
-                    prediction, confidence = self.decode(logits)
+        try:
+            model = self.load_model()
+            modes = ["raw", "contrast", "binarize"] if use_enhanced else ["raw"]
+            for mode in modes:
+                try:
+                    tensor = self.preprocess(image_source, enhance=mode)
+                    with self._lock, torch.inference_mode():
+                        logits = model(tensor)
+                        prediction, confidence = self.decode(logits)
 
-                prediction = "".join(char for char in prediction.upper() if char in CHARS)
-                if not prediction:
-                    continue
+                    prediction = "".join(char for char in prediction.upper() if char in CHARS)
+                    if not prediction:
+                        continue
 
-                if validate_captcha_prediction(prediction, 4, 8):
-                    if confidence >= min_confidence:
-                        return prediction
-                    if confidence > best_confidence:
-                        best_confidence = confidence
+                    if validate_captcha_prediction(prediction, 4, 8):
+                        if confidence >= min_confidence:
+                            return prediction
+                        if confidence > best_confidence:
+                            best_confidence = confidence
+                            best_prediction = prediction
+                    elif best_prediction is None and len(prediction) >= 4:
                         best_prediction = prediction
-                elif best_prediction is None and len(prediction) >= 3:
-                    best_prediction = prediction
-            except (FileNotFoundError, OSError, TypeError, ValueError, UnidentifiedImageError):
-                continue
+                except Exception:
+                    continue
+        except Exception as exc:
+            self.last_error = str(exc)
+
+        if best_prediction and validate_captcha_prediction(best_prediction, 4, 8):
+            return best_prediction
+
+        # Auxiliary local engine fallback if CRNN alone did not yield a valid code
+        try:
+            ocr = self._get_ddddocr()
+            if ocr is not None:
+                img_bytes = None
+                if isinstance(image_source, (bytes, bytearray, memoryview)):
+                    img_bytes = bytes(image_source)
+                elif isinstance(image_source, Image.Image):
+                    buf = io.BytesIO()
+                    image_source.save(buf, format="PNG")
+                    img_bytes = buf.getvalue()
+                elif isinstance(image_source, (str, os.PathLike)) and os.path.exists(image_source):
+                    with open(image_source, "rb") as f:
+                        img_bytes = f.read()
+                if img_bytes:
+                    raw = str(ocr.classification(img_bytes) or "").strip().upper()
+                    clean = "".join(c for c in raw if c in CHARS)
+                    if validate_captcha_prediction(clean, 4, 8):
+                        return clean
+        except Exception:
+            pass
 
         return best_prediction
 
 
-def wait_for_captcha_image_ready(page, timeout_ms: int = 5000, trigger_refresh_if_missing: bool = True):
+def wait_for_captcha_image_ready(
+    page,
+    timeout_ms: int = 5000,
+    trigger_refresh_if_missing: bool = True,
+    previous_src: Optional[str] = None,
+):
     """
-    Wait until a CAPTCHA image element appears in the DOM and finishes loading (`naturalWidth > 0`).
-    If the image is missing or broken (0x0), clicks the BotDetect reload icon to force the server to render it.
+    Wait until a CAPTCHA image element appears in the DOM, has finished loading, and is visible on screen with real dimensions.
     Returns (captcha_locator, scope) or (None, None).
     """
     deadline = time.time() + max(0.5, timeout_ms / 1000.0)
@@ -350,25 +422,44 @@ def wait_for_captcha_image_ready(page, timeout_ms: int = 5000, trigger_refresh_i
                         cand = loc.nth(idx)
                         if not cand.is_visible():
                             continue
-                        # Verify image is actually loaded if running against a real DOM
-                        is_loaded = True
+
+                        # Check image has completed loading
                         try:
-                            handle = cand.element_handle()
-                            if handle and hasattr(scope, "evaluate"):
-                                res = scope.evaluate(
-                                    "(img) => !img || (typeof img.complete === 'undefined') || (img.complete && (img.naturalWidth === undefined || img.naturalWidth > 0))",
-                                    handle,
-                                )
-                                if res is False:
-                                    is_loaded = False
+                            is_loaded = cand.evaluate("""el => {
+                                const img = el.tagName && el.tagName.toLowerCase() === 'img' ? el : el.querySelector('img');
+                                if (img) {
+                                    return img.complete && (img.naturalWidth === undefined || img.naturalWidth > 0);
+                                }
+                                return true;
+                            }""")
+                            if not is_loaded:
+                                continue
                         except Exception:
-                            is_loaded = True
-                        if is_loaded:
-                            return cand, scope
+                            pass
+
+                        # If previous_src was specified, ensure image src has changed
+                        if previous_src:
+                            try:
+                                cur_src = cand.evaluate("""el => {
+                                    const img = el.tagName && el.tagName.toLowerCase() === 'img' ? el : el.querySelector('img');
+                                    return img ? (img.getAttribute('src') || '') : '';
+                                }""")
+                                if cur_src and cur_src == previous_src:
+                                    continue
+                            except Exception:
+                                pass
+
+                        try:
+                            box = cand.bounding_box()
+                            if box and (box.get("width", 0) < 15 or box.get("height", 0) < 8):
+                                continue
+                        except Exception:
+                            pass
+
+                        return cand, scope
                 except Exception:
                     continue
 
-        # If image hasn't appeared or finished loading yet, try clicking the reload link once
         if trigger_refresh_if_missing and not refreshed_once and (deadline - time.time()) < (timeout_ms / 2000.0):
             refreshed_once = True
             for scope in _iter_scopes():
@@ -393,19 +484,24 @@ def refresh_captcha_or_reload(
     timeout=12000,
     max_retries=3,
     allow_reload=True,
+    captcha_rejected=False,
+    **kwargs,
 ):
     """Smart strategy: Try clicking refresh button or image first, then fallback to full reload if allowed."""
+    old_src = None
+    try:
+        current_img, _ = wait_for_captcha_image_ready(page, timeout_ms=800, trigger_refresh_if_missing=False)
+        if current_img is not None:
+            old_src = current_img.evaluate("""el => {
+                const img = el.tagName && el.tagName.toLowerCase() === 'img' ? el : el.querySelector('img');
+                return img ? (img.getAttribute('src') || '') : '';
+            }""")
+    except Exception:
+        old_src = None
+
     for attempt in range(max_retries):
         try:
-            captcha_img, scope = wait_for_captcha_image_ready(page, timeout_ms=1500, trigger_refresh_if_missing=False)
-            target_scope = scope or page
-            previous = None
-            if captcha_img is not None:
-                try:
-                    previous = captcha_img.screenshot()
-                except Exception:
-                    previous = None
-
+            target_scope = page
             clicked_reload = False
             for rsel in CAPTCHA_RELOAD_SELECTORS:
                 try:
@@ -417,33 +513,27 @@ def refresh_captcha_or_reload(
                 except Exception:
                     continue
 
-            if not clicked_reload and captcha_img is not None:
+            if not clicked_reload:
                 try:
-                    captcha_img.click(timeout=800)
-                    clicked_reload = True
+                    cimg, _ = wait_for_captcha_image_ready(page, timeout_ms=600, trigger_refresh_if_missing=False)
+                    if cimg is not None:
+                        cimg.click(timeout=800)
+                        clicked_reload = True
                 except Exception:
                     pass
 
             if clicked_reload:
-                if previous is not None and captcha_img is not None:
-                    deadline = time.time() + 1.2
-                    while time.time() < deadline:
-                        time.sleep(0.06)
-                        try:
-                            if captcha_img.screenshot() != previous:
-                                break
-                        except Exception:
-                            break
-
                 if input_sel:
                     try:
-                        loc = target_scope.locator(input_sel)
+                        loc = page.locator(input_sel)
                         if loc.count() > 0 and loc.first.is_visible():
                             loc.first.fill("")
                     except Exception:
                         pass
 
-                new_img, _ = wait_for_captcha_image_ready(page, timeout_ms=2000, trigger_refresh_if_missing=False)
+                new_img, _ = wait_for_captcha_image_ready(
+                    page, timeout_ms=2500, trigger_refresh_if_missing=False, previous_src=old_src
+                )
                 if new_img is not None:
                     return True
         except Exception:
@@ -458,20 +548,9 @@ def refresh_captcha_or_reload(
             page.wait_for_load_state("domcontentloaded", timeout=min(timeout, 3000))
         except Exception:
             pass
-        wait_for_captcha_image_ready(page, timeout_ms=min(timeout, 4000), trigger_refresh_if_missing=True)
-        if hasattr(bot, "_ensure_nid_after_reload"):
-            bot._ensure_nid_after_reload(page)
-        if input_sel:
-            try:
-                target = page.locator(input_sel)
-                if target.count() > 0 and target.first.is_visible():
-                    target.first.fill("")
-            except Exception:
-                pass
         return True
     except Exception:
         return False
-
 
 def detect_captcha_failure(page) -> bool:
     """Detect if CAPTCHA submission failed based on page content."""
@@ -500,6 +579,19 @@ def validate_captcha_prediction(prediction: str, min_length: int = 4, max_length
     if not prediction.isalnum():
         return False
     return True
+
+
+def iter_page_scopes(page):
+    yield page
+    try:
+        for frame in page.frames:
+            fname = (frame.name or "").lower()
+            furl = (frame.url or "").lower()
+            if "tspd" in fname or "tspd" in furl:
+                continue
+            yield frame
+    except Exception:
+        return
 
 
 def wait_for_manual_captcha_handoff(
@@ -554,7 +646,6 @@ def wait_for_manual_captcha_handoff(
             except Exception:
                 continue
 
-        # Active Model Assist: every 2.5 seconds, if a CAPTCHA image is visible and user is not mid-typing, let the model solve it!
         now = time.time()
         if now - last_model_try_ts >= 2.5:
             last_model_try_ts = now
@@ -579,7 +670,6 @@ def wait_for_manual_captcha_handoff(
                             time.sleep(0.6)
                             continue
                     else:
-                        # Image hasn't changed and failed previously -> refresh image for a fresh model attempt
                         refresh_captcha_or_reload(bot, page, input_sel=input_sel, allow_reload=False)
             except Exception:
                 pass

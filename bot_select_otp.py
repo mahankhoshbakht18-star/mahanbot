@@ -144,10 +144,9 @@ def _locate_otp_captcha_controls(page, wait_ms: int = 3500):
     return image, captcha_input, submit_btn
 
 
-def _refresh_captcha_image(bot, page):
+def _refresh_captcha_image(bot, page, captcha_rejected=False, **kwargs):
     image, _, _ = _locate_otp_captcha_controls(page, wait_ms=1200)
     if not image:
-        # Even if image is not visible yet, try clicking any reload link on the page
         for _, scope in _iter_scopes(page):
             for rsel in CAPTCHA_RELOAD_SELECTORS:
                 try:
@@ -162,7 +161,15 @@ def _refresh_captcha_image(bot, page):
         _log_fa(bot, "ℹ️ تصویر کپچا هنوز بارگذاری نشده است؛ در حال انتظار برای نمایش تصویر...", "info", page)
         return False
     try:
-        previous = image.screenshot(type="png")
+        old_src = None
+        try:
+            old_src = image.evaluate("""el => {
+                const img = el.tagName && el.tagName.toLowerCase() === 'img' ? el : el.querySelector('img');
+                return img ? (img.getAttribute('src') || '') : '';
+            }""")
+        except Exception:
+            old_src = None
+
         clicked = False
         for _, scope in _iter_scopes(page):
             for rsel in CAPTCHA_RELOAD_SELECTORS:
@@ -179,16 +186,10 @@ def _refresh_captcha_image(bot, page):
         if not clicked:
             image.click(timeout=700)
 
-        deadline = time.time() + 2.5
-        while time.time() < deadline:
-            page.wait_for_timeout(60)
-            try:
-                current_shot = image.screenshot(type="png")
-                if current_shot and current_shot != previous:
-                    _log_fa(bot, "🔄 تصویر تازه کپچا دریافت شد.", "info", page)
-                    return True
-            except Exception:
-                break
+        new_img, _ = wait_for_captcha_image_ready(page, timeout_ms=2500, trigger_refresh_if_missing=False, previous_src=old_src)
+        if new_img is not None:
+            _log_fa(bot, "🔄 تصویر تازه کپچا دریافت شد.", "info", page)
+            return True
         return True
     except Exception as exc:
         _log_fa(bot, f"⚠️ رفرش کپچا ناموفق بود: {exc}", "warning", page)
@@ -214,7 +215,7 @@ def _solve_otp_captcha_fast(bot, page):
         return False
 
     stop_event = getattr(bot, "_active_stop_event", None)
-    if stop_event is None:
+    if stop_event is not None and stop_event.is_set():
         return False
     return bot.solve_captcha_with_model(
         page,

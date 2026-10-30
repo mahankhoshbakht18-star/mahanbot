@@ -35,7 +35,31 @@ class CaptchaService:
             return None
 
     def solve_element(self, captcha_element):
-        """Screenshot a Playwright element, solve it, and always remove the file."""
+        """Screenshot a Playwright element, solve it in memory (<25ms), fallback to disk only if needed."""
+        if captcha_element is None:
+            return None
+
+        # Resolve to inner img element if container or link was provided
+        target = captcha_element
+        try:
+            if hasattr(captcha_element, "locator"):
+                img_loc = captcha_element.locator("img").first
+                if img_loc.count() > 0 and img_loc.is_visible():
+                    target = img_loc
+        except Exception:
+            pass
+
+        # 1. Fast in-memory bytes path (no disk I/O, no permission locks)
+        try:
+            image_bytes = target.screenshot(type="png", timeout=2500)
+            if image_bytes and len(image_bytes) >= 100:
+                res = self.solve(image_bytes)
+                if res:
+                    return res
+        except Exception:
+            pass
+
+        # 2. Disk fallback if in-memory screenshot failed
         temp_dir = None
         screenshot_path = None
         try:
@@ -43,20 +67,23 @@ class CaptchaService:
                 os.makedirs(self.temp_root, exist_ok=True)
             temp_dir = tempfile.mkdtemp(prefix="mahanbot-captcha-", dir=self.temp_root)
             screenshot_path = os.path.join(temp_dir, TEMP_CAPTCHA_FILENAME)
-            captcha_element.screenshot(path=screenshot_path, type="png")
-            return self.solve(screenshot_path)
+            target.screenshot(path=screenshot_path, type="png", timeout=2500)
+            if os.path.isfile(screenshot_path) and os.path.getsize(screenshot_path) >= 100:
+                return self.solve(screenshot_path)
+        except Exception:
+            return None
         finally:
             if screenshot_path:
                 try:
                     os.remove(screenshot_path)
-                except FileNotFoundError:
-                    pass
-                except OSError:
+                except Exception:
                     pass
             if temp_dir:
-                # Remove any Playwright side files as well, without ever touching
-                # the caller-provided temp root.
-                shutil.rmtree(temp_dir, ignore_errors=True)
+                try:
+                    shutil.rmtree(temp_dir, ignore_errors=True)
+                except Exception:
+                    pass
+        return None
 
 
 _DEFAULT_SERVICE = None

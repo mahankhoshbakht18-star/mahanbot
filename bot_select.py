@@ -1014,8 +1014,8 @@ class BankSelectionBot(BotCore):
         safe_goto(page, url, **kwargs)
         return True
 
-    def _refresh_captcha_or_reload(self, page, input_sel="#ctl00_ContentPlaceHolder1_tbCaptcha2", timeout=12000, allow_reload=True, captcha_rejected=False):
-        return refresh_captcha_or_reload(self, page, input_sel=input_sel, timeout=timeout, allow_reload=allow_reload)
+    def _refresh_captcha_or_reload(self, page, input_sel="#ctl00_ContentPlaceHolder1_tbCaptcha2", timeout=12000, allow_reload=True, captcha_rejected=False, **kwargs):
+        return refresh_captcha_or_reload(self, page, input_sel=input_sel, timeout=timeout, allow_reload=allow_reload, captcha_rejected=captcha_rejected, **kwargs)
 
     def _ensure_nid_after_reload(self, page):
         selectors = ["#ctl00_ContentPlaceHolder1_tbIDNo", "input[name$='tbIDNo']"]
@@ -1045,10 +1045,10 @@ class BankSelectionBot(BotCore):
         Solve Step 1 CAPTCHA up to captcha_max_retries times.
         Waits for the CAPTCHA image to appear and finish loading (`naturalWidth > 0`) before passing to the model.
         """
-        from bot_select_captcha import wait_for_captcha_image_ready
+        from bot_select_captcha import wait_for_captcha_image_ready, wait_for_manual_captcha_handoff
         input_sel = "input[name$='tbCaptcha1']"
         btn_sel = "input[name$='btnSendConfirmCode']"
-        max_attempts = max(1, int(self.settings.get("captcha_max_retries", 5)))
+        max_attempts = max(1, int(self.settings.get("captcha_max_retries", 8)))
         attempts = 0
 
         while not stop_event.is_set() and attempts < max_attempts:
@@ -1059,7 +1059,7 @@ class BankSelectionBot(BotCore):
             captcha_img, _ = wait_for_captcha_image_ready(page, timeout_ms=4500, trigger_refresh_if_missing=True)
             if captcha_img is None:
                 try:
-                    captcha_img = page.locator(".BDC_CaptchaImage").first
+                    captcha_img = page.locator("img.BDC_CaptchaImage, .BDC_CaptchaImage").first
                     if captcha_img.count() == 0 or not captcha_img.is_visible():
                         return False
                 except Exception:
@@ -1080,27 +1080,31 @@ class BankSelectionBot(BotCore):
                 self._refresh_captcha_or_reload(page, input_sel=input_sel, allow_reload=False)
                 continue
 
-            try:
-                page.wait_for_selector("input[name$='tbMobileConfCode']", timeout=1200, state="visible")
-                return True
-            except Exception:
-                pass
+            # Wait for ASP.NET postback / AJAX update to complete
+            if hasattr(self, "wait_for_aspnet_postback"):
+                self.wait_for_aspnet_postback(page, timeout_ms=3000)
 
-            try:
-                page.wait_for_selector("#ctl00_ContentPlaceHolder1_ddlBankName", timeout=800, state="visible")
+            # Poll for page transition to Step 2 (OTP) or Step 3 (Bank Selection)
+            transitioned = False
+            for _ in range(15):  # 15 * 200ms = 3.0s total grace period for server response
+                if stop_event.is_set():
+                    return False
+                if self._otp_input_visible(page) or self.detect_actual_page_stage(page) in {"STEP_2_OTP", "STEP_3_BANK_SELECT"}:
+                    transitioned = True
+                    break
+                if self.consume_recovery_flag("captcha_invalid") or self._detect_captcha_failure(page):
+                    break
+                time.sleep(0.2)
+
+            if transitioned:
                 self.clear_otp_locks()
                 return True
-            except Exception:
-                pass
-
-            if self._detect_captcha_failure(page):
-                self._refresh_captcha_or_reload(page, input_sel=input_sel, allow_reload=False)
-                continue
 
             self._refresh_captcha_or_reload(page, input_sel=input_sel, allow_reload=False)
 
-        # Manual CAPTCHA handoff after bounded retries
-        if not stop_event.is_set() and bool(self.settings.get("pause_for_manual_captcha", True)):
+        # Manual CAPTCHA handoff only if user explicitly enabled it
+        pause_manual = str(self.settings.get("pause_for_manual_captcha", "false")).lower() in {"1", "true", "yes"}
+        if not stop_event.is_set() and pause_manual:
             return wait_for_manual_captcha_handoff(
                 self,
                 page,
