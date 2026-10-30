@@ -34,6 +34,9 @@ class CaptchaService:
             # the CAPTCHA, so callers receive a simple unsuccessful result.
             return None
 
+    def prewarm(self) -> bool:
+        return prewarm()
+
     def solve_element(self, captcha_element):
         """Screenshot a Playwright element, solve it in memory (<25ms), fallback to disk only if needed."""
         if captcha_element is None:
@@ -51,8 +54,8 @@ class CaptchaService:
 
         # 1. Fast in-memory bytes path (no disk I/O, no permission locks)
         try:
-            image_bytes = target.screenshot(type="png", timeout=2500)
-            if image_bytes and len(image_bytes) >= 100:
+            image_bytes = target.screenshot(type="png")
+            if image_bytes and len(image_bytes) >= 10:
                 res = self.solve(image_bytes)
                 if res:
                     return res
@@ -102,3 +105,22 @@ def _get_default_service():
 def solve_captcha_api(image_bytes=None):
     """Legacy entry point that now delegates exclusively to the local model."""
     return _get_default_service().solve(image_bytes)
+
+
+def solve_element(captcha_element):
+    """Module-level helper to solve a Playwright CAPTCHA element directly in-memory."""
+    return _get_default_service().solve_element(captcha_element)
+
+
+def prewarm() -> bool:
+    """Pre-warm the local CRNN model in memory on CPU for sub-35ms inference."""
+    try:
+        service = _get_default_service()
+        if hasattr(service, "solver") and service.solver:
+            if hasattr(service.solver, "_ensure_model_loaded"):
+                service.solver._ensure_model_loaded()
+            elif hasattr(service.solver, "model") and service.solver.model is None:
+                service.solver._load_model()
+        return True
+    except Exception:
+        return False

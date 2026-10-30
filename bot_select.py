@@ -77,10 +77,15 @@ class LoanTypeAdapter:
         clean_nid = str(nid or "").strip()
         if not clean_nid.isdigit() or len(clean_nid) != 10:
             return False, "کد ملی متقاضی باید دقیقاً ۱۰ رقم باشد."
+
+        # تفکیک کامل پایش/انتخاب بانک از ثبت‌نام اولیه:
+        # در فرآیند انتخاب و پایش بانک (SelTasCase.aspx / SelectBnkShb.aspx)، سامانه بانک مرکزی
+        # فقط و فقط کد ملی (tbIDNo) را می‌خواهد و هیچ نیازی به تاریخ تولد یا ازدواج ندارد.
         if self.kind == "childbearing":
             child_nid = str((user_data or {}).get("child_national_id") or "").strip()
             if child_nid and (not child_nid.isdigit() or len(child_nid) != 10):
                 return False, "کد ملی فرزند باید دقیقاً ۱۰ رقم باشد."
+
         return True, "ok"
 
     def fill_entry_extras(self, bot, page, user_data: dict):
@@ -505,8 +510,13 @@ class BankSelectionBot(BotCore):
                             set_state("ENTRY_FORM")
                             continue
                         elif result == "cycle_otp":
-                            # Fast cycling back to OTP entry without returning to Step 1
-                            set_state("OTP_FORM")
+                            actual = self.detect_actual_page_stage(page)
+                            if actual == "STEP_1_ENTRY_FORM":
+                                set_state("ENTRY_FORM")
+                            elif actual == "STEP_3_BANK_SELECT":
+                                set_state("BANK_SELECT")
+                            else:
+                                set_state("OTP_FORM")
                             continue
                         elif result == "confirmed":
                             return
@@ -1094,6 +1104,14 @@ class BankSelectionBot(BotCore):
                     break
                 if self.consume_recovery_flag("captcha_invalid") or self._detect_captcha_failure(page):
                     break
+                from bot_select_captcha import detect_form_validation_error
+                form_err = detect_form_validation_error(page)
+                if form_err:
+                    self.log(f"⚠️ خطای فرم سامانه ثبت شد: {form_err}؛ توقف چرخه بیهوده کپچا.", "error", page)
+                    self.set_runtime_state("ERROR", "VALIDATION_ERROR", browser_status="OPEN", last_error=form_err)
+                    from database import DBHandler
+                    DBHandler.update_status(self.nid, "خطای اطلاعات فرم", form_err)
+                    return False
                 time.sleep(0.2)
 
             if transitioned:

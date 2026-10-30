@@ -9,6 +9,15 @@ from typing import Any, Dict, List, Optional, Tuple
 from database import DBHandler
 from event_logger import emit_structured_event
 from bank_page_manager import classify_capacity_or_error, BankPageState, is_reserve_text, capture_dom_html
+from core.bank_matcher import (
+    KNOWN_BANK_CODES,
+    BANK_CANONICAL_TO_CODE,
+    PersianBankMatcher,
+    BankOptionInfo,
+)
+
+STATIC_BANK_CODES: Dict[str, str] = KNOWN_BANK_CODES
+
 
 
 def _safe_path_part(value, fallback="unknown", max_length=80):

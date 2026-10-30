@@ -571,6 +571,28 @@ def detect_captcha_failure(page) -> bool:
     return any(phrase in content for phrase in phrases)
 
 
+def detect_form_validation_error(page) -> Optional[str]:
+    """Detect if the page has validation error messages (missing dates, invalid NID) that stop form progression."""
+    selectors = [
+        "#ctl00_ContentPlaceHolder1_lblMessage",
+        "#ctl00_ContentPlaceHolder1_vsValidation",
+        ".ValidationSummary",
+        "span[id*='lblMessage']",
+        "span[id*='lblError']",
+        "div.alert-danger",
+    ]
+    try:
+        for sel in selectors:
+            loc = page.locator(sel)
+            if loc.count() > 0 and loc.first.is_visible():
+                txt = (loc.first.inner_text() or "").strip()
+                if txt and not any(c in txt for c in ("کد امنیتی", "کپچا", "security")):
+                    return txt
+    except Exception:
+        pass
+    return None
+
+
 def validate_captcha_prediction(prediction: str, min_length: int = 4, max_length: int = 12) -> bool:
     if not prediction:
         return False

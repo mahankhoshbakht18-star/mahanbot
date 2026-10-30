@@ -786,11 +786,29 @@ class BankSelectionSessionController:
         step3.disable_logout_trap(page)
         owner.bank_page_active = False
         try:
-            page.reload()
+            try:
+                page.once("dialog", lambda dialog: dialog.accept())
+            except Exception:
+                pass
+            page.reload(wait_until="domcontentloaded", timeout=15000)
         except Exception as e:
             logger.warning(f"Reload failed: {e}")
-        self.transition(State.BANK_OPTIONS_LOADING, "cycled_back_to_otp")
-        return "cycle_otp"
+            try:
+                page.goto("https://ve.cbi.ir/SelectBnkShb.aspx", wait_until="domcontentloaded", timeout=15000)
+            except Exception:
+                pass
+
+        actual_after = bot.detect_actual_page_stage(page)
+        if actual_after == "STEP_1_ENTRY_FORM":
+            self.transition(State.SESSION_EXPIRED, "cycled_to_entry")
+            return "reauthenticate"
+        elif actual_after == "STEP_3_BANK_SELECT":
+            owner.bank_page_active = True
+            self.transition(State.BANK_OPTIONS_READY, "refreshed_step3")
+            return "waiting"
+        else:
+            self.transition(State.BANK_OPTIONS_LOADING, "cycled_back_to_otp")
+            return "cycle_otp"
 
     def run(self):
         self.owner.bank_page_active = True

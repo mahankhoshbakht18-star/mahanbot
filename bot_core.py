@@ -541,10 +541,6 @@ class BotCore:
 
             if stop_event is not None and stop_event.is_set():
                 return False
-            try:
-                time.sleep(random.uniform(0.15, 0.45))
-            except Exception:
-                pass
             submit_button = (
                 page.locator(button_selector).first
                 if isinstance(button_selector, str)
