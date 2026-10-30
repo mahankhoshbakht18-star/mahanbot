@@ -110,7 +110,7 @@ class TestOtpCapacityRetryAndPause(unittest.TestCase):
             )
 
             self.assertEqual(status, "retry")
-            mock_refresh.assert_called_once()
+            mock_refresh.assert_not_called()
             self.assertIsNone(bot._last_dialog_action)
 
     def test_post_submit_watch_detects_otp_expiry(self):

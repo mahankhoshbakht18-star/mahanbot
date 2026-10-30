@@ -1,4 +1,4 @@
-"""Run regression tests without opening the production database."""
+"""Run all or named unittest tests without opening the production database."""
 import os
 import sys
 import tempfile
@@ -25,6 +25,10 @@ if __name__ == "__main__":
         # Network behavior is supplied by each test's mocks. Never contact a running
         # production server or the Android relay, including from background threads.
         with patch("requests.sessions.Session.request", side_effect=requests.ConnectionError("Network disabled in tests")):
-            suite = unittest.defaultTestLoader.discover(str(ROOT / "tests"))
+            if len(sys.argv) > 1:
+                sys.path.insert(0, str(ROOT / "tests"))
+                suite = unittest.defaultTestLoader.loadTestsFromNames(sys.argv[1:])
+            else:
+                suite = unittest.defaultTestLoader.discover(str(ROOT / "tests"))
             result = unittest.TextTestRunner(verbosity=2).run(suite)
         sys.exit(not result.wasSuccessful())

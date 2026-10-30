@@ -155,6 +155,14 @@ class MockLocator:
         return b"png"
 
 
+class MockCaptchaImage(MockLocator):
+    def evaluate(self, script, *args):
+        return self._visible and self._count > 0
+
+    def bounding_box(self):
+        return {"x": 0, "y": 0, "width": 160, "height": 60}
+
+
 class MockDialog:
     def __init__(self, message: str, dialog_type: str = "alert"):
         self._message = message
@@ -360,7 +368,8 @@ class RegressionTests(unittest.TestCase):
 
         class ScreenshotElement:
             def screenshot(self, path, **kwargs):
-                Path(path).write_bytes(b"temporary screenshot")
+                from PIL import Image
+                Image.new("RGB", (160, 60), "white").save(path, format="PNG")
 
         with tempfile.TemporaryDirectory() as temp_dir:
             solver = RecordingSolver()
@@ -524,7 +533,7 @@ class MandatoryV180Tests(unittest.TestCase):
         bot = BankSelectionBot(self.nid, settings)
         page = MockWebFormsPage()
         nid_loc = MockLocator(visible=True, value="")
-        cap_img = MockLocator(visible=True)
+        cap_img = MockCaptchaImage(visible=True)
         cap_inp = MockLocator(visible=True, value="")
         btn_send = MockLocator(visible=True)
         otp_inp = MockLocator(visible=False, count=0)
@@ -564,7 +573,7 @@ class MandatoryV180Tests(unittest.TestCase):
         bot = BankSelectionBot(self.nid, settings)
 
         page = MockWebFormsPage()
-        cap_img = MockLocator(visible=True)
+        cap_img = MockCaptchaImage(visible=True)
         cap_inp = MockLocator(visible=True, value="")
         btn_send = MockLocator(visible=True)
         otp_inp = MockLocator(visible=False, count=0)
@@ -586,7 +595,9 @@ class MandatoryV180Tests(unittest.TestCase):
         stop_event = threading.Event()
         ok = bot._solve_primary_captcha_fast(page, stop_event)
         self.assertTrue(ok)
-        self.assertEqual(bot.captcha_service.solve_element.call_count, 2)
+        bot.captcha_service.solve_element.assert_called_once()
+        self.assertEqual(btn_send.clicks, 0)
+        self.assertEqual(cap_inp.input_value(), "")
         events = [e.get("event_code") for e in EVENT_BROADCASTER.event_history if e.get("event_code")]
         self.assertIn("CAPTCHA_MANUAL_REQUIRED", events)
 
@@ -597,7 +608,7 @@ class MandatoryV180Tests(unittest.TestCase):
         page = MockWebFormsPage()
 
         otp_inp = MockLocator(visible=True, value="")
-        cap_img = MockLocator(visible=True)
+        cap_img = MockCaptchaImage(visible=True)
         cap_inp = MockLocator(visible=True, value="")
         btn_cont = MockLocator(visible=True)
         bank_ddl = MockLocator(visible=False, count=0)
@@ -912,7 +923,7 @@ class MandatoryV180Tests(unittest.TestCase):
         bot = BankSelectionBot(self.nid, settings)
         page = MockWebFormsPage()
 
-        cap_img = MockLocator(visible=False, count=0)
+        cap_img = MockCaptchaImage(visible=False, count=0)
         reload_btn = MockLocator(visible=True, count=1)
         cap_inp = MockLocator(visible=True, value="")
         btn_send = MockLocator(visible=True)
@@ -980,7 +991,7 @@ class MandatoryV180Tests(unittest.TestCase):
 
         # Simulate manual OTP typed directly in browser (6 digits) + CAPTCHA solved -> transition to Step 3
         otp_inp = MockLocator(visible=True, value="789456")
-        cap_img = MockLocator(visible=True)
+        cap_img = MockCaptchaImage(visible=True)
         cap_inp = MockLocator(visible=True, value="")
         btn_cont = MockLocator(visible=True)
         bank_ddl = MockLocator(visible=False, count=0)

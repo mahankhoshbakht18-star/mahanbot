@@ -184,7 +184,7 @@ class RegistrationBot(BotCore):
 
                     if self.consume_recovery_flag("captcha_invalid"):
                         if self._captcha_retry <= self._captcha_retry_limit:
-                            self._refresh_captcha_in_place(page)
+                            self._refresh_captcha_in_place(page, captcha_rejected=True)
                         else:
                             if bool(self.settings.get("pause_for_manual_captcha", True)):
                                 wait_for_manual_captcha_handoff(
@@ -508,15 +508,12 @@ class RegistrationBot(BotCore):
             close_browser(playwright, browser, context, page)
             self.log("مرورگر بسته شد.", "stop")
 
-    def _refresh_captcha_in_place(self, page):
-        try:
-            reload_btn = page.locator(".BDC_ReloadLink").first
-            if reload_btn.count() and reload_btn.is_visible():
-                reload_btn.click(timeout=1000)
-                return True
-        except Exception:
-            pass
-        return False
+    def _refresh_captcha_in_place(self, page, captcha_rejected=False):
+        from bot_select_captcha import refresh_captcha_or_reload
+        return refresh_captcha_or_reload(
+            self, page, input_sel="input[name*='tbCaptcha']",
+            allow_reload=False, captcha_rejected=captcha_rejected,
+        )
 
     def _wait_for_ready(self, page):
         try:
@@ -676,9 +673,12 @@ class RegistrationBot(BotCore):
                 stop_event=self._active_stop_event,
                 source="register",
             ):
-                if not detect_captcha_failure(page):
+                self.wait_for_aspnet_postback(page, timeout_ms=4000)
+                if not detect_captcha_failure(page) and getattr(self, "_last_dialog_action", None) != "captcha_invalid":
                     return True
-            self._refresh_captcha_in_place(page)
+                self._refresh_captcha_in_place(page, captcha_rejected=True)
+            else:
+                break
 
         if bool(self.settings.get("pause_for_manual_captcha", True)):
             return wait_for_manual_captcha_handoff(

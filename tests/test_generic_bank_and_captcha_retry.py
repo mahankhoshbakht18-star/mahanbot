@@ -1,7 +1,7 @@
 """
 tests/test_generic_bank_and_captcha_retry.py
 Verification of:
-1. CAPTCHA model solving with automatic reload/retry on empty or unrendered DOM images.
+1. CAPTCHA recognition failure preserves the current challenge for manual entry.
 2. Generalized bank priority logic for ANY applicant-selected bank (Tejarat, Mellat, Melli, Saderat, etc.).
 3. 5-second continuous monitoring cycle until 120s SMS OTP expiration.
 """
@@ -67,20 +67,23 @@ class TestGenericBankAndCaptchaRetry(unittest.TestCase):
         names = ctrl._get_target_bank_names()
         self.assertEqual(names, ["بانک سپه"])
 
-    def test_solve_captcha_with_model_retries_on_empty_code(self):
-        """Verify solve_captcha_with_model retries on fresh image when initial attempt returns empty."""
-        bot = BotCore(nid="1234567890", settings={"captcha_min_length": 4, "captcha_max_length": 8})
+    def test_solve_captcha_with_model_preserves_image_on_empty_code(self):
+        """Recognition failure must not request a different CAPTCHA or submit."""
+        bot = BotCore.__new__(BotCore)
+        bot.nid = "1234567890"
+        bot.settings = {"captcha_min_length": 4, "captcha_max_length": 8}
+        bot.log = MagicMock()
+        bot.set_runtime_state = MagicMock()
         mock_page = MagicMock()
         mock_input = MagicMock()
-        mock_input.input_value.return_value = "83YRMR"
+        mock_input.input_value.return_value = ""
 
-        # Captcha service returns empty on attempt 1, valid code on attempt 2
+        # An empty local result is not a server rejection.
         mock_service = MagicMock()
         mock_service.solve_element.side_effect = ["", "83YRMR"]
         bot.captcha_service = mock_service
 
         with patch("browser_actions.BrowserActions.find_captcha_input", return_value=mock_input), \
-             patch("browser_actions.BrowserActions.human_fill") as mock_fill, \
              patch("bot_select_captcha.wait_for_captcha_image_ready", return_value=(MagicMock(), mock_page)), \
              patch("bot_core.DBHandler.append_captcha_attempt"), \
              patch("time.sleep"):
@@ -90,9 +93,10 @@ class TestGenericBankAndCaptchaRetry(unittest.TestCase):
                 button_selector="#btnContinue",
                 captcha_element=None,
             )
-            self.assertTrue(success)
-            self.assertEqual(mock_service.solve_element.call_count, 2)
-            mock_fill.assert_called_once_with(mock_input, "83YRMR")
+            self.assertFalse(success)
+            self.assertEqual(mock_service.solve_element.call_count, 1)
+            mock_input.fill.assert_not_called()
+            mock_page.locator.return_value.first.click.assert_not_called()
 
     def test_monitoring_cycle_persists_during_120s_validity(self):
         """Verify that within 120s OTP validity, cycle stays active and re-checks every 5s."""

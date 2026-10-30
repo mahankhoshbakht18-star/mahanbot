@@ -22,19 +22,7 @@ def sleep_with_stop(stop_event, seconds: float, step: float = 0.2) -> bool:
     return stop_event.is_set()
 
 
-CAPTCHA_FAILURE_PHRASES = [
-    "کد امنیتی اشتباه",
-    "کد امنیتی صحیح",
-    "کد امنیتی نادرست",
-    "security code",
-]
-
-
 def detect_captcha_failure(page) -> bool:
-    """Return ``True`` if the page content indicates a CAPTCHA validation error."""
-    try:
-        content = page.content()
-    except Exception:
-        return False
-    low = content.lower()
-    return any(phrase.lower() in low for phrase in CAPTCHA_FAILURE_PHRASES)
+    """Use the same rendered-error detection as the selection flow."""
+    from bot_select_captcha import detect_captcha_failure as detect
+    return detect(page)

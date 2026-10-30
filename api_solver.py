@@ -28,23 +28,7 @@ class CaptchaService:
         if image_source is None:
             return None
         try:
-            res = self.solver.solve(image_source)
-            if res:
-                return res
-            # Direct fallback to ddddocr if solver produced no valid code
-            if hasattr(self.solver, "_ddddocr") and self.solver._ddddocr is not None:
-                img_bytes = None
-                if isinstance(image_source, (bytes, bytearray, memoryview)):
-                    img_bytes = bytes(image_source)
-                elif isinstance(image_source, (str, os.PathLike)) and os.path.exists(image_source):
-                    with open(image_source, "rb") as f:
-                        img_bytes = f.read()
-                if img_bytes:
-                    raw_ocr = str(self.solver._ddddocr.classification(img_bytes) or "").strip().upper()
-                    clean = "".join(c for c in raw_ocr if c in "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ")
-                    if len(clean) >= 4:
-                        return clean
-            return res
+            return self.solver.solve(image_source)
         except Exception as exc:
             if hasattr(self.solver, "last_error"):
                 self.solver.last_error = str(exc)
@@ -92,9 +76,7 @@ class CaptchaService:
         try:
             image_bytes = target.screenshot(type="png", timeout=2500)
             if image_bytes and len(image_bytes) >= 150:
-                ans = self.solve(image_bytes)
-                if ans:
-                    return ans
+                return self.solve(image_bytes)
         except Exception as exc:
             if hasattr(self.solver, "last_error"):
                 self.solver.last_error = f"Screenshot error: {exc}"

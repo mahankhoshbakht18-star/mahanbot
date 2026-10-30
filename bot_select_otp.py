@@ -7,7 +7,8 @@ from event_logger import emit_structured_event
 from browser_actions import BrowserActions
 from bot_select_captcha import (
     CAPTCHA_IMAGE_SELECTORS,
-    CAPTCHA_RELOAD_SELECTORS,
+    refresh_captcha_or_reload,
+    detect_captcha_failure,
     wait_for_captcha_image_ready,
 )
 
@@ -143,71 +144,11 @@ def _locate_otp_captcha_controls(page, wait_ms: int = 3500):
     return image, captcha_input, submit_btn
 
 
-def _refresh_captcha_image(bot, page):
-    image, _, _ = _locate_otp_captcha_controls(page, wait_ms=1200)
-    if not image:
-        # Even if image is not visible yet, try clicking any reload link on the page
-        for _, scope in _iter_scopes(page):
-            for rsel in CAPTCHA_RELOAD_SELECTORS:
-                try:
-                    rloc = scope.locator(rsel).first
-                    if rloc.count() > 0 and rloc.is_visible():
-                        rloc.click(timeout=700)
-                        _log_fa(bot, "🔄 درخواست بارگذاری تصویر کپچا ارسال شد.", "info", page)
-                        wait_for_captcha_image_ready(page, timeout_ms=2500, trigger_refresh_if_missing=False)
-                        return True
-                except Exception:
-                    continue
-        _log_fa(bot, "ℹ️ تصویر کپچا هنوز بارگذاری نشده است؛ در حال انتظار برای نمایش تصویر...", "info", page)
-        return False
-    try:
-        old_src = ""
-        try:
-            old_src = image.evaluate("""el => {
-                const img = el.tagName && el.tagName.toLowerCase() === 'img' ? el : el.querySelector('img');
-                return img ? (img.getAttribute('src') || '') : '';
-            }""")
-        except Exception:
-            old_src = ""
-
-        clicked = False
-        for _, scope in _iter_scopes(page):
-            for rsel in CAPTCHA_RELOAD_SELECTORS:
-                try:
-                    reload_link = scope.locator(rsel).first
-                    if reload_link.count() > 0 and reload_link.is_visible():
-                        reload_link.click(timeout=700)
-                        clicked = True
-                        break
-                except Exception:
-                    continue
-            if clicked:
-                break
-        if not clicked:
-            image.click(timeout=700)
-
-        # Fast non-blocking synchronization using evaluate (zero screenshot overhead)
-        deadline = time.time() + 2.0
-        while time.time() < deadline:
-            time.sleep(0.04)
-            try:
-                cur_src = image.evaluate("""el => {
-                    const img = el.tagName && el.tagName.toLowerCase() === 'img' ? el : el.querySelector('img');
-                    return img ? (img.getAttribute('src') || '') : '';
-                }""")
-                is_loaded = image.evaluate("""el => {
-                    const img = el.tagName && el.tagName.toLowerCase() === 'img' ? el : el.querySelector('img');
-                    return img ? (img.complete && img.naturalWidth > 0) : true;
-                }""")
-                if is_loaded and (not old_src or cur_src != old_src):
-                    _log_fa(bot, "🔄 تصویر تازه کپچا دریافت شد.", "info", page)
-                    return True
-            except Exception:
-                break
-        return True
-    except Exception as exc:
-        _log_fa(bot, f"⚠️ رفرش کپچا ناموفق بود: {exc}", "warning", page)
-        return False
+def _refresh_captcha_image(bot, page, captcha_rejected=False):
+    return refresh_captcha_or_reload(
+        bot, page, input_sel="#ctl00_ContentPlaceHolder1_tbCaptcha2",
+        allow_reload=False, captcha_rejected=captcha_rejected,
+    )
 
 
 def _solve_otp_captcha_fast(bot, page):
@@ -309,7 +250,7 @@ def _detect_failure_type(page) -> str:
     """تشخیص نوع خطا: کپچا یا OTP"""
     try:
         body = (page.inner_text("body") or "").lower()
-        if "کد امنیتی" in body and ("اشتباه" in body or "نادرست" in body or "صحیح" in body or "نامعتبر" in body):
+        if detect_captcha_failure(page):
             return "captcha"
         if ("کد تایید" in body or "کد تأیید" in body) and ("نامعتبر" in body or "منقضی" in body or "اشتباه" in body):
             return "otp_expired"
@@ -384,13 +325,12 @@ def _post_submit_watch(bot, page, stop_event, sleep_with_stop_fn, last_code: str
         elif fail_type == "captcha" or getattr(bot, "_last_dialog_action", None) == "captcha_invalid":
             bot._last_dialog_action = None
             _log_fa(bot, "❌ کپچای مرحله پیامک اشتباه بود؛ دریافت تصویر جدید و حل مجدد با مدل...", "warning", page)
-            _refresh_captcha_image(bot, page)
+            _refresh_captcha_image(bot, page, captcha_rejected=True)
             return "retry", None, None
         elif getattr(bot, "_last_dialog_action", None) in ("otp_step_capacity_retry", "system_capacity_updating", "bank_capacity_full", "generic_error"):
             dialog_msg = getattr(bot, "_last_dialog_message", "")
             bot._last_dialog_action = None
-            _log_fa(bot, f"⚠️ سامانه پیام موقت اعلام کرد ({dialog_msg})؛ حل کپچای جدید و تلاش مجدد برای ورود به صفحه ۳ تا زمان انقضای پیامک...", "warning", page)
-            _refresh_captcha_image(bot, page)
+            _log_fa(bot, f"⚠️ سامانه پیام موقت اعلام کرد ({dialog_msg})؛ تصویر کپچا حفظ می‌شود.", "warning", page)
             return "retry", None, None
 
         if sleep_with_stop_fn(stop_event, 0.3):
@@ -577,7 +517,6 @@ def fast_otp_sync_and_inject(bot, page, stop_event, sleep_with_stop_fn):
                             bot.clear_otp_locks()
                         return "bank_ready"
                     return None
-                _refresh_captcha_image(bot, page)
                 if sleep_with_stop_fn(stop_event, 0.4):
                     break
                 continue
@@ -630,9 +569,8 @@ def fast_otp_sync_and_inject(bot, page, stop_event, sleep_with_stop_fn):
 
             elapsed = int(time.time() - (otp_received_at or otp_issued_at))
             remaining = max(1, effective_ttl - elapsed)
-            _log_fa(bot, f"⏱️ ورود به صفحه ۳ هنوز تایید نشد (مهلت باقی‌مانده پیامک: {remaining} ثانیه)؛ تلاش مجدد با حل کپچای جدید...", "info", page)
-            submission_pending = False
-            _refresh_captcha_image(bot, page)
+            _log_fa(bot, f"⏱️ نتیجه ارسال هنوز مشخص نیست (مهلت باقی‌مانده پیامک: {remaining} ثانیه)؛ انتظار بدون ارسال مجدد...", "info", page)
+            # The submitted request is still unconfirmed; keep observing it.
             continue
 
         if status == "stopped":

@@ -90,10 +90,8 @@ class TestCaptchaAndDirectNavigation(unittest.TestCase):
         cand.is_visible.return_value = True
         cand.bounding_box.return_value = {"width": 100, "height": 40}
 
-        # First evaluate call returns loaded=True, but src matches previous_src
-        # Second evaluate call returns new src
-        eval_results = [True, "https://ve.cbi.ir/old.ashx", True, "https://ve.cbi.ir/new.ashx"]
-        cand.evaluate.side_effect = eval_results
+        cand.evaluate.return_value = True
+        cand.get_attribute.side_effect = ["https://ve.cbi.ir/old.ashx", "https://ve.cbi.ir/new.ashx"]
         loc.count.return_value = 1
         loc.nth.return_value = cand
         page.locator.return_value = loc

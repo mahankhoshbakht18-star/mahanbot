@@ -609,7 +609,7 @@ class BankSelectionBot(BotCore):
                             retry_delay = max(0.0, float(self.settings.get("captcha_retry_delay", 0.25)))
                             if sleep_with_stop(stop_event, retry_delay, step=0.05):
                                 break
-                            self._refresh_captcha_or_reload(page, allow_reload=False)
+                            self._refresh_captcha_or_reload(page, input_sel="input[name*='tbCaptcha']", allow_reload=False, captcha_rejected=True)
                             if self.detect_actual_page_stage(page) == "STEP_1_ENTRY_FORM":
                                 self._solve_primary_captcha_fast(page, stop_event)
                         else:
@@ -1014,8 +1014,8 @@ class BankSelectionBot(BotCore):
         safe_goto(page, url, **kwargs)
         return True
 
-    def _refresh_captcha_or_reload(self, page, input_sel="#ctl00_ContentPlaceHolder1_tbCaptcha2", timeout=12000, allow_reload=True):
-        return refresh_captcha_or_reload(self, page, input_sel=input_sel, timeout=timeout, allow_reload=allow_reload)
+    def _refresh_captcha_or_reload(self, page, input_sel="#ctl00_ContentPlaceHolder1_tbCaptcha2", timeout=12000, allow_reload=True, captcha_rejected=False):
+        return refresh_captcha_or_reload(self, page, input_sel=input_sel, timeout=timeout, allow_reload=allow_reload, captcha_rejected=captcha_rejected)
 
     def _ensure_nid_after_reload(self, page):
         selectors = ["#ctl00_ContentPlaceHolder1_tbIDNo", "input[name$='tbIDNo']"]
@@ -1061,7 +1061,7 @@ class BankSelectionBot(BotCore):
             captcha_img, _ = wait_for_captcha_image_ready(page, timeout_ms=4500, trigger_refresh_if_missing=True)
             if captcha_img is None:
                 try:
-                    captcha_img = page.locator(".BDC_CaptchaImage").first
+                    captcha_img = page.locator("img.BDC_CaptchaImage").first
                     if captcha_img.count() == 0 or not captcha_img.is_visible():
                         return False
                 except Exception:
@@ -1076,17 +1076,16 @@ class BankSelectionBot(BotCore):
                 if not self.solve_captcha_with_model(
                     page, input_sel, btn_sel, stop_event=stop_event, source="primary", captcha_element=captcha_img
                 ):
-                    self._refresh_captcha_or_reload(page, input_sel=input_sel, allow_reload=False)
-                    continue
+                    break
             except Exception:
-                self._refresh_captcha_or_reload(page, input_sel=input_sel, allow_reload=False)
-                continue
+                break
 
             # Wait for ASP.NET postback / AJAX update to complete
             self.wait_for_aspnet_postback(page, timeout_ms=4000)
 
             # Check if page transitioned to OTP (Step 2) or Bank Selection (Step 3)
             transitioned = False
+            captcha_rejected = False
             for _ in range(15):  # poll every 200ms up to 3.0s
                 if stop_event.is_set():
                     return False
@@ -1094,6 +1093,7 @@ class BankSelectionBot(BotCore):
                     transitioned = True
                     break
                 if self.consume_recovery_flag("captcha_invalid") or self._detect_captcha_failure(page):
+                    captcha_rejected = True
                     break
                 time.sleep(0.2)
 
@@ -1101,12 +1101,12 @@ class BankSelectionBot(BotCore):
                 self.clear_otp_locks()
                 return True
 
-            if self._detect_captcha_failure(page) or self.consume_recovery_flag("captcha_invalid"):
-                self._refresh_captcha_or_reload(page, input_sel=input_sel, allow_reload=False)
+            if captcha_rejected:
+                self._refresh_captcha_or_reload(page, input_sel=input_sel, allow_reload=False, captcha_rejected=True)
                 continue
 
-            time.sleep(0.4)
-            self._refresh_captcha_or_reload(page, input_sel=input_sel, allow_reload=False)
+            # Submission was sent; an unknown response is not grounds for a retry.
+            return False
 
         # Manual CAPTCHA handoff after bounded retries
         if not stop_event.is_set() and bool(self.settings.get("pause_for_manual_captcha", True)):

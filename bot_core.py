@@ -465,151 +465,90 @@ class BotCore:
         stop_event=None,
         source="general",
         captcha_element=None,
-        captcha_image_selector="img[id*='CaptchaImage' i], .BDC_CaptchaImage, img[src*='BotDetectCaptcha' i], img[src*='captcha' i]",
+        captcha_image_selector="img[id*='CaptchaImage' i], img.BDC_CaptchaImage, img[src*='captcha' i]",
     ):
-        """Solve visible CAPTCHA locally, fill its input, and submit with robust reload/retry handling."""
+        """Solve the current image once; local recognition failure never refreshes it."""
+        from bot_select_captcha import (
+            iter_page_scopes, wait_for_captcha_image_ready, validate_captcha_prediction,
+        )
+
         if stop_event is not None and stop_event.is_set():
             return False
-
-        captcha_input = (
-            BrowserActions.find_captcha_input(page, input_selector)
-            if isinstance(input_selector, str)
-            else input_selector
-        )
+        scopes = [scope for _, scope in iter_page_scopes(page)]
+        captcha_input = input_selector if not isinstance(input_selector, str) else None
+        input_scope = page
+        if not isinstance(input_selector, str) and isinstance(button_selector, str):
+            try:
+                handle = captcha_input.element_handle(timeout=800)
+                if handle is not None:
+                    input_scope = handle.owner_frame() or page
+            except Exception:
+                return False
+        if captcha_input is None:
+            for scope in scopes:
+                captcha_input = BrowserActions.find_captcha_input(scope, input_selector)
+                if captcha_input is not None:
+                    input_scope = scope
+                    break
         if captcha_input is None:
             return False
 
-        from bot_select_captcha import (
-            wait_for_captcha_image_ready,
-            validate_captcha_prediction,
-            CAPTCHA_RELOAD_SELECTORS,
-        )
+        try:
+            target = captcha_element
+            if target is None:
+                target, _ = wait_for_captcha_image_ready(
+                    input_scope, timeout_ms=3000, trigger_refresh_if_missing=True,
+                )
+            if target is None:
+                self.log("تصویر کپچا بارگذاری نشده است؛ فرم ارسال نشد.", "warning", page)
+                return False
+            # Callers may still supply BotDetect's outer link instead of its image.
+            if hasattr(target, "locator"):
+                image = target.locator("img").first
+                if image.count() and image.is_visible():
+                    target = image
 
-        min_length = max(1, int(self.settings.get("captcha_min_length", 4)))
-        max_length = max(min_length, int(self.settings.get("captcha_max_length", 12)))
-
-        max_solve_attempts = 3
-        for attempt in range(max_solve_attempts):
+            self.set_runtime_state("PROCESSING", "SOLVE_CAPTCHA_LOCAL", browser_status="OPEN")
+            code = str(self.captcha_service.solve_element(target) or "").strip().upper()
+            min_length = max(4, min(8, int(self.settings.get("captcha_min_length", 4))))
+            max_length = min(8, max(min_length, int(self.settings.get("captcha_max_length", 8))))
+            if not validate_captcha_prediction(code, min_length, max_length):
+                DBHandler.append_captcha_attempt(self.nid, code, "failed", source=source)
+                self.log("مدل محلی کپچا پاسخ معتبری نداد؛ تصویر برای ورود دستی حفظ شد.", "warning", page)
+                solver_error = getattr(getattr(self.captcha_service, "solver", None), "last_error", None)
+                if isinstance(solver_error, str) and solver_error:
+                    self.log(f"خطای موتور کپچا: {solver_error}", "warning", page)
+                return False
             if stop_event is not None and stop_event.is_set():
                 return False
-
-            # Ensure we have a fresh, visible captcha element
-            target_el = captcha_element if (attempt == 0 and captcha_element is not None) else None
-            if target_el is None or (hasattr(target_el, "count") and target_el.count() == 0):
-                target_el, _ = wait_for_captcha_image_ready(page, timeout_ms=3000, trigger_refresh_if_missing=True)
-                if target_el is None:
-                    candidate_selectors = [
-                        "img[id*='CaptchaImage' i]",
-                        ".BDC_CaptchaImage",
-                        "img[src*='BotDetectCaptcha' i]",
-                        "img[src*='captcha' i]",
-                    ]
-                    for sel in candidate_selectors:
-                        try:
-                            loc = page.locator(sel)
-                            if loc.count() > 0 and loc.first.is_visible():
-                                target_el = loc.first
-                                break
-                        except Exception:
-                            continue
-
-                if target_el is None or (hasattr(target_el, "count") and target_el.count() == 0):
-                    self.log("⏳ تصویر کپچا هنوز در صفحه ظاهر نشده است؛ در حال انتظار...", "warning", page)
-                    if attempt < max_solve_attempts - 1:
-                        time.sleep(0.35)
-                        continue
-                    return False
-
-            try:
-                self.set_runtime_state("PROCESSING", "SOLVE_CAPTCHA_LOCAL", browser_status="OPEN")
-                code = str(self.captcha_service.solve_element(target_el) or "").strip().upper()
-
-                if not re.fullmatch(rf"[0-9A-Z]{{{min_length},{max_length}}}", code) or not validate_captcha_prediction(code, min_length, max_length):
-                    DBHandler.append_captcha_attempt(self.nid, code, "failed", source=source)
-                    solver_err = getattr(getattr(self.captcha_service, "solver", None), "last_error", None)
-                    if attempt < max_solve_attempts - 1:
-                        self.log(f"🔄 بازخوانی تصویر کپچا جهت استعلام مجدد با مدل هوشمند (تلاش {attempt + 1}/{max_solve_attempts})...", "info", page)
-                        old_src = None
-                        try:
-                            if target_el and hasattr(target_el, "evaluate"):
-                                old_src = target_el.evaluate("""el => {
-                                    const img = el.tagName && el.tagName.toLowerCase() === 'img' ? el : el.querySelector('img');
-                                    return img ? (img.getAttribute('src') || '') : '';
-                                }""")
-                        except Exception:
-                            old_src = None
-
-                        # Click reload link to get fresh image
-                        for rsel in CAPTCHA_RELOAD_SELECTORS:
-                            try:
-                                rloc = page.locator(rsel).first
-                                if rloc.count() > 0 and rloc.is_visible():
-                                    rloc.click(timeout=1000)
-                                    break
-                            except Exception:
-                                continue
-
-                        # Synchronize with the new image rendering before attempting next solve
-                        fresh_el, _ = wait_for_captcha_image_ready(
-                            page,
-                            timeout_ms=3000,
-                            trigger_refresh_if_missing=False,
-                            previous_src=old_src,
-                        )
-                        captcha_element = fresh_el
-                        continue
-                    else:
-                        if solver_err:
-                            self.log(f"⚠️ خطای مدل کپچا: {solver_err}", "error", page)
-                        else:
-                            self.log(f"مدل محلی کپچا پس از {max_solve_attempts} تلاش پاسخ معتبری تولید نکرد (کد دریافتی: '{code}')", "warning", page)
-                        return False
-
-                # We have a valid code - fast high-speed injection with native event dispatch
-                try:
-                    captcha_input.fill(code, timeout=800)
-                except Exception:
-                    try:
-                        captcha_input.evaluate("""(el, val) => {
-                            el.value = val;
-                            el.dispatchEvent(new Event('input', { bubbles: true }));
-                            el.dispatchEvent(new Event('change', { bubbles: true }));
-                        }""", code)
-                    except Exception:
-                        pass
-                try:
-                    captcha_input.dispatch_event("input")
-                    captcha_input.dispatch_event("change")
-                except Exception:
-                    pass
-
-                self.log(f"🤖 کپچا با موفقیت توسط مدل حل شد: [{code}]", "info", page)
-                if (captcha_input.input_value() or "").strip().upper() != code:
-                    DBHandler.append_captcha_attempt(self.nid, code, "failed", source=source)
-                    return False
-
-                if stop_event is not None and stop_event.is_set():
-                    return False
-
-                submit_button = (
-                    page.locator(button_selector).first
-                    if isinstance(button_selector, str)
-                    else button_selector
-                )
-                submit_button.click()
-                DBHandler.append_captcha_attempt(self.nid, code, "submitted", source=source)
-                self.mark_progress("captcha_model_submit")
-                self.set_runtime_state("PROCESSING", "CHECK_RESPONSE", browser_status="OPEN")
-                return True
-            except Exception as exc:
-                if attempt < max_solve_attempts - 1:
-                    time.sleep(0.3)
-                    captcha_element = None
-                    continue
-                self.log(f"خطا در حل محلی کپچا: {exc}", "warning", page)
+            # A user may have started typing while inference was running.
+            if (captcha_input.input_value() or "").strip():
+                self.log("ورودی کپچای کاربر حفظ شد؛ حل خودکار متوقف شد.", "info", page)
                 return False
+            captcha_input.fill(code, timeout=800)
+            captcha_input.dispatch_event("input")
+            captcha_input.dispatch_event("change")
+            if (captcha_input.input_value() or "").strip().upper() != code:
+                return False
+            if stop_event is not None and stop_event.is_set():
+                return False
+            submit_button = (
+                input_scope.locator(button_selector).first
+                if isinstance(button_selector, str) else button_selector
+            )
+            submit_button.click(timeout=3000)
+        except Exception as exc:
+            self.log(f"خطا در حل محلی کپچا: {exc}", "warning", page)
+            return False
 
-        return False
+        # A bookkeeping failure after clicking must not trigger another submission.
+        try:
+            DBHandler.append_captcha_attempt(self.nid, code, "submitted", source=source)
+            self.mark_progress("captcha_model_submit")
+            self.set_runtime_state("PROCESSING", "CHECK_RESPONSE", browser_status="OPEN")
+        except Exception as exc:
+            self.log(f"فرم ارسال شد ولی ثبت وضعیت ناموفق بود: {exc}", "warning", page)
+        return True
 
     def wait_for_manual_captcha(self, page, input_selector, button_selector, stop_event, source="general"):
         """Compatibility alias for code migrated from the former manual flow."""
@@ -746,7 +685,12 @@ class BotCore:
             return "otp_expired"
 
         # 4) CAPTCHA invalid
-        if any(token in msg_clean for token in ("کد امنیتی", "کپچا", "CAPTCHA", "captcha")):
+        if any(token in msg_clean.lower() for token in ("کد امنیتی", "کپچا", "captcha")) and any(
+            token in msg_clean.lower() for token in (
+                "اشتباه", "نادرست", "نامعتبر", "نا معتبر", "صحیح نیست", "صحیح نمی",
+                "incorrect", "invalid", "wrong",
+            )
+        ):
             return "captcha_invalid"
 
         # 5) Session expired (strictly genuine session expiration only, never generic timing or capacity alerts)
@@ -849,7 +793,7 @@ class BotCore:
             try:
                 if action == "otp_step_capacity_retry":
                     self.log(
-                        f"⚠️ پیام موقت در مرحله پیامک ({normalized_msg})؛ حل کپچای جدید و تلاش مجدد برای ورود به صفحه ۳ تا پایان اعتبار پیامک...",
+                        f"⚠️ پیام موقت در مرحله پیامک ({normalized_msg})؛ تصویر کپچا حفظ می‌شود.",
                         "warning",
                         page,
                     )
