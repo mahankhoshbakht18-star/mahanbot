@@ -67,6 +67,40 @@ class TestCaptchaAndDirectNavigation(unittest.TestCase):
         self.assertIsInstance(res_img, str)
         self.assertTrue(len(res_img) > 0)
 
+    def test_captcha_rgba_compositing(self):
+        """Verify transparent RGBA images are composited onto pure white background without black background distortion."""
+        solver = ModelCaptchaSolver(device="cpu")
+        rgba = Image.new("RGBA", (120, 45), (255, 255, 255, 0))
+        d = ImageDraw.Draw(rgba)
+        d.text((10, 10), "TEST", fill=(0, 0, 0, 255))
+        opened = solver._open_image(rgba)
+        self.assertEqual(opened.mode, "RGB")
+        # Check background pixel (top-left) is white (255, 255, 255)
+        self.assertEqual(opened.getpixel((0, 0)), (255, 255, 255))
+
+    def test_wait_for_captcha_image_ready_synchronizes_previous_src(self):
+        """Verify wait_for_captcha_image_ready rejects stale image matching previous_src until new src arrives."""
+        from unittest.mock import MagicMock
+        from bot_select_captcha import wait_for_captcha_image_ready
+
+        page = MagicMock()
+        page.frames = []
+        loc = MagicMock()
+        cand = MagicMock()
+        cand.is_visible.return_value = True
+        cand.bounding_box.return_value = {"width": 100, "height": 40}
+
+        # First evaluate call returns loaded=True, but src matches previous_src
+        # Second evaluate call returns new src
+        eval_results = [True, "https://ve.cbi.ir/old.ashx", True, "https://ve.cbi.ir/new.ashx"]
+        cand.evaluate.side_effect = eval_results
+        loc.count.return_value = 1
+        loc.nth.return_value = cand
+        page.locator.return_value = loc
+
+        res, scope = wait_for_captcha_image_ready(page, timeout_ms=800, previous_src="https://ve.cbi.ir/old.ashx")
+        self.assertEqual(res, cand)
+
 
 if __name__ == "__main__":
     unittest.main()

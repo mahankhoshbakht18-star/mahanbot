@@ -213,7 +213,7 @@ def _solve_otp_captcha_fast(bot, page):
         return False
 
     stop_event = getattr(bot, "_active_stop_event", None)
-    if stop_event is None:
+    if stop_event is not None and stop_event.is_set():
         return False
     return bot.solve_captcha_with_model(
         page,

@@ -47,19 +47,14 @@ BLANK_LABEL = 0
 IDX2CHAR = {index + 1: char for index, char in enumerate(CHARS)}
 
 CAPTCHA_IMAGE_SELECTORS: Tuple[str, ...] = (
-
-    ".BDC_CaptchaImage",
-
     "img[id*='CaptchaImage' i]",
-
     "img[src*='BotDetectCaptcha' i]",
-
+    "img.BDC_CaptchaImage",
+    ".BDC_CaptchaImage img",
+    ".BDC_CaptchaImage",
     "#captchaImage",
-
     "#captchaImg",
-
     "img[src*='captcha' i]",
-
 )
 
 CAPTCHA_RELOAD_SELECTORS: Tuple[str, ...] = (
@@ -377,26 +372,25 @@ class ModelCaptchaSolver:
             return self._model
 
     @staticmethod
-
     def _open_image(image_source):
-
         if isinstance(image_source, Image.Image):
+            img = image_source.copy()
+        elif isinstance(image_source, (bytes, bytearray, memoryview)):
+            img = Image.open(io.BytesIO(bytes(image_source)))
+        elif isinstance(image_source, (str, os.PathLike)):
+            img = Image.open(os.fspath(image_source))
+        elif hasattr(image_source, "read"):
+            img = Image.open(image_source)
+        else:
+            raise TypeError(f"CAPTCHA image must be bytes, PIL Image, a path, or readable stream, got {type(image_source)}")
 
-            return image_source.copy()
-
-        if isinstance(image_source, (bytes, bytearray, memoryview)):
-
-            return Image.open(io.BytesIO(bytes(image_source)))
-
-        if isinstance(image_source, (str, os.PathLike)):
-
-            return Image.open(os.fspath(image_source))
-
-        if hasattr(image_source, "read"):
-
-            return Image.open(image_source)
-
-        raise TypeError(f"CAPTCHA image must be bytes, PIL Image, a path, or readable stream, got {type(image_source)}")
+        if img.mode in ("RGBA", "LA") or (img.mode == "P" and "transparency" in img.info):
+            bg = Image.new("RGB", img.size, (255, 255, 255))
+            if img.mode == "P":
+                img = img.convert("RGBA")
+            bg.paste(img, mask=img.split()[-1])
+            return bg
+        return img
 
     @staticmethod
 
@@ -654,9 +648,9 @@ class ModelCaptchaSolver:
 
         return best_prediction
 
-def wait_for_captcha_image_ready(page, timeout_ms: int = 5000, trigger_refresh_if_missing: bool = True):
+def wait_for_captcha_image_ready(page, timeout_ms: int = 5000, trigger_refresh_if_missing: bool = True, previous_src: Optional[str] = None):
     """
-    Wait until a CAPTCHA image element appears in the DOM and is visible on screen with real dimensions.
+    Wait until a CAPTCHA image element appears in the DOM, has finished loading, and is visible on screen with real dimensions.
     Returns (captcha_locator, scope) or (None, None).
     """
     deadline = time.time() + max(0.5, timeout_ms / 1000.0)
@@ -684,11 +678,28 @@ def wait_for_captcha_image_ready(page, timeout_ms: int = 5000, trigger_refresh_i
                         cand = loc.nth(idx)
                         if cand.is_visible():
                             try:
+                                is_loaded = cand.evaluate("""el => {
+                                    const img = el.tagName && el.tagName.toLowerCase() === 'img' ? el : el.querySelector('img');
+                                    if (img) {
+                                        return img.complete && img.naturalWidth > 0;
+                                    }
+                                    return true;
+                                }""")
+                                if not is_loaded:
+                                    continue
+                                if previous_src:
+                                    cur_src = cand.evaluate("""el => {
+                                        const img = el.tagName && el.tagName.toLowerCase() === 'img' ? el : el.querySelector('img');
+                                        return img ? (img.getAttribute('src') || '') : '';
+                                    }""")
+                                    if cur_src and cur_src == previous_src:
+                                        continue
                                 box = cand.bounding_box()
                                 if box and box.get("width", 0) >= 20 and box.get("height", 0) >= 10:
                                     return cand, scope
                             except Exception:
-                                return cand, scope
+                                if not previous_src:
+                                    return cand, scope
                 except Exception:
                     continue
 
@@ -1163,7 +1174,7 @@ def solve_captcha_step(bot, page, input_sel: str, btn_sel: str, source: str = "g
 
     stop_event = getattr(bot, "_active_stop_event", None)
 
-    if stop_event is None or stop_event.is_set():
+    if stop_event is not None and stop_event.is_set():
 
         return False
 

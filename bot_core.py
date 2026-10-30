@@ -529,17 +529,34 @@ class BotCore:
                     solver_err = getattr(getattr(self.captcha_service, "solver", None), "last_error", None)
                     if attempt < max_solve_attempts - 1:
                         self.log(f"🔄 بازخوانی تصویر کپچا جهت استعلام مجدد با مدل هوشمند (تلاش {attempt + 1}/{max_solve_attempts})...", "info", page)
+                        old_src = None
+                        try:
+                            if target_el and hasattr(target_el, "evaluate"):
+                                old_src = target_el.evaluate("""el => {
+                                    const img = el.tagName && el.tagName.toLowerCase() === 'img' ? el : el.querySelector('img');
+                                    return img ? (img.getAttribute('src') || '') : '';
+                                }""")
+                        except Exception:
+                            old_src = None
+
                         # Click reload link to get fresh image
                         for rsel in CAPTCHA_RELOAD_SELECTORS:
                             try:
                                 rloc = page.locator(rsel).first
                                 if rloc.count() > 0 and rloc.is_visible():
-                                    rloc.click(timeout=700)
+                                    rloc.click(timeout=1000)
                                     break
                             except Exception:
                                 continue
-                        time.sleep(0.35)
-                        captcha_element = None  # Force re-query on next attempt
+
+                        # Synchronize with the new image rendering before attempting next solve
+                        fresh_el, _ = wait_for_captcha_image_ready(
+                            page,
+                            timeout_ms=3000,
+                            trigger_refresh_if_missing=False,
+                            previous_src=old_src,
+                        )
+                        captcha_element = fresh_el
                         continue
                     else:
                         if solver_err:
