@@ -531,7 +531,7 @@ class BotCore:
 
         try:
             self.set_runtime_state("PROCESSING", "SOLVE_CAPTCHA_LOCAL", browser_status="OPEN")
-            code = str(self.captcha_service.solve_element(captcha_element) or "").strip().upper()
+            code = str((self.captcha_service.solve(source_bytes) if source_bytes else self.captcha_service.solve_element(captcha_element)) or "").strip().upper()
             min_length = max(1, int(self.settings.get("captcha_min_length", 4)))
             max_length = max(min_length, int(self.settings.get("captcha_max_length", 12)))
 

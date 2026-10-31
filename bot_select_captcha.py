@@ -325,6 +325,7 @@ class ModelCaptchaSolver:
         Solve CAPTCHA image using local models:
         1. CRNN Primary: Evaluates PyTorch CRNN model across standard preprocessing modes.
         2. DdddOcr Fallback: If CRNN does not output a valid code, invokes local offline OCR engine.
+        Composites transparent pixels onto white background to ensure reliable OCR across all BotDetect styles.
         """
         if min_confidence is None:
             min_confidence = self.CONFIDENCE_THRESHOLD
@@ -332,26 +333,45 @@ class ModelCaptchaSolver:
         best_prediction = None
         best_confidence = -1.0
 
+        clean_pil = self._open_image(image_source)
+        g_lum = clean_pil.convert("L")
+        mean_lum = sum(g_lum.resize((16, 16)).getdata()) / 256.0
+        active_source = ImageOps.invert(clean_pil.convert("RGB")) if mean_lum < 125 else clean_pil
+
         def _try_auxiliary_fallback():
             try:
                 ocr = self._get_ddddocr()
                 if ocr is not None:
-                    img_bytes = None
-                    if isinstance(image_source, (bytes, bytearray, memoryview)):
-                        img_bytes = bytes(image_source)
-                    elif isinstance(image_source, Image.Image):
-                        buf = io.BytesIO()
-                        image_source.save(buf, format="PNG")
-                        img_bytes = buf.getvalue()
-                    elif isinstance(image_source, (str, os.PathLike)) and os.path.exists(image_source):
-                        with open(image_source, "rb") as f:
-                            img_bytes = f.read()
+                    # 1. Standard composited image on clean white
+                    buf = io.BytesIO()
+                    clean_pil.save(buf, format="PNG")
+                    img_bytes = buf.getvalue()
                     if img_bytes:
                         raw = str(ocr.classification(img_bytes) or "").strip().upper()
                         clean = "".join(c for c in raw if c in CHARS)
                         if validate_captcha_prediction(clean, 4, 8):
                             self.last_error = None
                             return clean
+
+                    # 2. Inverted if dark background
+                    if active_source is not clean_pil:
+                        buf_act = io.BytesIO()
+                        active_source.save(buf_act, format="PNG")
+                        raw_act = str(ocr.classification(buf_act.getvalue()) or "").strip().upper()
+                        clean_act = "".join(c for c in raw_act if c in CHARS)
+                        if validate_captcha_prediction(clean_act, 4, 8):
+                            self.last_error = None
+                            return clean_act
+
+                    # 3. Autocontrast + sharpen
+                    ac_im = ImageOps.autocontrast(g_lum, cutoff=1).filter(ImageFilter.SHARPEN).convert("RGB")
+                    buf_ac = io.BytesIO()
+                    ac_im.save(buf_ac, format="PNG")
+                    raw_ac = str(ocr.classification(buf_ac.getvalue()) or "").strip().upper()
+                    clean_ac = "".join(c for c in raw_ac if c in CHARS)
+                    if validate_captcha_prediction(clean_ac, 4, 8):
+                        self.last_error = None
+                        return clean_ac
             except Exception:
                 pass
             return None
@@ -361,7 +381,7 @@ class ModelCaptchaSolver:
             modes = ["raw", "contrast", "binarize"] if use_enhanced else ["raw"]
             for idx, mode in enumerate(modes):
                 try:
-                    tensor = self.preprocess(image_source, enhance=mode)
+                    tensor = self.preprocess(active_source, enhance=mode)
                     with self._lock, torch.inference_mode():
                         logits = model(tensor)
                         prediction, confidence = self.decode(logits)
@@ -379,15 +399,13 @@ class ModelCaptchaSolver:
                 except Exception:
                     continue
 
-                # If first CRNN attempt has low confidence, invoke fallback before repeating extra modes
-                if idx == 0 and best_prediction and best_confidence < min_confidence:
+                if idx == 0 and (not best_prediction or best_confidence < min_confidence):
                     fallback_code = _try_auxiliary_fallback()
                     if fallback_code:
                         return fallback_code
         except Exception as exc:
             self.last_error = str(exc)
 
-        # Auxiliary local engine fallback if CRNN failed or didn't trigger above
         fallback_code = _try_auxiliary_fallback()
         if fallback_code:
             return fallback_code
@@ -649,7 +667,7 @@ def wait_for_manual_captcha_handoff(
                 continue
 
         now = time.time()
-        if not bot.settings.get('pause_for_manual_captcha', False) and now - last_model_try_ts >= 2.5:
+        if now - last_model_try_ts >= 2.0:
             last_model_try_ts = now
             try:
                 img_loc, _ = wait_for_captcha_image_ready(page, timeout_ms=600, trigger_refresh_if_missing=True)

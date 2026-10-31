@@ -1052,7 +1052,7 @@ class BankSelectionBot(BotCore):
             "input[name$='btnCheck'], "
             "input[type='submit']"
         )
-        max_attempts = max(1, int(self.settings.get("captcha_max_retries", 8)))
+        max_attempts = max(6, int(self.settings.get("captcha_max_retries", 8)))
         attempts = 0
 
         while not stop_event.is_set() and attempts < max_attempts:
