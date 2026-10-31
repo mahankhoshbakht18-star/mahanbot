@@ -31,12 +31,12 @@ IDX2CHAR = {index + 1: char for index, char in enumerate(CHARS)}
 CAPTCHA_IMAGE_SELECTORS: Tuple[str, ...] = (
     "img.BDC_CaptchaImage",
     "img[id*='CaptchaImage' i]",
-    "img[src*='BotDetectCaptcha' i]",
+    "img[src*='BotDetectCaptcha'][src*='get=image']",
+    "img[src*='BotDetectCaptcha']:not([src*='icon']):not([src*='sound']):not([src*='reload'])",
     ".BDC_CaptchaImage img",
-    ".BDC_CaptchaImage",
     "#captchaImage",
     "#captchaImg",
-    "img[src*='captcha' i]",
+    "img[src*='captcha' i]:not([src*='icon']):not([src*='sound']):not([src*='reload'])",
 )
 
 CAPTCHA_RELOAD_SELECTORS: Tuple[str, ...] = (
@@ -454,14 +454,20 @@ def wait_for_captcha_image_ready(
                         if not cand.is_visible():
                             continue
 
-                        # Check image has completed loading
+                        # Check image has completed loading and is a real CAPTCHA, not an icon
                         try:
                             is_loaded = cand.evaluate("""el => {
                                 const img = el.tagName && el.tagName.toLowerCase() === 'img' ? el : el.querySelector('img');
-                                if (img) {
-                                    return img.complete && (img.naturalWidth === undefined || img.naturalWidth > 0);
+                                if (!img) return false;
+                                const src = (img.getAttribute('src') || '').toLowerCase();
+                                if (src.includes('reload') || src.includes('sound') || src.includes('icon') || src.includes('help')) {
+                                    return false;
                                 }
-                                return true;
+                                const nw = img.naturalWidth !== undefined ? img.naturalWidth : (img.width || 0);
+                                const nh = img.naturalHeight !== undefined ? img.naturalHeight : (img.height || 0);
+                                if (nw > 0 && nw < 70) return false;
+                                if (nh > 0 && nh < 20) return false;
+                                return img.complete && nw > 0;
                             }""")
                             if not is_loaded:
                                 continue
@@ -482,7 +488,7 @@ def wait_for_captcha_image_ready(
 
                         try:
                             box = cand.bounding_box()
-                            if box and (box.get("width", 0) < 15 or box.get("height", 0) < 8):
+                            if box and (box.get("width", 0) < 70 or box.get("height", 0) < 20):
                                 continue
                         except Exception:
                             pass
@@ -648,7 +654,7 @@ def wait_for_manual_captcha_handoff(
 
     deadline = time.time() + timeout_sec
     last_model_try_ts = 0.0
-    last_img_bytes = None
+    last_img_src = None
 
     while time.time() < deadline:
         if stop_event is not None and stop_event.is_set():
@@ -672,13 +678,13 @@ def wait_for_manual_captcha_handoff(
             try:
                 img_loc, _ = wait_for_captcha_image_ready(page, timeout_ms=600, trigger_refresh_if_missing=True)
                 if img_loc is not None:
-                    cur_bytes = None
+                    cur_src = None
                     try:
-                        cur_bytes = img_loc.screenshot()
+                        cur_src = img_loc.evaluate("el => el.getAttribute('src') || ''")
                     except Exception:
-                        cur_bytes = None
-                    if cur_bytes is None or cur_bytes != last_img_bytes:
-                        last_img_bytes = cur_bytes
+                        cur_src = None
+                    if cur_src != last_img_src or now - last_model_try_ts >= 2.5:
+                        last_img_src = cur_src
                         if bot.solve_captcha_with_model(
                             page,
                             input_sel,

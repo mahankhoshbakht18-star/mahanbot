@@ -12,7 +12,8 @@
 | [`bot_select_captcha.py`](file:///C:/Users/amir/Downloads/MAHANBOT_v1.8.0_fixed%20(2)/bot_select_captcha.py) | `ModelCaptchaSolver._try_auxiliary_fallback` | تصحیح منطق فال‌بک OCR کمکی | فعال‌سازی DdddOcr در صورت پایین بودن اطمینان مدل CRNN یا کمتر از ۴ نویسه بودن |
 | [`bot_select_captcha.py`](file:///C:/Users/amir/Downloads/MAHANBOT_v1.8.0_fixed%20(2)/bot_select_captcha.py) | `wait_for_manual_captcha_handoff` | اصلاح شرط وارونه (Inverted Flag Bug) | تداوم تلاش مدل در پس‌زمینه در حین انتظار دستی هر ۲ ثانیه، به جای مسدود شدن در شرط نقیض |
 | [`bot_select.py`](file:///C:/Users/amir/Downloads/MAHANBOT_v1.8.0_fixed%20(2)/bot_select.py) | `_solve_primary_captcha_fast` | تنظیم کف تکرارهای مجاز بازنشانی تصویر | افزایش سقف مجاز رفرش تصویر کپچا از ۱ یا ۳ به حداقل ۶ تا ۸ تلاش بدون تسلیم زودهنگام |
-| [`bot_core.py`](file:///C:/Users/amir/Downloads/MAHANBOT_v1.8.0_fixed%20(2)/bot_core.py) | `solve_captcha_with_model` | حذف اسکرین‌شات مازاد Playwright | استفاده مستقیم از `source_bytes` ارسالی جهت کاهش ۲۰۰ میلی‌ثانیه‌ای زمان حل هر کپچا |
+| [`bot_core.py`](file:///C:/Users/amir/Downloads/MAHANBOT_v1.8.0_fixed%20(2)/bot_core.py) | `solve_captcha_with_model` | حذف اسکرین‌شات مازاد و اعتبارسنجی دترمینیستیک | جایگزینی مقایسه بایت‌های اسکرین‌شات با تطابق شناسه `src` و فیلتر تصاویر زیر ۶۰۰ بایت |
+| [`bot_select_captcha.py`](file:///C:/Users/amir/Downloads/MAHANBOT_v1.8.0_fixed%20(2)/bot_select_captcha.py) | `wait_for_captcha_image_ready` | فیلتر آیکون‌های رفرش و صوت کش‌شده | اعمال شرط `:not([src*='icon'])`، کف ابعاد ۷۰x۲۰ و فیلتر عدم انتخاب اشتباه آیکون ۱۶x۱۶ |
 
 ---
 

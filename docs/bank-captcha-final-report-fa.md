@@ -2,7 +2,7 @@
 
 **پروژه:** ربات هوشمند MAHANBOT (سامانه تسهیلات قرض‌الحسنه ازدواج و فرزندآوری بانک مرکزی جمهوری اسلامی ایران - `ve.cbi.ir`)  
 **تاریخ گزارش:** ۳۱ اکتبر ۲۰۲۶ (۱۰ آبان ۱۴۰۵)  
-**هدف مأموریت:** بررسی ویدیوی اسکرین‌رکورد ارسالی، کشف علت ریشه‌ای توقف ربات روی وضعیت «منتظر CAPTCHA» در صفحه سوم انتخاب بانک (`SelectBnkShb.aspx`)، اعمال اصلاحات جراحی و مینیمال در کدها، اثبات با ۱۷ آزمون خودکار رگرسیون و مستندسازی فنی کامل.
+**هدف مأموریت:** بررسی ویدیوی اسکرین‌رکورد ارسالی، کشف علت ریشه‌ای توقف ربات روی وضعیت «منتظر CAPTCHA» در صفحه سوم انتخاب بانک (`SelectBnkShb.aspx`)، اعمال اصلاحات جراحی و مینیمال در کدها، اثبات با ۱۸ آزمون خودکار رگرسیون و مستندسازی فنی کامل.
 
 ---
 
@@ -66,11 +66,13 @@
 
 | فایل | محل تغییر | تغییر انجام‌شده |
 | :--- | :--- | :--- |
+| [`bot_select_captcha.py`](file:///C:/Users/amir/Downloads/MAHANBOT_v1.8.0_fixed%20(2)/bot_select_captcha.py) | `CAPTCHA_IMAGE_SELECTORS` | اعمال نفی `:not([src*='icon']):not([src*='sound']):not([src*='reload'])` و اولویت‌دهی به `[src*='get=image']` جهت جلوگیری از انتخاب آیکون‌های ۱۶x۱۶ کش‌شده |
+| [`bot_select_captcha.py`](file:///C:/Users/amir/Downloads/MAHANBOT_v1.8.0_fixed%20(2)/bot_select_captcha.py) | متد `wait_for_captcha_image_ready` | اعتبارسنجی DOM در جاوااسکریپت برای فیلتر کردن تصاویر با عرض کمتر از ۷۰ یا ارتفاع کمتر از ۲۰ پیکسل و کلمات ممنوعه (`reload`, `sound`, `icon`, `help`) |
 | [`bot_select_captcha.py`](file:///C:/Users/amir/Downloads/MAHANBOT_v1.8.0_fixed%20(2)/bot_select_captcha.py) | متد `solve` | اضافه شدن لایه پیش‌پردازش حذف کانال آلفا (کامپوزیت سفید خالص) و الگوریتم معکوس‌سازی خودکار درخشندگی تصاویر زمینه تیره |
 | [`bot_select_captcha.py`](file:///C:/Users/amir/Downloads/MAHANBOT_v1.8.0_fixed%20(2)/bot_select_captcha.py) | متد `_try_auxiliary_fallback` | تصحیح منطق فراخوانی DdddOcr بر روی تصاویر اصلاح‌شده |
-| [`bot_select_captcha.py`](file:///C:/Users/amir/Downloads/MAHANBOT_v1.8.0_fixed%20(2)/bot_select_captcha.py) | تابع `wait_for_manual_captcha_handoff` | اصلاح باگ شرط وارونه (`if not bot.settings...`) و تبدیل آن به تلاش دوره‌ای مداوم هر ۲ ثانیه در پس‌زمینه |
-| [`bot_select.py`](file:///C:/Users/amir/Downloads/MAHANBOT_v1.8.0_fixed%20(2)/bot_select.py) | متد `_solve_primary_captcha_fast` | تضمین کف حداقل ۶ تکرار مجاز برای رفرش کپچا جهت عبور خودکار از فونت‌های دشوار |
-| [`bot_core.py`](file:///C:/Users/amir/Downloads/MAHANBOT_v1.8.0_fixed%20(2)/bot_core.py) | متد `solve_captcha_with_model` | استفاده مستقیم از `source_bytes` و حذف ۲۰۰ میلی‌ثانیه تأخیر اسکرین‌شات مجدد |
+| [`bot_select_captcha.py`](file:///C:/Users/amir/Downloads/MAHANBOT_v1.8.0_fixed%20(2)/bot_select_captcha.py) | تابع `wait_for_manual_captcha_handoff` | جایگزینی مقایسه بایت‌های اسکرین‌شات با بررسی تغییر آدرس `src` تصویر و تلاش دوره‌ای مداوم هر ۲.۵ ثانیه در پس‌زمینه |
+| [`bot_select.py`](file:///C:/Users/amir/Downloads/MAHANBOT_v1.8.0_fixed%20(2)/bot_select.py) | متد `_solve_primary_captcha_fast` | اصلاح سلکتور فال‌بک خط ۱۰۷۴ به `img.BDC_CaptchaImage, img[id*='CaptchaImage' i]` و تضمین کف حداقل ۶ تکرار مجاز رفرش |
+| [`bot_core.py`](file:///C:/Users/amir/Downloads/MAHANBOT_v1.8.0_fixed%20(2)/bot_core.py) | متد `solve_captcha_with_model` | فیلتر اسکرین‌شات‌های زیر ۶۰۰ بایت و اعتبارسنجی تغییر `src` به جای مقایسه بایت‌های اسکرین‌شات جهت جلوگیری از خطای مثبت کاذب ناشی از Antialiasing |
 
 ---
 
@@ -88,7 +90,7 @@
 
 ```powershell
 python scripts/run_tests.py test_bank_captcha_flow
-Ran 17 tests in 9.214s - OK (100% Pass)
+Ran 18 tests in 9.567s - OK (100% Pass)
 ```
 
 همچنین آزمون‌های رگرسیون قبلی برای تضمین سلامت کل سیستم اجرا و تأیید شدند:

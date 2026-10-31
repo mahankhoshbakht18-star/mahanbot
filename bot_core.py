@@ -525,8 +525,13 @@ class BotCore:
             # Manual text belongs to the user; OCR must never overwrite it.
             if captcha_input.input_value().strip():
                 return False
+            initial_src = captcha_element.evaluate("el => el.getAttribute('src') || ''") if hasattr(captcha_element, 'evaluate') else None
             source_bytes = captcha_element.screenshot()
+            if source_bytes and len(source_bytes) < 600:
+                # Sub-600 byte images are icons, not real captcha challenges
+                source_bytes = None
         except Exception:
+            initial_src = None
             source_bytes = None
 
         try:
@@ -552,8 +557,14 @@ class BotCore:
 
             if captcha_input.input_value().strip():
                 return False
-            if source_bytes is not None and captcha_element.screenshot() != source_bytes:
-                return False
+            if initial_src and hasattr(captcha_element, 'evaluate'):
+                try:
+                    cur_src = captcha_element.evaluate("el => el.getAttribute('src') || ''")
+                    if cur_src and cur_src != initial_src:
+                        self.log("⚠️ تصویر کپچا قبل از ارسال تغییر کرد؛ تلاش مجدد روی تصویر تازه...", "warning", page)
+                        return False
+                except Exception:
+                    pass
             try:
                 BrowserActions.human_fill(captcha_input, code)
             except Exception:

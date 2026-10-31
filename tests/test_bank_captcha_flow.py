@@ -241,6 +241,29 @@ class TestBankCaptchaComprehensive(unittest.TestCase):
         mean_lum = sum(g.resize((16, 16)).getdata()) / 256.0
         self.assertLess(mean_lum, 120)
 
+    def test_reproduce_icon_selector_prevention(self):
+        """Verify that 16x16 reload/sound icons are rejected and only the full CAPTCHA image is selected."""
+        from bot_select_captcha import wait_for_captcha_image_ready
+        page = MockPage()
+
+        # Add reload icon (16x16) matching src*='BotDetectCaptcha'
+        icon_loc = MockLocator(visible=True, count=1)
+        icon_loc.bounding_box = lambda: {"width": 16, "height": 16}
+        icon_loc.evaluate = lambda js, **kw: "BotDetectCaptcha.ashx?get=reload-icon" if "getAttribute" in js else (
+            False if "includes" in js else True
+        )
+        page.locators["img[src*='reload']"] = icon_loc
+
+        # Add real CAPTCHA image (180x50)
+        real_loc = MockLocator(visible=True, count=1)
+        real_loc.bounding_box = lambda: {"width": 180, "height": 50}
+        real_loc.evaluate = lambda js, **kw: "BotDetectCaptcha.ashx?get=image&c=test" if "getAttribute" in js else True
+        page.locators["img.BDC_CaptchaImage"] = real_loc
+
+        cand, _ = wait_for_captcha_image_ready(page, timeout_ms=500, trigger_refresh_if_missing=False)
+        self.assertIsNotNone(cand)
+        self.assertEqual(cand.bounding_box()["width"], 180)
+
     # ─────────────────────────────────────────────────────────────
     # 15 MANDATORY SCENARIOS
     # ─────────────────────────────────────────────────────────────

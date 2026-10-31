@@ -1071,7 +1071,7 @@ class BankSelectionBot(BotCore):
             captcha_img, _ = wait_for_captcha_image_ready(page, timeout_ms=4500, trigger_refresh_if_missing=True)
             if captcha_img is None:
                 try:
-                    captcha_img = page.locator("img.BDC_CaptchaImage, .BDC_CaptchaImage").first
+                    captcha_img = page.locator("img.BDC_CaptchaImage, img[id*='CaptchaImage' i]").first
                     if captcha_img.count() == 0 or not captcha_img.is_visible():
                         return False
                 except Exception:
