@@ -297,7 +297,6 @@ class BankSelectionBot(BotCore):
             page = None
             # Determine resume stage for intelligent profile hygiene
             try:
-                from database import DBHandler
                 cp = DBHandler.get_checkpoint(self.nid) or {}
                 can_resume = bool(cp.get("can_resume", False))
                 self._resumed_stage = cp.get("last_verified_step") if can_resume else "STEP_1_ENTRY_FORM"
