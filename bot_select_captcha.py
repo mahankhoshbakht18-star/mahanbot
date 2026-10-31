@@ -506,7 +506,7 @@ def refresh_captcha_or_reload(
 ):
     """Refresh only a rejected challenge, in the same frame as its answer."""
     rejected = (captcha_rejected or getattr(bot, '_last_dialog_action', None) == 'captcha_invalid'
-                or detect_captcha_failure(page))
+                or detect_captcha_failure(page) or kwargs.get("force", False))
     if not rejected:
         return False
     image, scope = wait_for_captcha_image_ready(page, timeout_ms=800, trigger_refresh_if_missing=False)

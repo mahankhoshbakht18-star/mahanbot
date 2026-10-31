@@ -299,6 +299,37 @@ class DBHandler:
                     )"""
                 )
 
+                # Profile health status table
+                c.execute(
+                    """CREATE TABLE IF NOT EXISTS profile_health (
+                        nid TEXT PRIMARY KEY,
+                        health_status TEXT,
+                        session_status TEXT,
+                        browser_status TEXT,
+                        last_successful_login REAL,
+                        last_error TEXT,
+                        captcha_status TEXT,
+                        reauth_required INTEGER DEFAULT 0,
+                        details_json TEXT,
+                        last_checked_at REAL
+                    )"""
+                )
+                c.execute("CREATE INDEX IF NOT EXISTS idx_profile_health_status ON profile_health(health_status, session_status)")
+
+                # Profile repair audit log table
+                c.execute(
+                    """CREATE TABLE IF NOT EXISTS profile_repair_audit_log (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        nid TEXT,
+                        action TEXT,
+                        performed_by TEXT,
+                        result TEXT,
+                        details TEXT,
+                        created_at REAL
+                    )"""
+                )
+                c.execute("CREATE INDEX IF NOT EXISTS idx_profile_repair_audit_nid ON profile_repair_audit_log(nid, created_at)")
+
                 c.execute(
                     """CREATE TABLE IF NOT EXISTS applicants (
                         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -2060,3 +2091,44 @@ class DBHandler:
                 conn.commit()
         except Exception:
             pass
+
+    @staticmethod
+    def get_profile_health(nid: str) -> Optional[Dict[str, Any]]:
+        try:
+            with DBHandler._connect(row_factory=True) as conn:
+                cur = conn.cursor()
+                cur.execute("SELECT * FROM profile_health WHERE nid = ?", (str(nid),))
+                row = cur.fetchone()
+                return dict(row) if row else None
+        except Exception:
+            return None
+
+    @staticmethod
+    def list_profile_health() -> List[Dict[str, Any]]:
+        try:
+            with DBHandler._connect(row_factory=True) as conn:
+                cur = conn.cursor()
+                cur.execute("SELECT * FROM profile_health ORDER BY last_checked_at DESC")
+                return [dict(r) for r in cur.fetchall()]
+        except Exception:
+            return []
+
+    @staticmethod
+    def get_profile_repair_audit_logs(nid: Optional[str] = None, limit: int = 50) -> List[Dict[str, Any]]:
+        try:
+            with DBHandler._connect(row_factory=True) as conn:
+                cur = conn.cursor()
+                if nid:
+                    cur.execute(
+                        "SELECT * FROM profile_repair_audit_log WHERE nid = ? ORDER BY id DESC LIMIT ?",
+                        (str(nid), limit),
+                    )
+                else:
+                    cur.execute(
+                        "SELECT * FROM profile_repair_audit_log ORDER BY id DESC LIMIT ?",
+                        (limit,),
+                    )
+                return [dict(r) for r in cur.fetchall()]
+        except Exception:
+            return []
+

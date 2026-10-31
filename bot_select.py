@@ -295,6 +295,15 @@ class BankSelectionBot(BotCore):
             browser = None
             context = None
             page = None
+            # Determine resume stage for intelligent profile hygiene
+            try:
+                from database import DBHandler
+                cp = DBHandler.get_checkpoint(self.nid) or {}
+                can_resume = bool(cp.get("can_resume", False))
+                self._resumed_stage = cp.get("last_verified_step") if can_resume else "STEP_1_ENTRY_FORM"
+            except Exception:
+                self._resumed_stage = "STEP_1_ENTRY_FORM"
+
             try:
                 playwright, browser, context, page = self.setup_browser(stop_event)
                 self.live_owner.bind(context, page)
@@ -910,9 +919,9 @@ class BankSelectionBot(BotCore):
 
         if support_id:
             self.log(f"🧾 Firewall Support ID: {support_id}", "info", page)
-            DBHandler.update_status(self.nid, "منتظر CAPTCHA", f"Support ID: {support_id}")
+            DBHandler.update_status(self.nid, "SITE_REJECTED", f"Firewall Support ID: {support_id}")
         else:
-            DBHandler.update_status(self.nid, "منتظر CAPTCHA", "Manual firewall CAPTCHA entry required")
+            DBHandler.update_status(self.nid, "SITE_REJECTED", "Manual firewall challenge required")
 
         next_wait_log_at = 0.0
         while not stop_event.is_set():
@@ -1078,10 +1087,10 @@ class BankSelectionBot(BotCore):
                 if not self.solve_captcha_with_model(
                     page, input_sel, btn_sel, stop_event=stop_event, source="primary", captcha_element=captcha_img
                 ):
-                    self._refresh_captcha_or_reload(page, input_sel=input_sel, allow_reload=False)
+                    self._refresh_captcha_or_reload(page, input_sel=input_sel, allow_reload=False, force=True)
                     continue
             except Exception:
-                self._refresh_captcha_or_reload(page, input_sel=input_sel, allow_reload=False)
+                self._refresh_captcha_or_reload(page, input_sel=input_sel, allow_reload=False, force=True)
                 continue
 
             # Wait for ASP.NET postback / AJAX update to complete

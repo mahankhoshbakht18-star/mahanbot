@@ -337,15 +337,29 @@ class BotCore:
             profile["focus_view_enabled"] = bool(self.settings.get("focus_view_enabled", True))
         if not bool(self.settings.get("clear_cookies", False)) and not profile.get("user_data_dir"):
             profile["user_data_dir"] = self.user_dir
+        # Intelligent session hygiene: purge stale CBI session cookies before Step 1, preserve for Step 3
+        try:
+            from core.browser_profile_recovery import BrowserProfileRecoveryManager
+            resumed_stage = getattr(self, "_resumed_stage", None)
+            BrowserProfileRecoveryManager.prepare_session_for_launch(
+                self.nid,
+                stage=resumed_stage or "STEP_1_ENTRY_FORM"
+            )
+        except Exception as hy_err:
+            self.log(f"⚠️ ارزیابی پیش‌از‌راه‌اندازی نشست مرورگر: {hy_err}", "warning")
+
         try:
             playwright, browser, context, page = launch_browser(profile)
         except BrowserLaunchError as exc:
             self.log(f"❌ خطا در راه‌اندازی مرورگر: {exc.message}", "error")
             raise
-        try:
-            context.clear_cookies()
-        except Exception:
-            pass
+
+        # Only clear cookies if explicitly requested by configuration
+        if bool(self.settings.get("clear_cookies", False)):
+            try:
+                context.clear_cookies()
+            except Exception:
+                pass
         self.attach_dialog_handler(page)
         self.navigation_evidence = NavigationEvidence(page)
         context.on("page", self.attach_dialog_handler)

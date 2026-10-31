@@ -71,7 +71,8 @@
       <div onclick="switchView('add',this)"><button class="nav-link" data-tooltip="ثبت‌نام اولیه: تشکیل پرونده وام ازدواج یا فرزندآوری و بارگذاری اکسل"><i class="fa-solid fa-user-plus"></i><span>ثبت‌نام اولیه</span></button></div>
       <div onclick="switchView('bank-select',this)"><button class="nav-link" data-tooltip="پایش ظرفیت: شکار هوشمند سهمیه بانکی و کنترل چرخه ثبت"><i class="fa-solid fa-crosshairs"></i><span>پایش ظرفیت</span></button></div>
       <div onclick="switchView('radar',this)"><button class="nav-link" data-tooltip="رادار هوشمند ظرفیت: پایش کشوری، تحلیل ساعت ۱۸ و اعلان تلگرام"><i class="fa-solid fa-satellite-dish"></i><span>رادار و تلگرام</span></button></div>
-      <div onclick="switchView('saved-pages',this)"><button class="nav-link" data-tooltip="صفحات ذخیره‌شده: بررسی و بازیابی نشست‌های مرحله ۳ بدون پیامک مجدد"><i class="fa-solid fa-file-shield"></i><span>صفحات ذخیره‌شده</span></button></div>
+      <div onclick="switchView('saved-pages',this)"><button class="nav-link" data-tooltip="صفحات ذخیره‌شده: بررسی و بازیابی نشست‌های مرحله ۳ بدون پیامک مجدد"><i class="fa-solid fa-file-shield"></i><span>صفحات ذخیره‌شده</span></button></div>
+      <div onclick="switchView('browser-health',this)"><button class="nav-link" data-tooltip="سلامت مرورگر و نشست: پایش، عیب‌یابی و بازیابی هوشمند نشست‌ها"><i class="fa-solid fa-shield-virus"></i><span>سلامت مرورگر</span></button></div>
       <div onclick="switchView('recover',this)"><button class="nav-link" data-tooltip="بازیابی کد رهگیری: استعلام و استخراج خودکار کد رهگیری ۱۰ رقمی از ve.cbi.ir/GetTraceCD.aspx"><i class="fa-solid fa-file-invoice"></i><span>بازیابی کد رهگیری</span></button></div>
       <div onclick="switchView('delete-req',this)"><button class="fa-trash-nav nav-link" data-tooltip="حذف ثبت‌نام: لغو رسمی درخواست در سامانه مرکزی (ve.cbi.ir/TasReqDelete.aspx)"><i class="fa-solid fa-trash-can"></i><span>حذف ثبت‌نام</span></button></div>
       <div onclick="switchView('status',this)"><button class="nav-link" data-tooltip="گزارش‌ها: مشاهده رویدادها، تاریخچه پیگیری و لاگ‌های زنده"><i class="fa-solid fa-clipboard-list"></i><span>گزارش‌ها</span></button></div>
@@ -1142,6 +1143,104 @@
           </table>
         </div>
       </article>
+    </section>
+
+    <!-- ════════════════ VIEW: BROWSER PROFILE HEALTH (سلامت مرورگر و نشست متقاضیان) ════════════════ -->
+    <section id="view-browser-health" class="view-section">
+      <div class="page-heading">
+        <div>
+          <span class="section-kicker">پایش و عیب‌یابی نشست‌ها</span>
+          <h2>سلامت مرورگر و نشست متقاضیان</h2>
+          <p>نظارت زنده بر پروفایل‌های Chromium، عیب‌یابی کوکی‌های سرور، رفع اختلالات CAPTCHA و بازیابی ایمن</p>
+        </div>
+        <div class="heading-actions">
+          <button class="btn btn-outline-primary action-pill" onclick="loadBrowserHealthData()">
+            <i class="fa-solid fa-rotate ms-1"></i> بروزرسانی وضعیت
+          </button>
+        </div>
+      </div>
+
+      <!-- Quick Metrics Cards -->
+      <div class="row g-3 mb-4">
+        <div class="col-6 col-md-3">
+          <div class="card p-3 border-0 shadow-sm" style="background:rgba(59,130,246,0.08);border-radius:12px;">
+            <div class="text-muted small mb-1">کل متقاضیان پایش‌شده</div>
+            <h4 class="mb-0 fw-bold text-primary" id="bhMetricTotal">0</h4>
+          </div>
+        </div>
+        <div class="col-6 col-md-3">
+          <div class="card p-3 border-0 shadow-sm" style="background:rgba(16,185,129,0.08);border-radius:12px;">
+            <div class="text-muted small mb-1">نشست‌های معتبر (Step 3)</div>
+            <h4 class="mb-0 fw-bold text-success" id="bhMetricValid">0</h4>
+          </div>
+        </div>
+        <div class="col-6 col-md-3">
+          <div class="card p-3 border-0 shadow-sm" style="background:rgba(245,158,11,0.08);border-radius:12px;">
+            <div class="text-muted small mb-1">نیازمند احراز مجدد</div>
+            <h4 class="mb-0 fw-bold text-warning" id="bhMetricReauth">0</h4>
+          </div>
+        </div>
+        <div class="col-6 col-md-3">
+          <div class="card p-3 border-0 shadow-sm" style="background:rgba(239,68,68,0.08);border-radius:12px;">
+            <div class="text-muted small mb-1">خطای فایروال / WAF</div>
+            <h4 class="mb-0 fw-bold text-danger" id="bhMetricRejected">0</h4>
+          </div>
+        </div>
+      </div>
+
+      <!-- Main Health Table Card -->
+      <div class="card border-0 shadow-sm mb-4" style="border-radius:14px;overflow:hidden;">
+        <div class="card-header bg-white border-bottom p-3 d-flex justify-content-between align-items-center">
+          <h5 class="mb-0 fw-bold"><i class="fa-solid fa-list-check text-primary me-2"></i> وضعیت پروفایل متقاضیان</h5>
+          <span class="badge bg-light text-dark border" id="bhLastCheckBadge">بروزرسانی: --:--:--</span>
+        </div>
+        <div class="table-responsive">
+          <table class="table table-hover align-middle mb-0" id="bhProfilesTable">
+            <thead class="table-light">
+              <tr>
+                <th style="width:18%;">متقاضی</th>
+                <th style="width:10%;">وضعیت مرورگر</th>
+                <th style="width:14%;">وضعیت نشست</th>
+                <th style="width:12%;">کوکی‌های CBI</th>
+                <th style="width:14%;">آخرین لاگ / خطا</th>
+                <th style="width:10%;">وضعیت کپچا</th>
+                <th style="width:22%; text-align:center;">اقدامات مدیریتی</th>
+              </tr>
+            </thead>
+            <tbody id="bhTableBody">
+              <tr>
+                <td colspan="7" class="text-center py-4 text-muted">
+                  <i class="fa-solid fa-spinner fa-spin me-2"></i> در حال بارگذاری اطلاعات سلامت پروفایل‌ها...
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- Audit Logs Sub-Card -->
+      <div class="card border-0 shadow-sm" style="border-radius:14px;overflow:hidden;">
+        <div class="card-header bg-white border-bottom p-3">
+          <h6 class="mb-0 fw-bold text-secondary"><i class="fa-solid fa-clock-rotate-left me-2"></i> تاریخچه عملیات و تعمیرات پروفایل (Audit Log)</h6>
+        </div>
+        <div class="table-responsive" style="max-height:260px;overflow-y:auto;">
+          <table class="table table-sm table-striped mb-0 text-center" style="font-size:12px;">
+            <thead class="table-light sticky-top">
+              <tr>
+                <th>زمان</th>
+                <th>کدملی</th>
+                <th>عملیات</th>
+                <th>مجری</th>
+                <th>نتیجه</th>
+                <th>جزئیات</th>
+              </tr>
+            </thead>
+            <tbody id="bhAuditLogsBody">
+              <tr><td colspan="6" class="text-muted py-3">تاریخچه‌ای ثبت نشده است.</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
     </section>
 
     <!-- ════════════════ VIEW: STATUS (مشاهده وضعیت) ════════════════ -->

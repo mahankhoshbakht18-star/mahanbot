@@ -176,7 +176,10 @@ from routes.app_releases import router as app_releases_router
 app.include_router(app_releases_router)
 
 from routes.radar import router as radar_router
-app.include_router(radar_router)
+app.include_router(radar_router)
+
+from routes.browser_health import router as browser_health_router
+app.include_router(browser_health_router)
 
 if __name__ == "__main__":
     import uvicorn

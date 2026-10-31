@@ -506,9 +506,12 @@ function switchView(viewId, navEl) {
         loadCapacityStatus();
     }
 
-    if(viewId === 'saved-pages') {
-        loadSavedPages();
-        startCapacityCountdown();
+    if(viewId === 'saved-pages') {
+        loadSavedPages();
+        startCapacityCountdown();
+    }
+    if(viewId === 'browser-health') {
+        loadBrowserHealthData();
     } else {
         stopCapacityCountdown();
     }
@@ -5564,3 +5567,194 @@ async function applyCitySwitch() {
         if (btn) btn.disabled = false;
     }
 }
+
+// ════════════════ BROWSER PROFILE HEALTH & SESSION RECOVERY ════════════════
+async function loadBrowserHealthData() {
+    const tbody = document.getElementById('bhTableBody');
+    if (!tbody) return;
+    tbody.innerHTML = '<tr><td colspan="7" class="text-center py-4 text-muted"><i class="fa-solid fa-spinner fa-spin me-2"></i> در حال بارگذاری اطلاعات سلامت پروفایل‌ها...</td></tr>';
+
+    try {
+        const reports = await apiCall('/browser-health', 'GET');
+        renderBrowserHealthTable(reports || []);
+        loadBrowserHealthAuditLogs();
+        const badge = document.getElementById('bhLastCheckBadge');
+        if (badge) badge.textContent = 'بروزرسانی: ' + new Date().toLocaleTimeString('fa-IR');
+    } catch (err) {
+        console.error('Error loading browser health:', err);
+        tbody.innerHTML = `<tr><td colspan="7" class="text-center py-4 text-danger">خطای دریافت اطلاعات: ${err.message || err}</td></tr>`;
+    }
+}
+
+function renderBrowserHealthTable(reports) {
+    const tbody = document.getElementById('bhTableBody');
+    if (!tbody) return;
+    if (!reports || reports.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="7" class="text-center py-4 text-muted">متقاضی ثبت‌شده‌ای یافت نشد.</td></tr>';
+        return;
+    }
+
+    let validCount = 0, reauthCount = 0, rejectedCount = 0;
+
+    const rows = reports.map(r => {
+        if (r.health_status === 'SESSION_VALID') validCount++;
+        if (r.reauth_required || r.health_status === 'SESSION_REAUTH_REQUIRED') reauthCount++;
+        if (r.health_status === 'SERVER_REJECTED') rejectedCount++;
+
+        // Status badge
+        let statusBadge = '<span class="badge bg-secondary">نامشخص</span>';
+        if (r.health_status === 'HEALTHY') statusBadge = '<span class="badge bg-success">سالم (آماده)</span>';
+        else if (r.health_status === 'SESSION_VALID') statusBadge = '<span class="badge bg-success">نشست معتبر (مرحله ۳)</span>';
+        else if (r.health_status === 'SESSION_EXPIRED') statusBadge = '<span class="badge bg-warning text-dark">نشست منقضی‌شده</span>';
+        else if (r.health_status === 'SESSION_REAUTH_REQUIRED') statusBadge = '<span class="badge bg-warning text-dark">نیاز به ورود مجدد</span>';
+        else if (r.health_status === 'SERVER_REJECTED') statusBadge = '<span class="badge bg-danger">رد توسط سرور (WAF)</span>';
+        else if (r.health_status === 'SECURITY_CHALLENGE') statusBadge = '<span class="badge bg-danger">چالش امنیتی فایروال</span>';
+        else if (r.health_status === 'PROFILE_LOCKED') statusBadge = '<span class="badge bg-danger">پروفایل قفل‌شده</span>';
+        else if (r.health_status === 'PROFILE_STORAGE_ERROR') statusBadge = '<span class="badge bg-danger">خطای پایگاه‌داده کوکی</span>';
+
+        // Browser status
+        const browserBadge = r.browser_status === 'OPEN' 
+            ? '<span class="badge bg-success"><i class="fa-solid fa-circle-dot me-1"></i>باز</span>'
+            : '<span class="badge bg-secondary">بسته</span>';
+
+        // Cookies status
+        let cookiesBadge = '<span class="text-muted small">بدون کوکی CBI</span>';
+        if (r.has_cbi_cookies) {
+            cookiesBadge = r.has_expired_cbi_cookies
+                ? `<span class="badge bg-warning text-dark" title="کوکی نشست منقضی در حافظه ذخیره‌سازی">${r.cookie_count} کوکی (منقضی)</span>`
+                : `<span class="badge bg-info text-dark">${r.cookie_count} کوکی (فعال)</span>`;
+        }
+
+        const applicantName = r.details?.applicant_name || r.nid;
+        const lastErr = r.last_error ? `<span class="small text-danger text-truncate d-inline-block" style="max-width:180px;" title="${r.last_error}">${r.last_error}</span>` : '<span class="text-muted small">-</span>';
+
+        return `<tr>
+            <td>
+                <div class="fw-bold">${applicantName}</div>
+                <div class="small text-muted font-monospace">${r.nid}</div>
+            </td>
+            <td>${browserBadge}</td>
+            <td>${statusBadge}</td>
+            <td>${cookiesBadge}</td>
+            <td>${lastErr}</td>
+            <td><span class="badge ${r.captcha_status === 'OK' ? 'bg-light text-dark border' : 'bg-warning text-dark'}">${r.captcha_status}</span></td>
+            <td style="text-align:center;">
+                <div class="btn-group btn-group-sm" role="group">
+                    <button class="btn btn-outline-primary" onclick="bhCheckApplicant('${r.nid}')" title="بررسی سلامت"><i class="fa-solid fa-stethoscope"></i></button>
+                    ${r.browser_status === 'OPEN' ? `<button class="btn btn-outline-secondary" onclick="bhCloseBrowser('${r.nid}')" title="بستن مرورگر"><i class="fa-solid fa-power-off"></i></button>` : ''}
+                    <button class="btn btn-outline-warning" onclick="bhInitiateReauth('${r.nid}')" title="شروع احراز هویت مجدد"><i class="fa-solid fa-user-clock"></i></button>
+                    <button class="btn btn-outline-info" onclick="bhPurgeCookies('${r.nid}')" title="پاکسازی کوکی‌های معلق CBI"><i class="fa-solid fa-broom"></i></button>
+                    <button class="btn btn-outline-success" onclick="bhBackupProfile('${r.nid}')" title="تهیه نسخه پشتیبان"><i class="fa-solid fa-box-archive"></i></button>
+                    <button class="btn btn-outline-danger" onclick="bhFreshProfile('${r.nid}')" title="ایجاد پروفایل تازه"><i class="fa-solid fa-trash-can"></i></button>
+                </div>
+            </td>
+        </tr>`;
+    }).join('');
+
+    tbody.innerHTML = rows;
+
+    // Update metrics
+    const mTot = document.getElementById('bhMetricTotal');
+    if (mTot) mTot.textContent = reports.length;
+    const mVal = document.getElementById('bhMetricValid');
+    if (mVal) mVal.textContent = validCount;
+    const mRe = document.getElementById('bhMetricReauth');
+    if (mRe) mRe.textContent = reauthCount;
+    const mRej = document.getElementById('bhMetricRejected');
+    if (mRej) mRej.textContent = rejectedCount;
+}
+
+async function loadBrowserHealthAuditLogs() {
+    const tbody = document.getElementById('bhAuditLogsBody');
+    if (!tbody) return;
+    try {
+        const logs = await apiCall('/browser-health/audit-logs?limit=30', 'GET');
+        if (!logs || logs.length === 0) {
+            tbody.innerHTML = '<tr><td colspan="6" class="text-muted py-3">تاریخچه‌ای ثبت نشده است.</td></tr>';
+            return;
+        }
+        tbody.innerHTML = logs.map(l => {
+            const timeStr = l.created_at ? new Date(l.created_at * 1000).toLocaleTimeString('fa-IR') : '-';
+            const resBadge = l.result === 'success' ? '<span class="badge bg-success">موفق</span>' : '<span class="badge bg-danger">ناموفق</span>';
+            return `<tr>
+                <td>${timeStr}</td>
+                <td class="font-monospace">${l.nid || '-'}</td>
+                <td><span class="badge bg-light text-dark border">${l.action}</span></td>
+                <td>${l.performed_by || 'سیستم'}</td>
+                <td>${resBadge}</td>
+                <td class="small text-muted text-truncate" style="max-width:240px;" title="${l.details || ''}">${l.details || '-'}</td>
+            </tr>`;
+        }).join('');
+    } catch (e) {
+        console.error('Error loading audit logs:', e);
+    }
+}
+
+async function bhCheckApplicant(nid) {
+    try {
+        showToast(`در حال بررسی زنده پروفایل ${nid}...`, 'info');
+        const report = await apiCall(`/browser-health/${nid}/check`, 'POST');
+        if (report) {
+            showToast(`بررسی با موفقیت انجام شد: وضعیت = ${report.health_status}`, 'success');
+            loadBrowserHealthData();
+        }
+    } catch (err) {
+        showToast('خطا در بررسی سلامت: ' + (err.message || err), 'danger');
+    }
+}
+
+async function bhCloseBrowser(nid) {
+    if (!confirm(`آیا از بستن مرورگر متقاضی ${nid} اطمینان دارید؟`)) return;
+    try {
+        const data = await apiCall(`/browser-health/${nid}/close-browser`, 'POST');
+        showToast(data.message || 'مرورگر بسته شد', 'success');
+        loadBrowserHealthData();
+    } catch (err) {
+        showToast('خطا در بستن مرورگر: ' + (err.message || err), 'danger');
+    }
+}
+
+async function bhInitiateReauth(nid) {
+    if (!confirm(`آیا از فعال‌سازی چرخه احراز هویت مجدد برای متقاضی ${nid} اطمینان دارید؟`)) return;
+    try {
+        const data = await apiCall(`/browser-health/${nid}/reauth`, 'POST');
+        showToast(data.message || 'احراز هویت مجدد فعال شد', 'success');
+        loadBrowserHealthData();
+    } catch (err) {
+        showToast('خطا در احراز هویت مجدد: ' + (err.message || err), 'danger');
+    }
+}
+
+async function bhPurgeCookies(nid) {
+    if (!confirm(`آیا می‌خواهید کوکی‌های نشست CBI متقاضی ${nid} بدون تخریب تنظیمات مرورگر پاکسازی شوند؟`)) return;
+    try {
+        const data = await apiCall(`/browser-health/${nid}/purge-cookies`, 'POST');
+        showToast(data.message || 'کوکی‌های معلق با موفقیت پاک شدند.', 'success');
+        loadBrowserHealthData();
+    } catch (err) {
+        showToast('خطا در پاکسازی کوکی‌ها: ' + (err.message || err), 'danger');
+    }
+}
+
+async function bhBackupProfile(nid) {
+    try {
+        showToast(`در حال تهیه نسخه پشتیبان برای ${nid}...`, 'info');
+        const data = await apiCall(`/browser-health/${nid}/backup`, 'POST');
+        showToast(data.message || 'نسخه پشتیبان تهیه شد', 'success');
+        loadBrowserHealthData();
+    } catch (err) {
+        showToast('خطا در تهیه نسخه پشتیبان: ' + (err.message || err), 'danger');
+    }
+}
+
+async function bhFreshProfile(nid) {
+    if (!confirm(`⚠️ هشدار جدی مدیر: آیا از بازسازی کامل و تمیز پروفایل مرورگر متقاضی ${nid} اطمینان دارید؟ (از پروفایل فعلی ابتدا نسخه پشتیبان تهیه خواهد شد)`)) return;
+    try {
+        const data = await apiCall(`/browser-health/${nid}/fresh-profile`, 'POST');
+        showToast(data.message || 'پروفایل تازه ایجاد شد', 'success');
+        loadBrowserHealthData();
+    } catch (err) {
+        showToast('خطا در بازسازی پروفایل: ' + (err.message || err), 'danger');
+    }
+}
+
