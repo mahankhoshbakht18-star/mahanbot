@@ -6,7 +6,7 @@ import json
 from typing import Any, Dict, List, Optional, Tuple
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, Response
 
 from database import DBHandler
 from submission_policy import validate_submission_settings
@@ -70,10 +70,13 @@ def parse_and_validate_excel_rows(rows: List[Dict[str, Any]]) -> Tuple[List[Dict
         "state": ("state", "province", "استان"),
         "city": ("city", "شهر"),
         "loan_type": ("loan_type", "نوع وام", "وام"),
-        "priority_banks": ("priority_banks", "banks", "بانک", "بانک اولویت"),
-        "bank_mode": ("bank_mode", "mode", "روش", "حضوری/غیرحضوری"),
+        "priority_banks": ("priority_banks", "banks", "بانک", "بانک اولویت", "بانک‌های اولویت", "بانک های اولویت", "اولویت بانک"),
+        "bank_mode": ("bank_mode", "mode", "روش", "حضوری/غیرحضوری", "روش اخذ وام", "نحوه اخذ"),
         "allow_reserve": ("allow_reserve", "reserve", "بانک رزرو", "رزرو", "ذخیره"),
         "branch_code": ("branch_code", "branch", "شعبه", "کد شعبه"),
+        "tracking_code": ("tracking_code", "track_code", "کد رهگیری", "کدرهگیری", "شماره پیگیری"),
+        "birth_date": ("birth_date", "تاریخ تولد", "تولد"),
+        "marriage_date": ("marriage_date", "تاریخ ازدواج", "ازدواج"),
     }
 
     def _get_field(row_dict: Dict[str, Any], key: str) -> Any:
@@ -110,7 +113,10 @@ def parse_and_validate_excel_rows(rows: List[Dict[str, Any]]) -> Tuple[List[Dict
         if postal_code and (not postal_code.isdigit() or len(postal_code) != 10):
             row_errors.append("کد پستی باید دقیقاً ۱۰ رقم باشد")
         if mobile and (not mobile.isdigit() or len(mobile) != 11 or not mobile.startswith("09")):
-            row_errors.append("شماره موبایل نامعتبر است (۱۱ رقم با ۰۹)")
+            if mobile == nid:
+                mobile = ""
+            else:
+                row_errors.append("شماره موبایل نامعتبر است (۱۱ رقم با ۰۹)")
 
         if row_errors:
             error_rows.append({"row": idx, "full_name": full_name or "-", "errors": row_errors})
@@ -136,6 +142,26 @@ def parse_and_validate_excel_rows(rows: List[Dict[str, Any]]) -> Tuple[List[Dict
             elif val_str in ("false", "0", "خیر", "ندارد", "غیرفعال"):
                 allow_reserve = False
 
+        raw_tracking = str(_get_field(raw_row, "tracking_code") or "").strip()
+        birth_date_raw = str(_get_field(raw_row, "birth_date") or "").strip()
+        marriage_date_raw = str(_get_field(raw_row, "marriage_date") or "").strip()
+
+        birth_y, birth_m, birth_d = "", "", ""
+        if "/" in birth_date_raw:
+            parts = birth_date_raw.split("/")
+            if len(parts) == 3:
+                birth_y = parts[0].strip()
+                birth_m = parts[1].strip().lstrip("0")
+                birth_d = parts[2].strip().lstrip("0")
+
+        marriage_y, marriage_m, marriage_d = "", "", ""
+        if "/" in marriage_date_raw:
+            parts = marriage_date_raw.split("/")
+            if len(parts) == 3:
+                marriage_y = parts[0].strip()
+                marriage_m = parts[1].strip().lstrip("0")
+                marriage_d = parts[2].strip().lstrip("0")
+
         data_payload = {
             "mobile": mobile,
             "phone": phone,
@@ -151,6 +177,13 @@ def parse_and_validate_excel_rows(rows: List[Dict[str, Any]]) -> Tuple[List[Dict
             "bank_mode": bank_mode,
             "branch_code": branch_code,
             "allow_reserve": allow_reserve,
+            "tracking_code": raw_tracking,
+            "birth_y": birth_y,
+            "birth_m": birth_m,
+            "birth_d": birth_d,
+            "marriage_y": marriage_y,
+            "marriage_m": marriage_m,
+            "marriage_d": marriage_d,
         }
         valid_records.append({
             "full_name": full_name,
@@ -275,6 +308,28 @@ async def import_applicants_excel(file: UploadFile = File(...)):
         }
     except Exception as exc:
         raise HTTPException(status_code=400, detail=f"خطا در خواندن فایل اکسل: {exc}")
+
+
+@router.get("/applicants/export-excel")
+async def export_applicants_excel():
+    """Export all applicants to an Excel (.xlsx) file with preserved text formatting for NID and mobile."""
+    try:
+        from pathlib import Path
+        import database
+        from scripts.export_applicants_excel import generate_applicants_workbook
+        wb = generate_applicants_workbook(Path(database.DB_PATH))
+        buf = io.BytesIO()
+        wb.save(buf)
+        buf.seek(0)
+        return Response(
+            content=buf.getvalue(),
+            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            headers={
+                "Content-Disposition": "attachment; filename*=UTF-8''applicants_data.xlsx"
+            }
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"خطا در ایجاد فایل اکسل: {exc}")
 
 
 @router.post("/applicants/{nid}/favorite-banks")

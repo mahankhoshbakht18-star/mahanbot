@@ -71,7 +71,8 @@
       <div onclick="switchView('add',this)"><button class="nav-link" data-tooltip="ثبت‌نام اولیه: تشکیل پرونده وام ازدواج یا فرزندآوری و بارگذاری اکسل"><i class="fa-solid fa-user-plus"></i><span>ثبت‌نام اولیه</span></button></div>
       <div onclick="switchView('bank-select',this)"><button class="nav-link" data-tooltip="پایش ظرفیت: شکار هوشمند سهمیه بانکی و کنترل چرخه ثبت"><i class="fa-solid fa-crosshairs"></i><span>پایش ظرفیت</span></button></div>
       <div onclick="switchView('radar',this)"><button class="nav-link" data-tooltip="رادار هوشمند ظرفیت: پایش کشوری، تحلیل ساعت ۱۸ و اعلان تلگرام"><i class="fa-solid fa-satellite-dish"></i><span>رادار و تلگرام</span></button></div>
-      <div onclick="switchView('saved-pages',this)"><button class="nav-link" data-tooltip="صفحات ذخیره‌شده: بررسی و بازیابی نشست‌های مرحله ۳ بدون پیامک مجدد"><i class="fa-solid fa-file-shield"></i><span>صفحات ذخیره‌شده</span></button></div>
+      <div onclick="switchView('saved-pages',this)"><button class="nav-link" data-tooltip="صفحات ذخیره‌شده: بررسی و بازیابی نشست‌های مرحله ۳ بدون پیامک مجدد"><i class="fa-solid fa-file-shield"></i><span>صفحات ذخیره‌شده</span></button></div>
+
       <div onclick="switchView('browser-health',this)"><button class="nav-link" data-tooltip="سلامت مرورگر و نشست: پایش، عیب‌یابی و بازیابی هوشمند نشست‌ها"><i class="fa-solid fa-shield-virus"></i><span>سلامت مرورگر</span></button></div>
       <div onclick="switchView('recover',this)"><button class="nav-link" data-tooltip="بازیابی کد رهگیری: استعلام و استخراج خودکار کد رهگیری ۱۰ رقمی از ve.cbi.ir/GetTraceCD.aspx"><i class="fa-solid fa-file-invoice"></i><span>بازیابی کد رهگیری</span></button></div>
       <div onclick="switchView('delete-req',this)"><button class="fa-trash-nav nav-link" data-tooltip="حذف ثبت‌نام: لغو رسمی درخواست در سامانه مرکزی (ve.cbi.ir/TasReqDelete.aspx)"><i class="fa-solid fa-trash-can"></i><span>حذف ثبت‌نام</span></button></div>
@@ -624,8 +625,12 @@
             </strong>
             <small class="d-block text-muted mt-1">صفرهای ابتدای کد ملی، کد پستی و شماره موبایل به صورت خودکار حفظ و اعتبارسنجی می‌شوند.</small>
           </div>
-          <div class="d-flex gap-2 align-items-center">
-            <input id="excelUploadInput" type="file" accept=".xlsx,.xls" class="form-control form-control-sm" style="max-width:280px">
+          <div class="d-flex gap-2 align-items-center flex-wrap">
+            <a href="/applicants/export-excel" download="اطلاعات_متقاضیان_MAHANBOT.xlsx" class="btn btn-sm btn-outline-info px-3 d-flex align-items-center gap-1 text-decoration-none" title="دانلود فایل اکسل پرونده‌های موجود با فرمت استاندارد">
+              <i class="fa-solid fa-file-arrow-down"></i>
+              <span>دریافت خروجی Excel</span>
+            </a>
+            <input id="excelUploadInput" type="file" accept=".xlsx,.xls" class="form-control form-control-sm" style="max-width:260px">
             <button type="button" class="btn btn-sm btn-success px-3" onclick="uploadApplicantsExcel()">بارگذاری Excel</button>
           </div>
         </div>

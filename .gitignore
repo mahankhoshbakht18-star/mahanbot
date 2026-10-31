@@ -57,7 +57,11 @@ mahanscripts.zip
 mahan/
 Debug Script.py
 downloads/*.zip
+*.xlsx
+*.xls
 *.zip
+*.xlsx
+*.xls
 updates_staging/
 
 # 6. IDE & OS files
