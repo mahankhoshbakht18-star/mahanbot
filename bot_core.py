@@ -468,6 +468,9 @@ class BotCore:
         check_rejection(page)
         return False
 
+    def _capture_captcha_image(self, captcha_element, source):
+        return captcha_element.screenshot()
+
     def solve_captcha_with_model(
         self,
         page,
@@ -526,7 +529,7 @@ class BotCore:
             if captcha_input.input_value().strip():
                 return False
             initial_src = captcha_element.evaluate("el => el.getAttribute('src') || ''") if hasattr(captcha_element, 'evaluate') else None
-            source_bytes = captcha_element.screenshot()
+            source_bytes = self._capture_captcha_image(captcha_element, source)
             if source_bytes and len(source_bytes) < 600:
                 # Sub-600 byte images are icons, not real captcha challenges
                 source_bytes = None

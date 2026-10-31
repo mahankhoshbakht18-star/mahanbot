@@ -6,6 +6,7 @@ import random
 import re
 import threading
 import hashlib
+import base64
 
 from browser_launcher import BrowserLaunchError, PlaywrightError, close_browser, safe_goto
 from bot_core import BotCore
@@ -1036,6 +1037,23 @@ class BankSelectionBot(BotCore):
                 continue
         return False
 
+    def _capture_captcha_image(self, captcha_element, source):
+        if source not in {"primary", "step1_primary_assist"}:
+            return super()._capture_captcha_image(captcha_element, source)
+        try:
+            # Persisted Chromium zoom can crop locator screenshots; read the loaded image's own pixels.
+            encoded = captcha_element.evaluate("""img => {
+                const canvas = document.createElement('canvas');
+                canvas.width = img.naturalWidth;
+                canvas.height = img.naturalHeight;
+                canvas.getContext('2d').drawImage(img, 0, 0);
+                return canvas.toDataURL('image/png').split(',')[1];
+            }""")
+            return base64.b64decode(encoded, validate=True)
+        except Exception as exc:
+            self.log(f"دریافت پیکسل اصلی کپچای انتخاب بانک ناموفق بود؛ استفاده از تصویر مرورگر: {type(exc).__name__}", "warning")
+            return super()._capture_captcha_image(captcha_element, source)
+
     def _solve_primary_captcha_fast(self, page, stop_event) -> bool:
         """
         Solve Step 1 CAPTCHA up to captcha_max_retries times.
@@ -1088,7 +1106,8 @@ class BankSelectionBot(BotCore):
                 ):
                     self._refresh_captcha_or_reload(page, input_sel=input_sel, allow_reload=False, force=True)
                     continue
-            except Exception:
+            except Exception as exc:
+                self.log(f"خطای حل کپچای انتخاب بانک: {type(exc).__name__}", "warning", page)
                 self._refresh_captcha_or_reload(page, input_sel=input_sel, allow_reload=False, force=True)
                 continue
 
@@ -1132,6 +1151,7 @@ class BankSelectionBot(BotCore):
                 btn_sel,
                 stop_event,
                 source="step1_primary",
+                refresh_on_failure=True,
             )
         return False
 

@@ -628,6 +628,7 @@ def wait_for_manual_captcha_handoff(
     stop_event,
     source: str = "general",
     success_selectors=("#ctl00_ContentPlaceHolder1_tbMobileConfCode", "input[name$='tbMobileConfCode']", "#ctl00_ContentPlaceHolder1_ddlBankName"),
+    refresh_on_failure: bool = False,
 ) -> bool:
     """
     Hybrid Manual + Active Model Assist Loop:
@@ -683,7 +684,7 @@ def wait_for_manual_captcha_handoff(
                         cur_src = img_loc.evaluate("el => el.getAttribute('src') || ''")
                     except Exception:
                         cur_src = None
-                    if cur_src != last_img_src or now - last_model_try_ts >= 2.5:
+                    if cur_src != last_img_src:
                         last_img_src = cur_src
                         if bot.solve_captcha_with_model(
                             page,
@@ -695,11 +696,23 @@ def wait_for_manual_captcha_handoff(
                         ):
                             time.sleep(0.6)
                             continue
-                    # Keep the same challenge available for manual entry.
-            except Exception:
-                pass
+                        if refresh_on_failure and not page.locator(input_sel).first.input_value().strip():
+                            # Select's primary form needs another native challenge after unreadable OCR.
+                            refresh_captcha_or_reload(bot, page, input_sel=input_sel, allow_reload=False, force=True)
+                            last_img_src = None
+            except Exception as exc:
+                if refresh_on_failure:
+                    last_img_src = None
+                    bot.log(f"خطای تلاش مجدد کپچای انتخاب بانک: {type(exc).__name__}", "warning", page)
 
-        time.sleep(0.3)
+        if refresh_on_failure:
+            try:
+                page.wait_for_timeout(300)
+            except Exception as exc:
+                bot.log(f"توقف انتظار کپچای انتخاب بانک: {type(exc).__name__}", "warning", page)
+                return False
+        else:
+            time.sleep(0.3)
 
     bot.set_runtime_state("ERROR", "CAPTCHA_MANUAL_TIMEOUT", browser_status="OPEN", last_error="captcha_manual_timeout")
     return False
