@@ -16,13 +16,22 @@ from browser_actions import BrowserActions
 from database import DBHandler
 from event_logger import EVENT_BROADCASTER, build_event, emit_structured_event
 from bot_select_firewall import firewall_gate, firewall_input_visible
-from bot_select_captcha import (
-    refresh_captcha_or_reload,
-    detect_captcha_failure,
-    solve_captcha_wrapper,
-    solve_captcha_step,
-    wait_for_manual_captcha_handoff,
-)
+try:
+    from bot_select_captcha import (
+        refresh_captcha_or_reload,
+        detect_captcha_failure,
+        solve_captcha_wrapper,
+        solve_captcha_step,
+        wait_for_manual_captcha_handoff,
+    )
+except ImportError:
+    from bot_select_captcha import (
+        refresh_captcha_or_reload,
+        detect_captcha_failure,
+        solve_captcha_wrapper,
+        solve_captcha_step,
+    )
+    wait_for_manual_captcha_handoff = None
 from bot_select_otp import (
     get_otp_from_db_fresh,
     fast_otp_sync_and_inject,
@@ -1059,7 +1068,11 @@ class BankSelectionBot(BotCore):
         Solve Step 1 CAPTCHA up to captcha_max_retries times.
         Waits for the CAPTCHA image to appear and finish loading (`naturalWidth > 0`) before passing to the model.
         """
-        from bot_select_captcha import wait_for_captcha_image_ready, wait_for_manual_captcha_handoff
+        try:
+            from bot_select_captcha import wait_for_captcha_image_ready, wait_for_manual_captcha_handoff
+        except ImportError:
+            wait_for_captcha_image_ready = None
+            wait_for_manual_captcha_handoff = None
         input_sel = "#ctl00_ContentPlaceHolder1_tbCaptcha1, input[name$='tbCaptcha1'], input[name*='tbCaptcha']"
         btn_sel = (
             "#ctl00_ContentPlaceHolder1_btnSendConfirmCode, "
@@ -1125,7 +1138,10 @@ class BankSelectionBot(BotCore):
                     break
                 if self.consume_recovery_flag("captcha_invalid") or self._detect_captcha_failure(page):
                     break
-                from bot_select_captcha import detect_form_validation_error
+                try:
+                    from bot_select_captcha import detect_form_validation_error
+                except ImportError:
+                    detect_form_validation_error = lambda page: None
                 form_err = detect_form_validation_error(page)
                 if form_err:
                     self.log(f"⚠️ خطای فرم سامانه ثبت شد: {form_err}؛ توقف چرخه بیهوده کپچا.", "error", page)

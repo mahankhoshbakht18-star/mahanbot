@@ -5,13 +5,22 @@ import time
 from database import DBHandler
 from event_logger import emit_structured_event
 from browser_actions import BrowserActions
-from bot_select_captcha import (
-    CAPTCHA_IMAGE_SELECTORS,
-    CAPTCHA_RELOAD_SELECTORS,
-    refresh_captcha_or_reload,
-    detect_captcha_failure,
-    wait_for_captcha_image_ready,
-)
+try:
+    from bot_select_captcha import (
+        CAPTCHA_IMAGE_SELECTORS,
+        CAPTCHA_RELOAD_SELECTORS,
+        refresh_captcha_or_reload,
+        detect_captcha_failure,
+        wait_for_captcha_image_ready,
+    )
+except ImportError:
+    from bot_select_captcha import (
+        refresh_captcha_or_reload,
+        detect_captcha_failure,
+    )
+    CAPTCHA_IMAGE_SELECTORS = ("img.BDC_CaptchaImage", "#captchaImage", "#captchaImg")
+    CAPTCHA_RELOAD_SELECTORS = ("a[title*='CAPTCHA' i]", "a[title*='کد' i]")
+    wait_for_captcha_image_ready = None
 
 
 def _log_fa(bot, message: str, level: str = "info", page=None):

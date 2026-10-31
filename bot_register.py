@@ -7,7 +7,10 @@ from bot_helpers import sleep_with_stop, detect_captcha_failure
 from browser_actions import BrowserActions
 from browser_launcher import BrowserLaunchError, close_browser, safe_goto
 from database import DBHandler
-from bot_select_captcha import wait_for_manual_captcha_handoff
+try:
+    from bot_select_captcha import wait_for_manual_captcha_handoff
+except ImportError:
+    wait_for_manual_captcha_handoff = None
 
 TARGET_URL = "https://ve.cbi.ir/Register.aspx"
 CHILD_REGISTER_URL = "https://ve.cbi.ir/ChildRegister.aspx"

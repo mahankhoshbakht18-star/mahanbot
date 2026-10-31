@@ -500,9 +500,12 @@ class BotCore:
             if captcha_input is None:
                 return False
 
-        from bot_select_captcha import wait_for_captcha_image_ready
+        try:
+            from bot_select_captcha import wait_for_captcha_image_ready
+        except ImportError:
+            wait_for_captcha_image_ready = None
         if captcha_element is None:
-            captcha_element, _ = wait_for_captcha_image_ready(page, timeout_ms=4000, trigger_refresh_if_missing=True)
+            captcha_element, _ = wait_for_captcha_image_ready(page, timeout_ms=4000, trigger_refresh_if_missing=True) if callable(wait_for_captcha_image_ready) else (None, None)
             if captcha_element is None:
                 try:
                     captcha_element = page.locator(captcha_image_selector).first
