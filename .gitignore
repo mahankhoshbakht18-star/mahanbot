@@ -1,5 +1,5 @@
-# ==========================================
-# MAHANBOT .gitignore — Comprehensive Protection
+﻿# ==========================================
+# MAHANBOT .gitignore â€” Comprehensive Protection
 # ==========================================
 
 # 1. Python System & Bytecode
@@ -47,7 +47,7 @@ diagnostics/
 backups/
 logs/
 *.log
-مشاهده_وضعیت/
+Ù…Ø´Ø§Ù‡Ø¯Ù‡_ÙˆØ¶Ø¹ÛŒØª/
 
 # 5. Build Artifacts & Packaging
 dist/
@@ -57,6 +57,7 @@ mahanscripts.zip
 mahan/
 Debug Script.py
 downloads/*.zip
+*.zip
 updates_staging/
 
 # 6. IDE & OS files
