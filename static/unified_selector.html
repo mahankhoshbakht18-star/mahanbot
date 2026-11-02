@@ -1,0 +1,607 @@
+<!DOCTYPE html>
+<html lang="fa" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>سامانه یکپارچه انتخاب بانک وام ازدواج — MAHANBOT</title>
+    <style>
+        :root {
+            --bg-color: #f4f6f9;
+            --card-bg: #ffffff;
+            --primary: #0284c7;
+            --primary-hover: #0369a1;
+            --success: #10b981;
+            --success-hover: #059669;
+            --warning: #f59e0b;
+            --danger: #ef4444;
+            --text-main: #1e293b;
+            --text-muted: #64748b;
+            --border-color: #e2e8f0;
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Vazirmatn", Tahoma, sans-serif;
+        }
+
+        body {
+            background-color: var(--bg-color);
+            color: var(--text-main);
+            padding: 24px;
+            font-size: 14px;
+            line-height: 1.5;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+
+        header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            background: var(--card-bg);
+            padding: 16px 24px;
+            border-radius: 12px;
+            border: 1px solid var(--border-color);
+            margin-bottom: 20px;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+        }
+
+        .header-title h1 {
+            font-size: 18px;
+            font-weight: 700;
+            color: var(--text-main);
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .header-badges {
+            display: flex;
+            gap: 8px;
+        }
+
+        .badge {
+            display: inline-block;
+            padding: 4px 10px;
+            border-radius: 9999px;
+            font-size: 11px;
+            font-weight: 600;
+        }
+
+        .badge-info { background-color: #e0f2fe; color: #0369a1; }
+        .badge-success { background-color: #dcfce7; color: #15803d; }
+        .badge-warning { background-color: #fef3c7; color: #b45309; }
+        .badge-danger { background-color: #fee2e2; color: #b91c1c; }
+        .badge-secondary { background-color: #f1f5f9; color: #475569; }
+
+        .dashboard-grid {
+            display: grid;
+            grid-template-columns: 1fr;
+            gap: 20px;
+        }
+
+        .card {
+            background: var(--card-bg);
+            border-radius: 12px;
+            border: 1px solid var(--border-color);
+            padding: 20px;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+        }
+
+        .card-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 16px;
+            padding-bottom: 12px;
+            border-bottom: 1px solid var(--border-color);
+        }
+
+        .card-header h2 {
+            font-size: 15px;
+            font-weight: 700;
+        }
+
+        /* Controls */
+        .controls-bar {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 12px;
+            align-items: center;
+        }
+
+        .btn {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            gap: 6px;
+            padding: 8px 16px;
+            font-size: 13px;
+            font-weight: 600;
+            border-radius: 8px;
+            border: none;
+            cursor: pointer;
+            transition: all 0.15s ease;
+        }
+
+        .btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        .btn-primary { background: var(--primary); color: #fff; }
+        .btn-primary:hover:not(:disabled) { background: var(--primary-hover); }
+
+        .btn-success { background: var(--success); color: #fff; }
+        .btn-success:hover:not(:disabled) { background: var(--success-hover); }
+
+        .btn-warning { background: var(--warning); color: #fff; }
+        .btn-danger { background: var(--danger); color: #fff; }
+
+        .btn-outline {
+            background: transparent;
+            border: 1px solid var(--border-color);
+            color: var(--text-main);
+        }
+        .btn-outline:hover:not(:disabled) {
+            background: #f8fafc;
+        }
+
+        .btn-start-big {
+            padding: 10px 24px;
+            font-size: 14px;
+            background: #0284c7;
+            color: white;
+            box-shadow: 0 2px 4px rgba(2, 132, 199, 0.2);
+        }
+        .btn-start-big:hover:not(:disabled) {
+            background: #0369a1;
+        }
+
+        .btn-confirm-glowing {
+            animation: pulse-glow 1.5s infinite;
+            background: #10b981;
+            color: white;
+            font-weight: 700;
+        }
+
+        @keyframes pulse-glow {
+            0% { box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.6); }
+            70% { box-shadow: 0 0 0 10px rgba(16, 185, 129, 0); }
+            100% { box-shadow: 0 0 0 0 rgba(16, 185, 129, 0); }
+        }
+
+        .status-strip {
+            display: flex;
+            align-items: center;
+            gap: 16px;
+            padding: 12px 16px;
+            background: #f8fafc;
+            border-radius: 8px;
+            border: 1px solid var(--border-color);
+            margin-top: 14px;
+        }
+
+        .status-item {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            font-size: 13px;
+        }
+
+        .status-label {
+            color: var(--text-muted);
+        }
+
+        /* Table */
+        .table-responsive {
+            overflow-x: auto;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            text-align: right;
+            font-size: 13px;
+        }
+
+        th {
+            background-color: #f8fafc;
+            color: var(--text-muted);
+            font-weight: 600;
+            padding: 10px 14px;
+            border-bottom: 1px solid var(--border-color);
+            white-space: nowrap;
+        }
+
+        td {
+            padding: 12px 14px;
+            border-bottom: 1px solid var(--border-color);
+            vertical-align: middle;
+        }
+
+        tr:last-child td {
+            border-bottom: none;
+        }
+
+        tr:hover {
+            background-color: #fafbfc;
+        }
+
+        /* Toggle switch */
+        .switch {
+            position: relative;
+            display: inline-block;
+            width: 36px;
+            height: 20px;
+        }
+
+        .switch input {
+            opacity: 0;
+            width: 0;
+            height: 0;
+        }
+
+        .slider {
+            position: absolute;
+            cursor: pointer;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background-color: #cbd5e1;
+            transition: .2s;
+            border-radius: 20px;
+        }
+
+        .slider:before {
+            position: absolute;
+            content: "";
+            height: 14px;
+            width: 14px;
+            left: 3px;
+            bottom: 3px;
+            background-color: white;
+            transition: .2s;
+            border-radius: 50%;
+        }
+
+        input:checked + .slider {
+            background-color: var(--primary);
+        }
+
+        input:checked + .slider:before {
+            transform: translateX(16px);
+        }
+
+        /* Log console */
+        .log-console {
+            background-color: #0f172a;
+            color: #e2e8f0;
+            border-radius: 8px;
+            padding: 14px;
+            font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+            font-size: 12px;
+            line-height: 1.6;
+            height: 240px;
+            overflow-y: auto;
+            direction: ltr;
+            text-align: left;
+        }
+
+        .log-line {
+            display: flex;
+            gap: 8px;
+            margin-bottom: 4px;
+            white-space: pre-wrap;
+            word-break: break-all;
+        }
+
+        .log-time { color: #64748b; }
+        .log-level-info { color: #38bdf8; }
+        .log-level-warning { color: #fbbf24; }
+        .log-level-error { color: #f87171; }
+        .log-level-success { color: #4ade80; }
+        .log-msg { color: #f1f5f9; }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <header>
+        <div class="header-title">
+            <h1>⚡ سامانه یکپارچه انتخاب بانک وام ازدواج (MAHANBOT Unified)</h1>
+        </div>
+        <div class="header-badges">
+            <span class="badge badge-info">دیتابیس: cbi_test.db</span>
+            <span class="badge badge-success">مدل کپچا: PyTorch CRNN (بدون ddddocr)</span>
+            <span class="badge badge-secondary" id="engineStateBadge">وضعیت: غیرفعال</span>
+        </div>
+    </header>
+
+    <div class="dashboard-grid">
+        <!-- Control Card -->
+        <div class="card">
+            <div class="card-header">
+                <h2>کنترل عملیات انتخاب بانک</h2>
+                <div id="manualConfirmationContainer" style="display: none;">
+                    <button class="btn btn-confirm-glowing" id="btnConfirmSubmit" onclick="confirmManualSubmit()">
+                        ✅ تأیید و ثبت نهایی بانک انتخاب‌شده
+                    </button>
+                </div>
+            </div>
+
+            <div class="controls-bar">
+                <button class="btn btn-start-big" id="btnStart" onclick="startEngine()">
+                    ▶ شروع چرخه انتخاب بانک
+                </button>
+                <button class="btn btn-warning" id="btnPause" onclick="pauseEngine()" disabled>
+                    ⏸ توقف موقت (Pause)
+                </button>
+                <button class="btn btn-primary" id="btnResume" onclick="resumeEngine()" disabled>
+                    ⏯ ادامه (Resume)
+                </button>
+                <button class="btn btn-danger" id="btnStop" onclick="stopEngine()" disabled>
+                    ⏹ توقف کامل
+                </button>
+                <button class="btn btn-outline" onclick="resetApplicants()">
+                    🔄 بازنشانی وضعیت متقاضیان تست
+                </button>
+            </div>
+
+            <div class="status-strip">
+                <div class="status-item">
+                    <span class="status-label">مرحله جاری:</span>
+                    <strong id="currentStepText">آماده شروع</strong>
+                </div>
+                <div class="status-item">
+                    <span class="status-label">متقاضی فعال:</span>
+                    <strong id="activeApplicantText">—</strong>
+                </div>
+            </div>
+        </div>
+
+        <!-- Applicants Table Card -->
+        <div class="card">
+            <div class="card-header">
+                <h2>فهرست متقاضیان آزمایشی (cbi_test.db)</h2>
+            </div>
+            <div class="table-responsive">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>نام و نام خانوادگی</th>
+                            <th>کد ملی</th>
+                            <th>استان و شهر</th>
+                            <th>اولویت بانک‌ها</th>
+                            <th>نوع مراجعه</th>
+                            <th>مجوز رزرو</th>
+                            <th>ثبت نهایی خودکار</th>
+                            <th>وضعیت جاری</th>
+                            <th>کد پیگیری / نتیجه</th>
+                        </tr>
+                    </thead>
+                    <tbody id="applicantsTableBody">
+                        <tr><td colspan="9" style="text-align:center;">در حال بارگذاری اطلاعات...</td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <!-- Live Logs Card -->
+        <div class="card">
+            <div class="card-header">
+                <h2>لاگ‌های زنده عملیات</h2>
+                <span class="badge badge-secondary" id="logCountBadge">0 لاگ</span>
+            </div>
+            <div class="log-console" id="logConsole">
+                <div class="log-line"><span class="log-time">00:00:00</span> <span class="log-msg">سیستم آماده است. برای شروع کلیک کنید.</span></div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+    let isRunning = false;
+    let isPaused = false;
+
+    async function fetchApplicants() {
+        try {
+            const res = await fetch('/api/unified/applicants');
+            const data = await res.json();
+            if (data.success && data.applicants) {
+                renderApplicants(data.applicants);
+            }
+        } catch (e) {
+            console.error("Error fetching applicants:", e);
+        }
+    }
+
+    async function fetchStatus() {
+        try {
+            const res = await fetch('/api/unified/status');
+            const data = await res.json();
+            if (data.success && data.status) {
+                updateUI(data.status);
+            }
+        } catch (e) {
+            console.error("Error fetching status:", e);
+        }
+    }
+
+    function renderApplicants(applicants) {
+        const tbody = document.getElementById('applicantsTableBody');
+        if (!applicants || applicants.length === 0) {
+            tbody.innerHTML = '<tr><td colspan="9" style="text-align:center;">هیچ متقاضی در دیتابیس ثبت نشده است.</td></tr>';
+            return;
+        }
+
+        tbody.innerHTML = applicants.map(app => {
+            const isAutoSubmit = Boolean(app.auto_final_submit);
+            const isAllowReserve = Boolean(app.allow_reserve);
+            const modeText = app.bank_mode === 'online' ? 'غیرحضوری (آنلاین)' : 'حضوری (شعبه)';
+            
+            let statusBadge = 'badge-secondary';
+            if (app.status === 'ثبت قطعی') statusBadge = 'badge-success';
+            else if (app.status === 'رزرو شده') statusBadge = 'badge-info';
+            else if (app.status.includes('خطا')) statusBadge = 'badge-danger';
+            else if (app.status.includes('آماده تأیید')) statusBadge = 'badge-warning';
+            else if (app.status === 'در حال بررسی') statusBadge = 'badge-info';
+
+            const tracking = app.tracking_code || app.last_result || '—';
+
+            return `
+                <tr>
+                    <td><strong>${app.full_name}</strong></td>
+                    <td><code>${app.national_id}</code></td>
+                    <td>${app.state} - ${app.city}</td>
+                    <td>${(app.priority_banks || []).join('، ')}</td>
+                    <td>${modeText}</td>
+                    <td>${isAllowReserve ? '✅ بله' : '❌ خیر'}</td>
+                    <td>
+                        <label class="switch">
+                            <input type="checkbox" ${isAutoSubmit ? 'checked' : ''} onchange="toggleAutoSubmit('${app.national_id}', this.checked)">
+                            <span class="slider"></span>
+                        </label>
+                    </td>
+                    <td><span class="badge ${statusBadge}">${app.status}</span></td>
+                    <td><code>${tracking}</code></td>
+                </tr>
+            `;
+        }).join('');
+    }
+
+    function updateUI(status) {
+        isRunning = status.is_running;
+        isPaused = status.is_paused;
+
+        document.getElementById('btnStart').disabled = isRunning;
+        document.getElementById('btnPause').disabled = !isRunning || isPaused;
+        document.getElementById('btnResume').disabled = !isRunning || !isPaused;
+        document.getElementById('btnStop').disabled = !isRunning;
+
+        const stateBadge = document.getElementById('engineStateBadge');
+        stateBadge.textContent = 'وضعیت: ' + status.state;
+        if (status.state === 'IDLE' || status.state === 'STOPPED') {
+            stateBadge.className = 'badge badge-secondary';
+        } else if (status.state === 'CONFIRMED') {
+            stateBadge.className = 'badge badge-success';
+        } else if (status.state === 'ERROR') {
+            stateBadge.className = 'badge badge-danger';
+        } else if (status.state === 'READY_FOR_MANUAL_CONFIRMATION') {
+            stateBadge.className = 'badge badge-warning';
+        } else {
+            stateBadge.className = 'badge badge-info';
+        }
+
+        // Show manual confirm button if waiting
+        const manualContainer = document.getElementById('manualConfirmationContainer');
+        if (status.state === 'READY_FOR_MANUAL_CONFIRMATION') {
+            manualContainer.style.display = 'block';
+        } else {
+            manualContainer.style.display = 'none';
+        }
+
+        document.getElementById('currentStepText').textContent = status.state;
+        if (status.active_applicant) {
+            document.getElementById('activeApplicantText').textContent = 
+                `${status.active_applicant.full_name} (${status.active_applicant.national_id})`;
+        } else {
+            document.getElementById('activeApplicantText').textContent = '—';
+        }
+
+        // Render logs
+        if (status.logs && status.logs.length > 0) {
+            const consoleEl = document.getElementById('logConsole');
+            consoleEl.innerHTML = status.logs.map(l => `
+                <div class="log-line">
+                    <span class="log-time">[${l.time_str}]</span>
+                    <span class="log-level-${l.level}">[${(l.level||'info').toUpperCase()}]</span>
+                    <span class="log-msg">${l.message}</span>
+                </div>
+            `).join('');
+            consoleEl.scrollTop = consoleEl.scrollHeight;
+            document.getElementById('logCountBadge').textContent = `${status.logs.length} لاگ`;
+        }
+    }
+
+    async function startEngine() {
+        try {
+            await fetch('/api/unified/start', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({}) });
+            fetchStatus();
+        } catch (e) {
+            alert('خطا در شروع موتور: ' + e);
+        }
+    }
+
+    async function pauseEngine() {
+        try {
+            await fetch('/api/unified/pause', { method: 'POST' });
+            fetchStatus();
+        } catch (e) {
+            alert('خطا در توقف موقت: ' + e);
+        }
+    }
+
+    async function resumeEngine() {
+        try {
+            await fetch('/api/unified/resume', { method: 'POST' });
+            fetchStatus();
+        } catch (e) {
+            alert('خطا در ادامه عملیات: ' + e);
+        }
+    }
+
+    async function stopEngine() {
+        try {
+            await fetch('/api/unified/stop', { method: 'POST' });
+            fetchStatus();
+        } catch (e) {
+            alert('خطا در توقف موتور: ' + e);
+        }
+    }
+
+    async function confirmManualSubmit() {
+        try {
+            await fetch('/api/unified/confirm-submit', { method: 'POST' });
+            fetchStatus();
+        } catch (e) {
+            alert('خطا در تأیید نهایی: ' + e);
+        }
+    }
+
+    async function toggleAutoSubmit(national_id, auto_final_submit) {
+        try {
+            await fetch('/api/unified/toggle-submit', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ national_id, auto_final_submit })
+            });
+            fetchApplicants();
+        } catch (e) {
+            console.error('Error toggling submit:', e);
+        }
+    }
+
+    async function resetApplicants() {
+        if (!confirm('آیا مایل به بازنشانی وضعیت متقاضیان آزمایشی هستید؟')) return;
+        try {
+            await fetch('/api/unified/reset-applicants', { method: 'POST' });
+            fetchApplicants();
+            fetchStatus();
+        } catch (e) {
+            alert('خطا در ریست: ' + e);
+        }
+    }
+
+    // Polling loops
+    fetchApplicants();
+    fetchStatus();
+    setInterval(fetchStatus, 1500);
+    setInterval(fetchApplicants, 3000);
+</script>
+
+</body>
+</html>
