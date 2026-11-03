@@ -368,3 +368,121 @@ class TestDatabaseManager:
                     "UPDATE applicants SET status = 'در انتظار', last_log = '', data = ? WHERE national_id = ?",
                     (json.dumps(data, ensure_ascii=False), nid),
                 )
+
+    def upsert_applicant(self, applicant_data: Dict[str, Any]) -> bool:
+        """Create or update an applicant in cbi_test.db."""
+        nid = str(applicant_data.get("national_id", "")).strip()
+        name = str(applicant_data.get("full_name", "")).strip()
+        if not nid or not name:
+            raise ValueError("کد ملی و نام متقاضی الزامی هستند.")
+
+        data_payload = {
+            "state": str(applicant_data.get("state", "")).strip(),
+            "city": str(applicant_data.get("city", "")).strip(),
+            "priority_banks": applicant_data.get("priority_banks", []),
+            "bank_mode": str(applicant_data.get("bank_mode", "online")).strip(),
+            "allow_reserve": bool(applicant_data.get("allow_reserve", True)),
+            "auto_final_submit": bool(applicant_data.get("auto_final_submit", False)),
+            "preferred_branch": str(applicant_data.get("preferred_branch", "")).strip(),
+            "tracking_code": applicant_data.get("tracking_code"),
+            "last_result": applicant_data.get("last_result"),
+        }
+
+        status = applicant_data.get("status", "در انتظار")
+        last_log = applicant_data.get("last_log", "")
+
+        with self.connect() as conn:
+            existing = conn.execute("SELECT id FROM applicants WHERE national_id = ?", (nid,)).fetchone()
+            if existing:
+                conn.execute(
+                    """
+                    UPDATE applicants
+                    SET full_name = ?, status = ?, last_log = ?, data = ?
+                    WHERE national_id = ?
+                    """,
+                    (name, status, last_log, json.dumps(data_payload, ensure_ascii=False), nid),
+                )
+            else:
+                conn.execute(
+                    """
+                    INSERT INTO applicants (full_name, national_id, status, last_log, data)
+                    VALUES (?, ?, ?, ?, ?)
+                    """,
+                    (name, nid, status, last_log, json.dumps(data_payload, ensure_ascii=False)),
+                )
+        return True
+
+    def delete_applicant(self, national_id: str) -> bool:
+        """Delete an applicant from cbi_test.db."""
+        with self.connect() as conn:
+            conn.execute("DELETE FROM applicants WHERE national_id = ?", (national_id,))
+        return True
+
+    def get_available_main_db_applicants(self) -> List[Dict[str, Any]]:
+        """Read available applicants from cbi_ultimate.db (read-only mode)."""
+        main_db_path = os.path.join(os.path.dirname(self.db_path), "cbi_ultimate.db")
+        if not os.path.isfile(main_db_path):
+            return []
+
+        conn = sqlite3.connect(f"file:{main_db_path}?mode=ro", uri=True)
+        conn.row_factory = sqlite3.Row
+        try:
+            rows = conn.execute("SELECT national_id, full_name, status, data FROM applicants ORDER BY id ASC").fetchall()
+            results = []
+            for r in rows:
+                parsed = {}
+                try:
+                    parsed = json.loads(r["data"] or "{}")
+                except Exception:
+                    pass
+                results.append({
+                    "national_id": r["national_id"],
+                    "full_name": r["full_name"],
+                    "status": r["status"],
+                    "state": parsed.get("state", ""),
+                    "city": parsed.get("city", ""),
+                    "priority_banks": parsed.get("priority_banks") or parsed.get("banks") or [],
+                    "bank_mode": parsed.get("bank_mode") or "online",
+                    "allow_reserve": parsed.get("allow_reserve", True),
+                    "preferred_branch": parsed.get("preferred_branch", ""),
+                })
+            return results
+        finally:
+            conn.close()
+
+    def import_from_main_db(self, national_ids: Optional[List[str]] = None, replace: bool = False) -> int:
+        """Safely import real applicants from cbi_ultimate.db into cbi_test.db."""
+        main_apps = self.get_available_main_db_applicants()
+        if not main_apps:
+            return 0
+
+        if national_ids:
+            target_apps = [a for a in main_apps if str(a["national_id"]) in set(map(str, national_ids))]
+        else:
+            # Default to applicants who have meaningful bank/city data
+            target_apps = [a for a in main_apps if a.get("priority_banks") or a.get("city")]
+
+        if replace:
+            with self.connect() as conn:
+                conn.execute("DELETE FROM applicants")
+
+        count = 0
+        for app in target_apps:
+            raw_mode = str(app.get("bank_mode", "")).lower()
+            mode = "online" if ("online" in raw_mode or not raw_mode) else "in_person"
+            self.upsert_applicant({
+                "national_id": app["national_id"],
+                "full_name": app["full_name"],
+                "state": app.get("state", ""),
+                "city": app.get("city", ""),
+                "priority_banks": app.get("priority_banks", []),
+                "bank_mode": mode,
+                "allow_reserve": bool(app.get("allow_reserve", True)),
+                "auto_final_submit": False,
+                "preferred_branch": app.get("preferred_branch", ""),
+                "status": "در انتظار",
+                "last_log": "انتقال‌یافته از دیتابیس اصلی",
+            })
+            count += 1
+        return count
+

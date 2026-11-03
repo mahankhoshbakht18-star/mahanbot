@@ -30,12 +30,12 @@
             background-color: var(--bg-color);
             color: var(--text-main);
             padding: 24px;
-            font-size: 14px;
+            font-size: 13px;
             line-height: 1.5;
         }
 
         .container {
-            max-width: 1200px;
+            max-width: 1280px;
             margin: 0 auto;
         }
 
@@ -52,7 +52,7 @@
         }
 
         .header-title h1 {
-            font-size: 18px;
+            font-size: 17px;
             font-weight: 700;
             color: var(--text-main);
             display: flex;
@@ -107,11 +107,16 @@
             font-weight: 700;
         }
 
+        .header-actions {
+            display: flex;
+            gap: 8px;
+        }
+
         /* Controls */
         .controls-bar {
             display: flex;
             flex-wrap: wrap;
-            gap: 12px;
+            gap: 10px;
             align-items: center;
         }
 
@@ -120,10 +125,10 @@
             align-items: center;
             justify-content: center;
             gap: 6px;
-            padding: 8px 16px;
-            font-size: 13px;
+            padding: 7px 14px;
+            font-size: 12.5px;
             font-weight: 600;
-            border-radius: 8px;
+            border-radius: 7px;
             border: none;
             cursor: pointer;
             transition: all 0.15s ease;
@@ -132,6 +137,12 @@
         .btn:disabled {
             opacity: 0.5;
             cursor: not-allowed;
+        }
+
+        .btn-sm {
+            padding: 4px 8px;
+            font-size: 11.5px;
+            border-radius: 5px;
         }
 
         .btn-primary { background: var(--primary); color: #fff; }
@@ -153,8 +164,8 @@
         }
 
         .btn-start-big {
-            padding: 10px 24px;
-            font-size: 14px;
+            padding: 9px 20px;
+            font-size: 13.5px;
             background: #0284c7;
             color: white;
             box-shadow: 0 2px 4px rgba(2, 132, 199, 0.2);
@@ -180,7 +191,7 @@
             display: flex;
             align-items: center;
             gap: 16px;
-            padding: 12px 16px;
+            padding: 10px 14px;
             background: #f8fafc;
             border-radius: 8px;
             border: 1px solid var(--border-color);
@@ -191,7 +202,7 @@
             display: flex;
             align-items: center;
             gap: 6px;
-            font-size: 13px;
+            font-size: 12.5px;
         }
 
         .status-label {
@@ -207,20 +218,20 @@
             width: 100%;
             border-collapse: collapse;
             text-align: right;
-            font-size: 13px;
+            font-size: 12.5px;
         }
 
         th {
             background-color: #f8fafc;
             color: var(--text-muted);
             font-weight: 600;
-            padding: 10px 14px;
+            padding: 9px 12px;
             border-bottom: 1px solid var(--border-color);
             white-space: nowrap;
         }
 
         td {
-            padding: 12px 14px;
+            padding: 10px 12px;
             border-bottom: 1px solid var(--border-color);
             vertical-align: middle;
         }
@@ -237,8 +248,8 @@
         .switch {
             position: relative;
             display: inline-block;
-            width: 36px;
-            height: 20px;
+            width: 34px;
+            height: 18px;
         }
 
         .switch input {
@@ -259,8 +270,8 @@
         .slider:before {
             position: absolute;
             content: "";
-            height: 14px;
-            width: 14px;
+            height: 12px;
+            width: 12px;
             left: 3px;
             bottom: 3px;
             background-color: white;
@@ -281,11 +292,11 @@
             background-color: #0f172a;
             color: #e2e8f0;
             border-radius: 8px;
-            padding: 14px;
+            padding: 12px;
             font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
             font-size: 12px;
             line-height: 1.6;
-            height: 240px;
+            height: 220px;
             overflow-y: auto;
             direction: ltr;
             text-align: left;
@@ -305,6 +316,92 @@
         .log-level-error { color: #f87171; }
         .log-level-success { color: #4ade80; }
         .log-msg { color: #f1f5f9; }
+
+        /* Modal Styles */
+        .modal-overlay {
+            position: fixed;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background: rgba(15, 23, 42, 0.6);
+            display: none;
+            justify-content: center;
+            align-items: center;
+            z-index: 1000;
+            backdrop-filter: blur(2px);
+        }
+
+        .modal-card {
+            background: white;
+            border-radius: 12px;
+            width: 100%;
+            max-width: 600px;
+            max-height: 90vh;
+            overflow-y: auto;
+            box-shadow: 0 10px 25px rgba(0,0,0,0.2);
+            padding: 24px;
+        }
+
+        .modal-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 20px;
+            padding-bottom: 12px;
+            border-bottom: 1px solid var(--border-color);
+        }
+
+        .modal-header h3 {
+            font-size: 16px;
+            font-weight: 700;
+        }
+
+        .modal-close {
+            background: none;
+            border: none;
+            font-size: 20px;
+            cursor: pointer;
+            color: var(--text-muted);
+        }
+
+        .form-group {
+            margin-bottom: 14px;
+        }
+
+        .form-group label {
+            display: block;
+            margin-bottom: 6px;
+            font-weight: 600;
+            font-size: 12.5px;
+            color: var(--text-main);
+        }
+
+        .form-control {
+            width: 100%;
+            padding: 8px 12px;
+            border-radius: 6px;
+            border: 1px solid var(--border-color);
+            font-size: 13px;
+        }
+
+        .form-control:focus {
+            outline: none;
+            border-color: var(--primary);
+            box-shadow: 0 0 0 2px rgba(2, 132, 199, 0.15);
+        }
+
+        .form-row {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 12px;
+        }
+
+        .modal-footer {
+            display: flex;
+            justify-content: flex-end;
+            gap: 10px;
+            margin-top: 20px;
+            padding-top: 14px;
+            border-top: 1px solid var(--border-color);
+        }
     </style>
 </head>
 <body>
@@ -316,7 +413,7 @@
         </div>
         <div class="header-badges">
             <span class="badge badge-info">دیتابیس: cbi_test.db</span>
-            <span class="badge badge-success">مدل کپچا: PyTorch CRNN (بدون ddddocr)</span>
+            <span class="badge badge-success">مدل کپچا: PyTorch CRNN محلی</span>
             <span class="badge badge-secondary" id="engineStateBadge">وضعیت: غیرفعال</span>
         </div>
     </header>
@@ -347,7 +444,7 @@
                     ⏹ توقف کامل
                 </button>
                 <button class="btn btn-outline" onclick="resetApplicants()">
-                    🔄 بازنشانی وضعیت متقاضیان تست
+                    🔄 بازنشانی وضعیت
                 </button>
             </div>
 
@@ -366,7 +463,15 @@
         <!-- Applicants Table Card -->
         <div class="card">
             <div class="card-header">
-                <h2>فهرست متقاضیان آزمایشی (cbi_test.db)</h2>
+                <h2>فهرست متقاضیان فعال در چرخه تست (cbi_test.db)</h2>
+                <div class="header-actions">
+                    <button class="btn btn-outline btn-sm" onclick="openImportModal()">
+                        📥 انتقال متقاضیان از دیتابیس اصلی
+                    </button>
+                    <button class="btn btn-primary btn-sm" onclick="openApplicantModal()">
+                        ➕ افزودن متقاضی جدید
+                    </button>
+                </div>
             </div>
             <div class="table-responsive">
                 <table>
@@ -380,11 +485,12 @@
                             <th>مجوز رزرو</th>
                             <th>ثبت نهایی خودکار</th>
                             <th>وضعیت جاری</th>
-                            <th>کد پیگیری / نتیجه</th>
+                            <th>نتیجه</th>
+                            <th>عملیات</th>
                         </tr>
                     </thead>
                     <tbody id="applicantsTableBody">
-                        <tr><td colspan="9" style="text-align:center;">در حال بارگذاری اطلاعات...</td></tr>
+                        <tr><td colspan="10" style="text-align:center;">در حال بارگذاری اطلاعات...</td></tr>
                     </tbody>
                 </table>
             </div>
@@ -403,15 +509,131 @@
     </div>
 </div>
 
+<!-- Modal: Add / Edit Applicant -->
+<div class="modal-overlay" id="applicantModal">
+    <div class="modal-card">
+        <div class="modal-header">
+            <h3 id="modalTitle">ویرایش متقاضی</h3>
+            <button class="modal-close" onclick="closeApplicantModal()">&times;</button>
+        </div>
+        <form id="applicantForm" onsubmit="handleSaveApplicant(event)">
+            <div class="form-row">
+                <div class="form-group">
+                    <label>کد ملی (۱۰ رقم)*</label>
+                    <input type="text" class="form-control" id="modalNid" required maxlength="10">
+                </div>
+                <div class="form-group">
+                    <label>نام و نام خانوادگی*</label>
+                    <input type="text" class="form-control" id="modalFullName" required>
+                </div>
+            </div>
+
+            <div class="form-row">
+                <div class="form-group">
+                    <label>استان</label>
+                    <input type="text" class="form-control" id="modalState" placeholder="مثال: سیستان و بلوچستان یا لرستان">
+                </div>
+                <div class="form-group">
+                    <label>شهر</label>
+                    <input type="text" class="form-control" id="modalCity" placeholder="مثال: مهرستان یا ازنا">
+                </div>
+            </div>
+
+            <div class="form-group">
+                <label>بانک‌های اولویت‌دار (با ویرگول جدا کنید)</label>
+                <input type="text" class="form-control" id="modalBanks" placeholder="مثال: صادرات، تجارت، ملی">
+            </div>
+
+            <div class="form-row">
+                <div class="form-group">
+                    <label>روش مراجعه</label>
+                    <select class="form-control" id="modalMode">
+                        <option value="online">غیرحضوری (آنلاین)</option>
+                        <option value="in_person">حضوری (شعبه)</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label>شعبه ترجیحی (اختیاری)</label>
+                    <input type="text" class="form-control" id="modalBranch" placeholder="مثال: مرکزی یا کد شعبه">
+                </div>
+            </div>
+
+            <div class="form-row" style="margin-top: 8px;">
+                <div class="form-group" style="display:flex; align-items:center; gap:8px;">
+                    <input type="checkbox" id="modalAllowReserve" checked>
+                    <label for="modalAllowReserve" style="margin:0; cursor:pointer;">اجازه ثبت ظرفیت رزرو</label>
+                </div>
+                <div class="form-group" style="display:flex; align-items:center; gap:8px;">
+                    <input type="checkbox" id="modalAutoSubmit">
+                    <label for="modalAutoSubmit" style="margin:0; cursor:pointer;">ثبت نهایی خودکار بدون تأیید</label>
+                </div>
+            </div>
+
+            <div class="modal-footer">
+                <button type="button" class="btn btn-outline" onclick="closeApplicantModal()">انصراف</button>
+                <button type="submit" class="btn btn-primary">💾 ذخیره تغییرات</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<!-- Modal: Import from Main DB -->
+<div class="modal-overlay" id="importModal">
+    <div class="modal-card" style="max-width: 750px;">
+        <div class="modal-header">
+            <h3>انتقال متقاضیان واقعی از دیتابیس اصلی (cbi_ultimate.db)</h3>
+            <button class="modal-close" onclick="closeImportModal()">&times;</button>
+        </div>
+        <p style="color:var(--text-muted); margin-bottom:12px;">
+            متقاضیان مورد نظر را برای تست اسکریپت انتخاب کنید. اطلاعات به دیتابیس آزمایشی (cbi_test.db) کپی می‌شوند و دیتابیس اصلی کاملاً بدون تغییر می‌ماند.
+        </p>
+        <div style="margin-bottom: 12px; display:flex; justify-content:space-between; align-items:center;">
+            <div>
+                <button type="button" class="btn btn-outline btn-sm" onclick="toggleSelectAllImport(true)">انتخاب همه</button>
+                <button type="button" class="btn btn-outline btn-sm" onclick="toggleSelectAllImport(false)">لغو همه</button>
+            </div>
+            <div>
+                <label style="cursor:pointer; display:flex; align-items:center; gap:6px;">
+                    <input type="checkbox" id="importReplaceCheckbox">
+                    <span>جایگزینی کامل (پاک کردن متقاضیان فعلی تست)</span>
+                </label>
+            </div>
+        </div>
+        <div class="table-responsive" style="max-height: 350px; overflow-y:auto; border: 1px solid var(--border-color); border-radius:6px;">
+            <table>
+                <thead>
+                    <tr>
+                        <th style="width:40px;">انتخاب</th>
+                        <th>نام متقاضی</th>
+                        <th>کد ملی</th>
+                        <th>استان و شهر</th>
+                        <th>بانک‌های اولویت‌دار</th>
+                    </tr>
+                </thead>
+                <tbody id="mainDbApplicantsBody">
+                    <tr><td colspan="5" style="text-align:center;">در حال خواندن دیتابیس اصلی...</td></tr>
+                </tbody>
+            </table>
+        </div>
+        <div class="modal-footer">
+            <button type="button" class="btn btn-outline" onclick="closeImportModal()">انصراف</button>
+            <button type="button" class="btn btn-success" onclick="executeImportFromMain()">📥 تأیید و انتقال به دیتابیس تست</button>
+        </div>
+    </div>
+</div>
+
 <script>
     let isRunning = false;
     let isPaused = false;
+    let currentApplicants = [];
+    let mainDbApplicants = [];
 
     async function fetchApplicants() {
         try {
             const res = await fetch('/api/unified/applicants');
             const data = await res.json();
             if (data.success && data.applicants) {
+                currentApplicants = data.applicants;
                 renderApplicants(data.applicants);
             }
         } catch (e) {
@@ -434,7 +656,7 @@
     function renderApplicants(applicants) {
         const tbody = document.getElementById('applicantsTableBody');
         if (!applicants || applicants.length === 0) {
-            tbody.innerHTML = '<tr><td colspan="9" style="text-align:center;">هیچ متقاضی در دیتابیس ثبت نشده است.</td></tr>';
+            tbody.innerHTML = '<tr><td colspan="10" style="text-align:center;">هیچ متقاضی در دیتابیس ثبت نشده است. از دکمه‌های بالا برای افزودن یا انتقال استفاده کنید.</td></tr>';
             return;
         }
 
@@ -451,13 +673,14 @@
             else if (app.status === 'در حال بررسی') statusBadge = 'badge-info';
 
             const tracking = app.tracking_code || app.last_result || '—';
+            const banksStr = (app.priority_banks || []).join('، ') || '—';
 
             return `
                 <tr>
                     <td><strong>${app.full_name}</strong></td>
                     <td><code>${app.national_id}</code></td>
-                    <td>${app.state} - ${app.city}</td>
-                    <td>${(app.priority_banks || []).join('، ')}</td>
+                    <td>${app.state || '—'} - ${app.city || '—'}</td>
+                    <td>${banksStr}</td>
                     <td>${modeText}</td>
                     <td>${isAllowReserve ? '✅ بله' : '❌ خیر'}</td>
                     <td>
@@ -468,6 +691,13 @@
                     </td>
                     <td><span class="badge ${statusBadge}">${app.status}</span></td>
                     <td><code>${tracking}</code></td>
+                    <td>
+                        <div style="display:flex; gap:4px;">
+                            <button class="btn btn-outline btn-sm" title="اجرای اختصاصی این متقاضی" onclick="startEngine('${app.national_id}')">▶</button>
+                            <button class="btn btn-outline btn-sm" title="ویرایش" onclick="editApplicant('${app.national_id}')">✏️</button>
+                            <button class="btn btn-outline btn-sm" style="color:var(--danger);" title="حذف" onclick="deleteApplicant('${app.national_id}', '${app.full_name}')">🗑</button>
+                        </div>
+                    </td>
                 </tr>
             `;
         }).join('');
@@ -527,9 +757,172 @@
         }
     }
 
-    async function startEngine() {
+    // Modal Handling
+    function openApplicantModal(app = null) {
+        document.getElementById('modalTitle').textContent = app ? 'ویرایش متقاضی' : 'افزودن متقاضی جدید';
+        document.getElementById('modalNid').value = app ? app.national_id : '';
+        document.getElementById('modalNid').disabled = Boolean(app);
+        document.getElementById('modalFullName').value = app ? app.full_name : '';
+        document.getElementById('modalState').value = app ? (app.state || '') : '';
+        document.getElementById('modalCity').value = app ? (app.city || '') : '';
+        document.getElementById('modalBanks').value = app ? ((app.priority_banks || []).join('، ')) : '';
+        document.getElementById('modalMode').value = app ? (app.bank_mode || 'online') : 'online';
+        document.getElementById('modalBranch').value = app ? (app.preferred_branch || '') : '';
+        document.getElementById('modalAllowReserve').checked = app ? Boolean(app.allow_reserve) : true;
+        document.getElementById('modalAutoSubmit').checked = app ? Boolean(app.auto_final_submit) : false;
+
+        document.getElementById('applicantModal').style.display = 'flex';
+    }
+
+    function closeApplicantModal() {
+        document.getElementById('applicantModal').style.display = 'none';
+    }
+
+    function editApplicant(nid) {
+        const app = currentApplicants.find(a => a.national_id === nid);
+        if (app) openApplicantModal(app);
+    }
+
+    async function handleSaveApplicant(e) {
+        e.preventDefault();
+        const banksInput = document.getElementById('modalBanks').value;
+        const banks = banksInput.split(/[,،]+/).map(b => b.trim()).filter(Boolean);
+
+        const payload = {
+            national_id: document.getElementById('modalNid').value.trim(),
+            full_name: document.getElementById('modalFullName').value.trim(),
+            state: document.getElementById('modalState').value.trim(),
+            city: document.getElementById('modalCity').value.trim(),
+            priority_banks: banks,
+            bank_mode: document.getElementById('modalMode').value,
+            preferred_branch: document.getElementById('modalBranch').value.trim(),
+            allow_reserve: document.getElementById('modalAllowReserve').checked,
+            auto_final_submit: document.getElementById('modalAutoSubmit').checked,
+            status: 'در انتظار'
+        };
+
         try {
-            await fetch('/api/unified/start', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({}) });
+            const res = await fetch('/api/unified/applicant/save', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            });
+            const data = await res.json();
+            if (data.success) {
+                closeApplicantModal();
+                fetchApplicants();
+            } else {
+                alert('خطا در ذخیره: ' + (data.error || 'ناشناخته'));
+            }
+        } catch (err) {
+            alert('خطای ارتباط با سرور: ' + err);
+        }
+    }
+
+    async function deleteApplicant(nid, name) {
+        if (!confirm(`آیا از حذف متقاضی ${name} (${nid}) از دیتابیس تست مطمئن هستید؟`)) return;
+        try {
+            const res = await fetch(`/api/unified/applicant/${nid}`, { method: 'DELETE' });
+            const data = await res.json();
+            if (data.success) {
+                fetchApplicants();
+            } else {
+                alert('خطا در حذف: ' + data.error);
+            }
+        } catch (err) {
+            alert('خطا در حذف: ' + err);
+        }
+    }
+
+    // Import from Main DB
+    async function openImportModal() {
+        document.getElementById('importModal').style.display = 'flex';
+        const tbody = document.getElementById('mainDbApplicantsBody');
+        tbody.innerHTML = '<tr><td colspan="5" style="text-align:center;">در حال خواندن دیتابیس اصلی (cbi_ultimate.db)...</td></tr>';
+
+        try {
+            const res = await fetch('/api/unified/main-db-applicants');
+            const data = await res.json();
+            if (data.success && data.applicants) {
+                mainDbApplicants = data.applicants;
+                renderMainDbApplicants(data.applicants);
+            } else {
+                tbody.innerHTML = '<tr><td colspan="5" style="text-align:center; color:red;">خطا در خواندن دیتابیس اصلی: ' + (data.error || '') + '</td></tr>';
+            }
+        } catch (e) {
+            tbody.innerHTML = '<tr><td colspan="5" style="text-align:center; color:red;">خطای ارتباط با سرور: ' + e + '</td></tr>';
+        }
+    }
+
+    function closeImportModal() {
+        document.getElementById('importModal').style.display = 'none';
+    }
+
+    function renderMainDbApplicants(applicants) {
+        const tbody = document.getElementById('mainDbApplicantsBody');
+        if (!applicants || applicants.length === 0) {
+            tbody.innerHTML = '<tr><td colspan="5" style="text-align:center;">متقاضی در دیتابیس اصلی یافت نشد.</td></tr>';
+            return;
+        }
+
+        tbody.innerHTML = applicants.map((a, idx) => {
+            const banksStr = (a.priority_banks || []).join('، ') || '—';
+            return `
+                <tr>
+                    <td style="text-align:center;">
+                        <input type="checkbox" class="import-checkbox" value="${a.national_id}" checked>
+                    </td>
+                    <td><strong>${a.full_name}</strong></td>
+                    <td><code>${a.national_id}</code></td>
+                    <td>${a.state || '—'} - ${a.city || '—'}</td>
+                    <td>${banksStr}</td>
+                </tr>
+            `;
+        }).join('');
+    }
+
+    function toggleSelectAllImport(selectAll) {
+        const checkboxes = document.querySelectorAll('.import-checkbox');
+        checkboxes.forEach(cb => cb.checked = selectAll);
+    }
+
+    async function executeImportFromMain() {
+        const checkboxes = document.querySelectorAll('.import-checkbox:checked');
+        const selectedNids = Array.from(checkboxes).map(cb => cb.value);
+        if (selectedNids.length === 0) {
+            alert('حداقل یک متقاضی را برای انتقال انتخاب کنید.');
+            return;
+        }
+
+        const replace = document.getElementById('importReplaceCheckbox').checked;
+
+        try {
+            const res = await fetch('/api/unified/import-from-main', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ national_ids: selectedNids, replace: replace })
+            });
+            const data = await res.json();
+            if (data.success) {
+                alert(`✅ ${data.message}`);
+                closeImportModal();
+                fetchApplicants();
+            } else {
+                alert('خطا در انتقال: ' + data.error);
+            }
+        } catch (err) {
+            alert('خطا در ارتباط با سرور: ' + err);
+        }
+    }
+
+    // Engine Controls
+    async function startEngine(specificNid = null) {
+        try {
+            await fetch('/api/unified/start', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(specificNid ? { national_id: specificNid } : {})
+            });
             fetchStatus();
         } catch (e) {
             alert('خطا در شروع موتور: ' + e);
