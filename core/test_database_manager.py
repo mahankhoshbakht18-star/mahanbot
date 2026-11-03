@@ -418,6 +418,22 @@ class TestDatabaseManager:
             conn.execute("DELETE FROM applicants WHERE national_id = ?", (national_id,))
         return True
 
+    def batch_delete_applicants(self, national_ids: List[str]) -> int:
+        """Batch delete applicants from cbi_test.db."""
+        if not national_ids:
+            return 0
+        with self.connect() as conn:
+            placeholders = ",".join("?" for _ in national_ids)
+            cur = conn.execute(f"DELETE FROM applicants WHERE national_id IN ({placeholders})", tuple(national_ids))
+            return cur.rowcount
+
+    def clear_all_test_applicants(self) -> int:
+        """Clear all applicants from cbi_test.db."""
+        with self.connect() as conn:
+            cur = conn.execute("DELETE FROM applicants")
+            return cur.rowcount
+
+
     def get_available_main_db_applicants(self) -> List[Dict[str, Any]]:
         """Read available applicants from cbi_ultimate.db (read-only mode)."""
         main_db_path = os.path.join(os.path.dirname(self.db_path), "cbi_ultimate.db")

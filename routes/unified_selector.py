@@ -66,6 +66,12 @@ class ImportMainRequest(BaseModel):
     replace: Optional[bool] = False
 
 
+class BatchDeleteRequest(BaseModel):
+    national_ids: Optional[List[str]] = []
+    clear_all: Optional[bool] = False
+
+
+
 @router.get("/unified-selector")
 async def get_unified_selector_page():
     """Serve the minimal unified bank selector HTML page."""
@@ -147,6 +153,32 @@ async def delete_applicant(national_id: str):
         return JSONResponse({"success": True, "message": f"متقاضی {national_id} حذف شد."})
     except Exception as e:
         return JSONResponse({"success": False, "error": str(e)}, status_code=400)
+
+
+@router.post("/api/unified/applicants/batch-delete")
+async def batch_delete_applicants(req: BatchDeleteRequest):
+    """Delete selected applicants or clear all applicants from cbi_test.db."""
+    db = get_db()
+    try:
+        if req.clear_all:
+            deleted_count = db.clear_all_test_applicants()
+            return JSONResponse({
+                "success": True,
+                "message": f"تمامی {deleted_count} متقاضی از دیتابیس تست حذف شدند.",
+                "deleted_count": deleted_count,
+            })
+        elif req.national_ids:
+            deleted_count = db.batch_delete_applicants(req.national_ids)
+            return JSONResponse({
+                "success": True,
+                "message": f"تعداد {deleted_count} متقاضی انتخاب‌شده حذف شدند.",
+                "deleted_count": deleted_count,
+            })
+        else:
+            return JSONResponse({"success": False, "error": "هیچ متقاضی مشخص نشده است."}, status_code=400)
+    except Exception as e:
+        return JSONResponse({"success": False, "error": str(e)}, status_code=400)
+
 
 
 @router.get("/api/unified/status")

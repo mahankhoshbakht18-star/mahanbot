@@ -14,6 +14,7 @@
             --success-hover: #059669;
             --warning: #f59e0b;
             --danger: #ef4444;
+            --danger-hover: #dc2626;
             --text-main: #1e293b;
             --text-muted: #64748b;
             --border-color: #e2e8f0;
@@ -29,13 +30,13 @@
         body {
             background-color: var(--bg-color);
             color: var(--text-main);
-            padding: 24px;
+            padding: 20px;
             font-size: 13px;
             line-height: 1.5;
         }
 
         .container {
-            max-width: 1280px;
+            max-width: 1300px;
             margin: 0 auto;
         }
 
@@ -44,15 +45,15 @@
             justify-content: space-between;
             align-items: center;
             background: var(--card-bg);
-            padding: 16px 24px;
+            padding: 14px 20px;
             border-radius: 12px;
             border: 1px solid var(--border-color);
-            margin-bottom: 20px;
+            margin-bottom: 18px;
             box-shadow: 0 1px 3px rgba(0,0,0,0.05);
         }
 
         .header-title h1 {
-            font-size: 17px;
+            font-size: 16.5px;
             font-weight: 700;
             color: var(--text-main);
             display: flex;
@@ -82,14 +83,14 @@
         .dashboard-grid {
             display: grid;
             grid-template-columns: 1fr;
-            gap: 20px;
+            gap: 18px;
         }
 
         .card {
             background: var(--card-bg);
             border-radius: 12px;
             border: 1px solid var(--border-color);
-            padding: 20px;
+            padding: 18px 20px;
             box-shadow: 0 1px 3px rgba(0,0,0,0.05);
         }
 
@@ -97,27 +98,58 @@
             display: flex;
             justify-content: space-between;
             align-items: center;
-            margin-bottom: 16px;
-            padding-bottom: 12px;
+            margin-bottom: 14px;
+            padding-bottom: 10px;
             border-bottom: 1px solid var(--border-color);
         }
 
         .card-header h2 {
-            font-size: 15px;
+            font-size: 14.5px;
             font-weight: 700;
         }
 
         .header-actions {
             display: flex;
             gap: 8px;
+            align-items: center;
         }
 
         /* Controls */
         .controls-bar {
             display: flex;
             flex-wrap: wrap;
-            gap: 10px;
+            gap: 12px;
             align-items: center;
+            background: #f8fafc;
+            padding: 12px 16px;
+            border-radius: 9px;
+            border: 1px solid var(--border-color);
+        }
+
+        .applicant-selector-box {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            flex: 1;
+            min-width: 300px;
+        }
+
+        .applicant-selector-box label {
+            font-weight: 700;
+            white-space: nowrap;
+            color: var(--text-main);
+        }
+
+        .applicant-select {
+            width: 100%;
+            padding: 8px 12px;
+            border-radius: 8px;
+            border: 1.5px solid var(--primary);
+            background: #fff;
+            font-size: 13px;
+            font-weight: 600;
+            color: var(--text-main);
+            outline: none;
         }
 
         .btn {
@@ -125,13 +157,14 @@
             align-items: center;
             justify-content: center;
             gap: 6px;
-            padding: 7px 14px;
+            padding: 8px 15px;
             font-size: 12.5px;
             font-weight: 600;
             border-radius: 7px;
             border: none;
             cursor: pointer;
             transition: all 0.15s ease;
+            white-space: nowrap;
         }
 
         .btn:disabled {
@@ -153,6 +186,7 @@
 
         .btn-warning { background: var(--warning); color: #fff; }
         .btn-danger { background: var(--danger); color: #fff; }
+        .btn-danger:hover:not(:disabled) { background: var(--danger-hover); }
 
         .btn-outline {
             background: transparent;
@@ -160,7 +194,16 @@
             color: var(--text-main);
         }
         .btn-outline:hover:not(:disabled) {
-            background: #f8fafc;
+            background: #f1f5f9;
+        }
+
+        .btn-outline-danger {
+            background: transparent;
+            border: 1px solid var(--danger);
+            color: var(--danger);
+        }
+        .btn-outline-danger:hover:not(:disabled) {
+            background: #fee2e2;
         }
 
         .btn-start-big {
@@ -168,7 +211,7 @@
             font-size: 13.5px;
             background: #0284c7;
             color: white;
-            box-shadow: 0 2px 4px rgba(2, 132, 199, 0.2);
+            box-shadow: 0 2px 4px rgba(2, 132, 199, 0.25);
         }
         .btn-start-big:hover:not(:disabled) {
             background: #0369a1;
@@ -192,10 +235,10 @@
             align-items: center;
             gap: 16px;
             padding: 10px 14px;
-            background: #f8fafc;
+            background: #fff;
             border-radius: 8px;
             border: 1px solid var(--border-color);
-            margin-top: 14px;
+            margin-top: 12px;
         }
 
         .status-item {
@@ -241,7 +284,11 @@
         }
 
         tr:hover {
-            background-color: #fafbfc;
+            background-color: #f8fafc;
+        }
+
+        tr.row-selected {
+            background-color: #e0f2fe !important;
         }
 
         /* Toggle switch */
@@ -333,31 +380,31 @@
             background: white;
             border-radius: 12px;
             width: 100%;
-            max-width: 600px;
+            max-width: 620px;
             max-height: 90vh;
             overflow-y: auto;
             box-shadow: 0 10px 25px rgba(0,0,0,0.2);
-            padding: 24px;
+            padding: 22px;
         }
 
         .modal-header {
             display: flex;
             justify-content: space-between;
             align-items: center;
-            margin-bottom: 20px;
+            margin-bottom: 18px;
             padding-bottom: 12px;
             border-bottom: 1px solid var(--border-color);
         }
 
         .modal-header h3 {
-            font-size: 16px;
+            font-size: 15px;
             font-weight: 700;
         }
 
         .modal-close {
             background: none;
             border: none;
-            font-size: 20px;
+            font-size: 22px;
             cursor: pointer;
             color: var(--text-muted);
         }
@@ -402,6 +449,14 @@
             padding-top: 14px;
             border-top: 1px solid var(--border-color);
         }
+
+        .table-toolbar {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 10px;
+            gap: 10px;
+        }
     </style>
 </head>
 <body>
@@ -412,7 +467,7 @@
             <h1>⚡ سامانه یکپارچه انتخاب بانک وام ازدواج (MAHANBOT Unified)</h1>
         </div>
         <div class="header-badges">
-            <span class="badge badge-info">دیتابیس: cbi_test.db</span>
+            <span class="badge badge-info" id="applicantCountBadge">تعداد متقاضیان: ۰</span>
             <span class="badge badge-success">مدل کپچا: PyTorch CRNN محلی</span>
             <span class="badge badge-secondary" id="engineStateBadge">وضعیت: غیرفعال</span>
         </div>
@@ -430,9 +485,17 @@
                 </div>
             </div>
 
+            <!-- Controls Bar with Target Applicant Selector -->
             <div class="controls-bar">
-                <button class="btn btn-start-big" id="btnStart" onclick="startEngine()">
-                    ▶ شروع چرخه انتخاب بانک
+                <div class="applicant-selector-box">
+                    <label for="targetApplicantSelect">متقاضی هدف:</label>
+                    <select id="targetApplicantSelect" class="applicant-select" onchange="onApplicantSelectChange()">
+                        <option value="">-- انتخاب متقاضی برای شروع --</option>
+                    </select>
+                </div>
+
+                <button class="btn btn-start-big" id="btnStart" onclick="startEngineWithSelected()">
+                    ▶ شروع برای متقاضی انتخابی
                 </button>
                 <button class="btn btn-warning" id="btnPause" onclick="pauseEngine()" disabled>
                     ⏸ توقف موقت (Pause)
@@ -454,8 +517,12 @@
                     <strong id="currentStepText">آماده شروع</strong>
                 </div>
                 <div class="status-item">
-                    <span class="status-label">متقاضی فعال:</span>
+                    <span class="status-label">متقاضی در حال پردازش:</span>
                     <strong id="activeApplicantText">—</strong>
+                </div>
+                <div class="status-item" style="margin-right:auto;">
+                    <span class="status-label">هدف انتخابی شما:</span>
+                    <strong id="targetSummaryText" style="color:var(--primary);">همه متقاضیان (پیش‌فرض)</strong>
                 </div>
             </div>
         </div>
@@ -473,24 +540,45 @@
                     </button>
                 </div>
             </div>
+
+            <!-- Table Toolbar for Selection & Batch Delete -->
+            <div class="table-toolbar">
+                <div style="display:flex; align-items:center; gap:8px;">
+                    <button class="btn btn-outline-danger btn-sm" onclick="deleteSelectedApplicants()">
+                        🗑 حذف موارد انتخاب‌شده
+                    </button>
+                    <button class="btn btn-outline btn-sm" onclick="clearAllApplicants()">
+                        🧹 پاکسازی کل لیست تست
+                    </button>
+                    <span id="selectedCountText" style="color:var(--text-muted); font-size:12px;">(۰ مورد انتخاب شده)</span>
+                </div>
+                <div style="color:var(--text-muted); font-size:12px;">
+                    💡 با کلیک روی هر سطر، آن متقاضی به عنوان متقاضی هدف انتخاب می‌شود.
+                </div>
+            </div>
+
             <div class="table-responsive">
                 <table>
                     <thead>
                         <tr>
+                            <th style="width:36px; text-align:center;">
+                                <input type="checkbox" id="selectAllCheckbox" onchange="toggleSelectAllRows(this.checked)" title="انتخاب همه برای حذف">
+                            </th>
+                            <th style="width:40px; text-align:center;">هدف</th>
                             <th>نام و نام خانوادگی</th>
                             <th>کد ملی</th>
                             <th>استان و شهر</th>
                             <th>اولویت بانک‌ها</th>
                             <th>نوع مراجعه</th>
-                            <th>مجوز رزرو</th>
-                            <th>ثبت نهایی خودکار</th>
-                            <th>وضعیت جاری</th>
+                            <th>رزرو</th>
+                            <th>ثبت خودکار</th>
+                            <th>وضعیت</th>
                             <th>نتیجه</th>
-                            <th>عملیات</th>
+                            <th style="text-align:center;">عملیات</th>
                         </tr>
                     </thead>
                     <tbody id="applicantsTableBody">
-                        <tr><td colspan="10" style="text-align:center;">در حال بارگذاری اطلاعات...</td></tr>
+                        <tr><td colspan="12" style="text-align:center;">در حال بارگذاری اطلاعات...</td></tr>
                     </tbody>
                 </table>
             </div>
@@ -503,7 +591,7 @@
                 <span class="badge badge-secondary" id="logCountBadge">0 لاگ</span>
             </div>
             <div class="log-console" id="logConsole">
-                <div class="log-line"><span class="log-time">00:00:00</span> <span class="log-msg">سیستم آماده است. برای شروع کلیک کنید.</span></div>
+                <div class="log-line"><span class="log-time">00:00:00</span> <span class="log-msg">سیستم آماده است. متقاضی را انتخاب کرده و روی شروع کلیک کنید.</span></div>
             </div>
         </div>
     </div>
@@ -603,7 +691,7 @@
             <table>
                 <thead>
                     <tr>
-                        <th style="width:40px;">انتخاب</th>
+                        <th style="width:40px; text-align:center;">انتخاب</th>
                         <th>نام متقاضی</th>
                         <th>کد ملی</th>
                         <th>استان و شهر</th>
@@ -627,6 +715,7 @@
     let isPaused = false;
     let currentApplicants = [];
     let mainDbApplicants = [];
+    let selectedTargetNid = ""; // The single applicant to run
 
     async function fetchApplicants() {
         try {
@@ -635,6 +724,8 @@
             if (data.success && data.applicants) {
                 currentApplicants = data.applicants;
                 renderApplicants(data.applicants);
+                updateDropdownOptions(data.applicants);
+                document.getElementById('applicantCountBadge').textContent = `تعداد متقاضیان: ${data.applicants.length}`;
             }
         } catch (e) {
             console.error("Error fetching applicants:", e);
@@ -653,10 +744,62 @@
         }
     }
 
+    function updateDropdownOptions(applicants) {
+        const select = document.getElementById('targetApplicantSelect');
+        const prevVal = select.value;
+
+        let optionsHtml = '<option value="">-- همه متقاضیان (پردازش ترتیبی لیست) --</option>';
+        applicants.forEach(app => {
+            const isSelected = (app.national_id === selectedTargetNid) ? 'selected' : '';
+            const location = (app.state || app.city) ? ` (${app.state || ''} / ${app.city || ''})` : '';
+            optionsHtml += `<option value="${app.national_id}" ${isSelected}>👤 ${app.full_name} [${app.national_id}]${location}</option>`;
+        });
+
+        select.innerHTML = optionsHtml;
+        if (selectedTargetNid) {
+            select.value = selectedTargetNid;
+        } else if (prevVal && applicants.some(a => a.national_id === prevVal)) {
+            select.value = prevVal;
+            selectedTargetNid = prevVal;
+        }
+        updateTargetSummary();
+    }
+
+    function onApplicantSelectChange() {
+        selectedTargetNid = document.getElementById('targetApplicantSelect').value;
+        updateTargetSummary();
+        renderApplicants(currentApplicants);
+    }
+
+    function setTargetApplicant(nid) {
+        selectedTargetNid = nid;
+        const select = document.getElementById('targetApplicantSelect');
+        select.value = nid;
+        updateTargetSummary();
+        renderApplicants(currentApplicants);
+    }
+
+    function updateTargetSummary() {
+        const summaryText = document.getElementById('targetSummaryText');
+        const startBtn = document.getElementById('btnStart');
+
+        if (!selectedTargetNid) {
+            summaryText.textContent = "همه متقاضیان (پردازش ترتیبی)";
+            summaryText.style.color = "var(--text-muted)";
+            startBtn.textContent = "▶ شروع برای همه متقاضیان";
+        } else {
+            const app = currentApplicants.find(a => a.national_id === selectedTargetNid);
+            const name = app ? app.full_name : selectedTargetNid;
+            summaryText.textContent = `متقاضی هدف: ${name} (${selectedTargetNid})`;
+            summaryText.style.color = "var(--primary)";
+            startBtn.textContent = `▶ شروع فقط برای: ${name}`;
+        }
+    }
+
     function renderApplicants(applicants) {
         const tbody = document.getElementById('applicantsTableBody');
         if (!applicants || applicants.length === 0) {
-            tbody.innerHTML = '<tr><td colspan="10" style="text-align:center;">هیچ متقاضی در دیتابیس ثبت نشده است. از دکمه‌های بالا برای افزودن یا انتقال استفاده کنید.</td></tr>';
+            tbody.innerHTML = '<tr><td colspan="12" style="text-align:center;">هیچ متقاضی در دیتابیس ثبت نشده است. از دکمه «انتقال متقاضیان» یا «افزودن» استفاده کنید.</td></tr>';
             return;
         }
 
@@ -664,6 +807,7 @@
             const isAutoSubmit = Boolean(app.auto_final_submit);
             const isAllowReserve = Boolean(app.allow_reserve);
             const modeText = app.bank_mode === 'online' ? 'غیرحضوری (آنلاین)' : 'حضوری (شعبه)';
+            const isTarget = (app.national_id === selectedTargetNid);
             
             let statusBadge = 'badge-secondary';
             if (app.status === 'ثبت قطعی') statusBadge = 'badge-success';
@@ -676,13 +820,21 @@
             const banksStr = (app.priority_banks || []).join('، ') || '—';
 
             return `
-                <tr>
-                    <td><strong>${app.full_name}</strong></td>
+                <tr class="${isTarget ? 'row-selected' : ''}">
+                    <td style="text-align:center;">
+                        <input type="checkbox" class="row-select-checkbox" value="${app.national_id}" onchange="updateSelectedCount()">
+                    </td>
+                    <td style="text-align:center;">
+                        <input type="radio" name="targetRadio" ${isTarget ? 'checked' : ''} onchange="setTargetApplicant('${app.national_id}')" title="انتخاب به عنوان هدف">
+                    </td>
+                    <td onclick="setTargetApplicant('${app.national_id}')" style="cursor:pointer;">
+                        <strong>${app.full_name}</strong>
+                    </td>
                     <td><code>${app.national_id}</code></td>
                     <td>${app.state || '—'} - ${app.city || '—'}</td>
                     <td>${banksStr}</td>
                     <td>${modeText}</td>
-                    <td>${isAllowReserve ? '✅ بله' : '❌ خیر'}</td>
+                    <td>${isAllowReserve ? '✅' : '❌'}</td>
                     <td>
                         <label class="switch">
                             <input type="checkbox" ${isAutoSubmit ? 'checked' : ''} onchange="toggleAutoSubmit('${app.national_id}', this.checked)">
@@ -691,16 +843,33 @@
                     </td>
                     <td><span class="badge ${statusBadge}">${app.status}</span></td>
                     <td><code>${tracking}</code></td>
-                    <td>
-                        <div style="display:flex; gap:4px;">
-                            <button class="btn btn-outline btn-sm" title="اجرای اختصاصی این متقاضی" onclick="startEngine('${app.national_id}')">▶</button>
-                            <button class="btn btn-outline btn-sm" title="ویرایش" onclick="editApplicant('${app.national_id}')">✏️</button>
-                            <button class="btn btn-outline btn-sm" style="color:var(--danger);" title="حذف" onclick="deleteApplicant('${app.national_id}', '${app.full_name}')">🗑</button>
+                    <td style="text-align:center;">
+                        <div style="display:inline-flex; gap:4px;">
+                            <button class="btn btn-outline btn-sm" title="شروع چرخه فقط برای این متقاضی" onclick="startSingleApplicant('${app.national_id}', '${app.full_name}')">
+                                ▶ شروع
+                            </button>
+                            <button class="btn btn-outline btn-sm" title="ویرایش اطلاعات" onclick="editApplicant('${app.national_id}')">
+                                ✏️
+                            </button>
+                            <button class="btn btn-outline btn-sm" style="color:var(--danger);" title="حذف" onclick="deleteSingleApplicant('${app.national_id}', '${app.full_name}')">
+                                🗑
+                            </button>
                         </div>
                     </td>
                 </tr>
             `;
         }).join('');
+        updateSelectedCount();
+    }
+
+    function updateSelectedCount() {
+        const checked = document.querySelectorAll('.row-select-checkbox:checked').length;
+        document.getElementById('selectedCountText').textContent = `(${checked} مورد انتخاب شده)`;
+    }
+
+    function toggleSelectAllRows(selectAll) {
+        document.querySelectorAll('.row-select-checkbox').forEach(cb => cb.checked = selectAll);
+        updateSelectedCount();
     }
 
     function updateUI(status) {
@@ -754,6 +923,98 @@
             `).join('');
             consoleEl.scrollTop = consoleEl.scrollHeight;
             document.getElementById('logCountBadge').textContent = `${status.logs.length} لاگ`;
+        }
+    }
+
+    // Engine Launchers
+    async function startEngineWithSelected() {
+        const nid = selectedTargetNid || null;
+        await startEngine(nid);
+    }
+
+    async function startSingleApplicant(nid, name) {
+        setTargetApplicant(nid);
+        if (confirm(`آیا مایل به شروع چرخه انتخاب بانک فقط برای متقاضی «${name}» هستید؟`)) {
+            await startEngine(nid);
+        }
+    }
+
+    async function startEngine(specificNid = null) {
+        try {
+            const payload = specificNid ? { national_id: specificNid } : {};
+            const res = await fetch('/api/unified/start', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            });
+            const data = await res.json();
+            if (data.success) {
+                fetchStatus();
+            } else {
+                alert('خطا در شروع: ' + data.error);
+            }
+        } catch (e) {
+            alert('خطا در شروع موتور: ' + e);
+        }
+    }
+
+    async function pauseEngine() {
+        try {
+            await fetch('/api/unified/pause', { method: 'POST' });
+            fetchStatus();
+        } catch (e) {
+            alert('خطا در توقف موقت: ' + e);
+        }
+    }
+
+    async function resumeEngine() {
+        try {
+            await fetch('/api/unified/resume', { method: 'POST' });
+            fetchStatus();
+        } catch (e) {
+            alert('خطا در ادامه عملیات: ' + e);
+        }
+    }
+
+    async function stopEngine() {
+        try {
+            await fetch('/api/unified/stop', { method: 'POST' });
+            fetchStatus();
+        } catch (e) {
+            alert('خطا در توقف موتور: ' + e);
+        }
+    }
+
+    async function confirmManualSubmit() {
+        try {
+            await fetch('/api/unified/confirm-submit', { method: 'POST' });
+            fetchStatus();
+        } catch (e) {
+            alert('خطا در تأیید نهایی: ' + e);
+        }
+    }
+
+    async function toggleAutoSubmit(national_id, auto_final_submit) {
+        try {
+            await fetch('/api/unified/toggle-submit', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ national_id, auto_final_submit })
+            });
+            fetchApplicants();
+        } catch (e) {
+            console.error('Error toggling submit:', e);
+        }
+    }
+
+    async function resetApplicants() {
+        if (!confirm('آیا مایل به بازنشانی وضعیت متقاضیان آزمایشی هستید؟')) return;
+        try {
+            await fetch('/api/unified/reset-applicants', { method: 'POST' });
+            fetchApplicants();
+            fetchStatus();
+        } catch (e) {
+            alert('خطا در ریست: ' + e);
         }
     }
 
@@ -819,18 +1080,71 @@
         }
     }
 
-    async function deleteApplicant(nid, name) {
-        if (!confirm(`آیا از حذف متقاضی ${name} (${nid}) از دیتابیس تست مطمئن هستید؟`)) return;
+    // Deletion Handlers
+    async function deleteSingleApplicant(nid, name) {
+        if (!confirm(`آیا از حذف متقاضی «${name}» (${nid}) از دیتابیس تست مطمئن هستید؟`)) return;
         try {
             const res = await fetch(`/api/unified/applicant/${nid}`, { method: 'DELETE' });
             const data = await res.json();
             if (data.success) {
+                if (selectedTargetNid === nid) selectedTargetNid = "";
                 fetchApplicants();
             } else {
                 alert('خطا در حذف: ' + data.error);
             }
         } catch (err) {
             alert('خطا در حذف: ' + err);
+        }
+    }
+
+    async function deleteSelectedApplicants() {
+        const checked = document.querySelectorAll('.row-select-checkbox:checked');
+        const nids = Array.from(checked).map(cb => cb.value);
+        if (nids.length === 0) {
+            alert('لطفاً حداقل یک متقاضی را برای حذف انتخاب کنید.');
+            return;
+        }
+
+        if (!confirm(`آیا از حذف ${nids.length} متقاضی انتخاب‌شده مطمئن هستید؟`)) return;
+
+        try {
+            const res = await fetch('/api/unified/applicants/batch-delete', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ national_ids: nids })
+            });
+            const data = await res.json();
+            if (data.success) {
+                if (nids.includes(selectedTargetNid)) selectedTargetNid = "";
+                document.getElementById('selectAllCheckbox').checked = false;
+                fetchApplicants();
+            } else {
+                alert('خطا در حذف: ' + data.error);
+            }
+        } catch (err) {
+            alert('خطای ارتباط: ' + err);
+        }
+    }
+
+    async function clearAllApplicants() {
+        if (!confirm('⚠️ آیا از پاکسازی کامل تمامی متقاضیان دیتابیس تست مطمئن هستید؟ این عملیات قابل بازگشت نیست.')) return;
+
+        try {
+            const res = await fetch('/api/unified/applicants/batch-delete', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ clear_all: true })
+            });
+            const data = await res.json();
+            if (data.success) {
+                selectedTargetNid = "";
+                document.getElementById('selectAllCheckbox').checked = false;
+                fetchApplicants();
+            } else {
+                alert('خطا در پاکسازی: ' + data.error);
+            }
+        } catch (err) {
+            alert('خطای ارتباط: ' + err);
         }
     }
 
@@ -912,80 +1226,6 @@
             }
         } catch (err) {
             alert('خطا در ارتباط با سرور: ' + err);
-        }
-    }
-
-    // Engine Controls
-    async function startEngine(specificNid = null) {
-        try {
-            await fetch('/api/unified/start', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(specificNid ? { national_id: specificNid } : {})
-            });
-            fetchStatus();
-        } catch (e) {
-            alert('خطا در شروع موتور: ' + e);
-        }
-    }
-
-    async function pauseEngine() {
-        try {
-            await fetch('/api/unified/pause', { method: 'POST' });
-            fetchStatus();
-        } catch (e) {
-            alert('خطا در توقف موقت: ' + e);
-        }
-    }
-
-    async function resumeEngine() {
-        try {
-            await fetch('/api/unified/resume', { method: 'POST' });
-            fetchStatus();
-        } catch (e) {
-            alert('خطا در ادامه عملیات: ' + e);
-        }
-    }
-
-    async function stopEngine() {
-        try {
-            await fetch('/api/unified/stop', { method: 'POST' });
-            fetchStatus();
-        } catch (e) {
-            alert('خطا در توقف موتور: ' + e);
-        }
-    }
-
-    async function confirmManualSubmit() {
-        try {
-            await fetch('/api/unified/confirm-submit', { method: 'POST' });
-            fetchStatus();
-        } catch (e) {
-            alert('خطا در تأیید نهایی: ' + e);
-        }
-    }
-
-    async function toggleAutoSubmit(national_id, auto_final_submit) {
-        try {
-            await fetch('/api/unified/toggle-submit', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ national_id, auto_final_submit })
-            });
-            fetchApplicants();
-        } catch (e) {
-            console.error('Error toggling submit:', e);
-        }
-    }
-
-    async function resetApplicants() {
-        if (!confirm('آیا مایل به بازنشانی وضعیت متقاضیان آزمایشی هستید؟')) return;
-        try {
-            await fetch('/api/unified/reset-applicants', { method: 'POST' });
-            fetchApplicants();
-            fetchStatus();
-        } catch (e) {
-            alert('خطا در ریست: ' + e);
         }
     }
 
