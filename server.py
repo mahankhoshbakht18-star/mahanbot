@@ -5,6 +5,7 @@ server.py — Clean & Stable FastAPI Entry Point for MahanBot
 """
 
 import asyncio
+import hmac
 
 import logging
 
@@ -182,6 +183,14 @@ async def require_subscription_login(request: Request, call_next):
 
     path = request.url.path
 
+    otp_secret = os.getenv("MAHANBOT_OTP_SECRET") or os.getenv("MAHAN_OTP_SECRET")
+    internal_otp_clear = (
+        request.method == "POST"
+        and path.startswith("/otp/clear/")
+        and bool(otp_secret)
+        and hmac.compare_digest(request.headers.get("X-OTP-Secret", "").encode(), otp_secret.encode())
+    )
+
     public = (
 
         path == "/login" or 
@@ -199,6 +208,8 @@ async def require_subscription_login(request: Request, call_next):
         path == "/api/sms/webhook" or 
 
         path.startswith("/wait_otp/") or 
+
+        internal_otp_clear or 
 
         path == "/health" or path.startswith('/api/license/') or path == "/unified-selector" or path.startswith('/api/unified/')
 

@@ -3,7 +3,14 @@ import os
 import threading
 import time
 from pathlib import Path
-from typing import List, Optional, Tuple
+import io
+import os
+import re
+import threading
+import time
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
 from PIL import Image, ImageFilter, ImageOps, UnidentifiedImageError
@@ -546,9 +553,23 @@ def refresh_captcha_or_reload(
                 break
         else:
             image.click(timeout=1000)
-        answer = scope.locator(input_sel).first if input_sel else None
-        if answer is not None and answer.count() and answer.is_visible():
-            answer.fill('')
+        candidate_selectors = [
+            input_sel,
+            "input[name*='tbCaptcha']",
+            "#ctl00_ContentPlaceHolder1_tbCaptcha",
+            "#ctl00_ContentPlaceHolder1_tbCaptcha2",
+            "#ans"
+        ]
+        for csel in candidate_selectors:
+            if not csel:
+                continue
+            try:
+                ans_loc = scope.locator(csel)
+                if ans_loc.count() > 0 and ans_loc.first.is_visible():
+                    ans_loc.first.fill('')
+                    break
+            except Exception:
+                pass
         bot._last_dialog_action = None
         flags = getattr(bot, '_recovery_flags', {})
         if isinstance(flags, dict):
@@ -627,7 +648,7 @@ def wait_for_manual_captcha_handoff(
     btn_sel: str,
     stop_event,
     source: str = "general",
-    success_selectors=("#ctl00_ContentPlaceHolder1_tbMobileConfCode", "input[name$='tbMobileConfCode']", "#ctl00_ContentPlaceHolder1_ddlBankName"),
+    success_selectors=("#ctl00_ContentPlaceHolder1_tbMobileConfCode", "input[name$=\'tbMobileConfCode\']", "#ctl00_ContentPlaceHolder1_ddlBankName"),
     refresh_on_failure: bool = False,
 ) -> bool:
     """
@@ -656,6 +677,7 @@ def wait_for_manual_captcha_handoff(
     deadline = time.time() + timeout_sec
     last_model_try_ts = 0.0
     last_img_src = None
+    cur_src = None
 
     while time.time() < deadline:
         if stop_event is not None and stop_event.is_set():
@@ -674,7 +696,7 @@ def wait_for_manual_captcha_handoff(
                 continue
 
         now = time.time()
-        if now - last_model_try_ts >= 2.0:
+        if (cur_src != last_img_src) or (now - last_model_try_ts >= 1.0):
             last_model_try_ts = now
             try:
                 img_loc, _ = wait_for_captcha_image_ready(page, timeout_ms=600, trigger_refresh_if_missing=True)
@@ -720,7 +742,7 @@ def wait_for_manual_captcha_handoff(
 
 def solve_captcha_wrapper(bot, page, input_sel, btn_sel, mode):
     stop_event = getattr(bot, "_active_stop_event", None)
-    max_retries = max(1, int(bot.settings.get("captcha_max_retries", 5)))
+    max_retries = max(1, int(bot.settings.get("captcha_max_retries", 10)))
     attempts = 0
     try:
         while attempts < max_retries:
@@ -762,7 +784,7 @@ def solve_captcha_wrapper(bot, page, input_sel, btn_sel, mode):
                 DBHandler.append_captcha_attempt(bot.nid, code, "failed", source="select")
             refresh_captcha_or_reload(bot, page, input_sel=input_sel, allow_reload=False)
 
-        if bool(bot.settings.get("pause_for_manual_captcha", True)):
+        if bool(bot.settings.get("pause_for_manual_captcha", False)):
             return wait_for_manual_captcha_handoff(bot, page, input_sel, btn_sel, stop_event, source="wrapper")
         return False
     except Exception:
@@ -783,3 +805,353 @@ def solve_captcha_step(bot, page, input_sel: str, btn_sel: str, source: str = "g
         source=source,
         captcha_element=img_loc,
     )
+
+
+@dataclass
+class CaptchaResult:
+    success: bool
+    code: str = ""
+    attempts_used: int = 0
+    error_reason: Optional[str] = None
+
+
+def solve_step_captcha(
+    page,
+    step_name: str,
+    force_refresh: bool = False,
+    max_attempts: int = 10,
+    bot: Any = None,
+    stop_event: Any = None,
+) -> CaptchaResult:
+    """
+    Unified Deterministic CAPTCHA Solver for both Step 1 and Step 2.
+    Ensures complete image rendering (img.complete && img.naturalWidth > 0) before taking
+    screenshots, captures image bytes, invokes the local CRNN model, validates alphanumeric format,
+    retries automatically on empty/invalid predictions, fills the field, and verifies insertion.
+    Emits the exact 6-step lifecycle events:
+      1. CAPTCHA_ELEMENT_SEARCH
+      2. CAPTCHA_IMAGE_FOUND
+      3. CAPTCHA_INPUT_FOUND
+      4. CAPTCHA_RECOGNITION_STARTED
+      5. CAPTCHA_RECOGNITION_RESULT
+      6. CAPTCHA_FILLED
+    """
+    norm_step = str(step_name or "").upper()
+    is_step_1 = "1" in norm_step or "ENTRY" in norm_step
+    step_key = "STEP_1_ENTRY_FORM" if is_step_1 else "STEP_2_OTP"
+    step_fa = "مرحله ۱" if is_step_1 else "مرحله پیامک"
+
+    if is_step_1:
+        img_selectors = [
+            "#ctl00_ContentPlaceHolder1_imgCaptcha",
+            "img.BDC_CaptchaImage",
+            "img[id*='CaptchaImage' i]",
+            "img[src*='BotDetectCaptcha'][src*='get=image']",
+        ]
+        input_selectors = [
+            "#ctl00_ContentPlaceHolder1_tbCaptcha",
+            "#ctl00_ContentPlaceHolder1_tbCaptcha1",
+            "input[name$='tbCaptcha']",
+            "input[name$='tbCaptcha1']",
+            "input[id*='tbCaptcha']",
+        ]
+        reload_selectors = [
+            "#ctl00_ContentPlaceHolder1_imgCaptcha_ReloadLink",
+            ".BDC_ReloadLink",
+            "a[id*='ReloadLink' i]",
+            "img[id*='ReloadIcon' i]",
+            "a[title*='تغییر' i]",
+        ]
+    else:
+        img_selectors = [
+            "#ctl00_ContentPlaceHolder1_imgCaptcha2",
+            "img[id*='captcha2' i][id*='CaptchaImage' i]",
+            "img[id*='CaptchaImage' i]",
+            "img[src*='captcha2']",
+            "img.BDC_CaptchaImage",
+            "img[src*='BotDetectCaptcha'][src*='get=image']",
+        ]
+        input_selectors = [
+            "#ctl00_ContentPlaceHolder1_tbCaptcha2",
+            "input[name$='tbCaptcha2']",
+            "input[id*='tbCaptcha2']",
+            "#ctl00_ContentPlaceHolder1_tbCaptcha",
+            "input[name$='tbCaptcha']",
+        ]
+        reload_selectors = [
+            "a[id*='captcha2' i][id*='ReloadLink' i]",
+            ".BDC_ReloadLink",
+            "a[id*='ReloadLink' i]",
+            "img[id*='ReloadIcon' i]",
+            "a[title*='تغییر' i]",
+        ]
+
+    def _emit(event_type: str, **kwargs):
+        if bot is not None and hasattr(bot, "emit_event"):
+            bot.emit_event(event_type, step=step_key, page=page, **kwargs)
+
+    if bot is not None and hasattr(bot, "settings") and bot.settings.get('pause_for_manual_captcha', False):
+        _emit(
+            "CAPTCHA_MANUAL_REQUIRED",
+            reason="settings_pause_for_manual",
+            message="ورود دستی کپچا فعال است؛ منتظر اقدام کاربر.",
+            level="warning",
+        )
+        if hasattr(bot, "nid"):
+            DBHandler.update_runtime(bot.nid, otp_state='CAPTCHA_REQUIRED')
+        return CaptchaResult(success=False, error_reason="manual_required")
+
+    min_length = int(bot.settings.get("captcha_min_length", 4)) if (bot and hasattr(bot, "settings")) else 4
+    max_length = int(bot.settings.get("captcha_max_length", 12)) if (bot and hasattr(bot, "settings")) else 12
+
+    for attempt in range(1, max_attempts + 1):
+        if stop_event is not None and stop_event.is_set():
+            return CaptchaResult(success=False, attempts_used=attempt - 1, error_reason="stopped")
+
+        _emit("CAPTCHA_ELEMENT_SEARCH", message=f"در حال جستجوی المان‌های کپچای {step_fa}...")
+
+        image_elem = None
+        input_elem = None
+        reload_elem = None
+
+        # For Step 2, use _locate_otp_captcha_controls if available
+        if not is_step_1:
+            try:
+                from bot_select_otp import _locate_otp_captcha_controls
+                c_img, c_inp, _ = _locate_otp_captcha_controls(page, wait_ms=1000)
+                if c_img is not None:
+                    image_elem = c_img
+                if c_inp is not None:
+                    input_elem = c_inp
+            except Exception:
+                pass
+
+        # If not found via helper, iterate scopes
+        for scope in iter_page_scopes(page):
+            if input_elem is None:
+                for sel in input_selectors:
+                    try:
+                        loc = scope.locator(sel)
+                        cnt = loc.count() if hasattr(loc, "count") else (1 if loc else 0)
+                        if cnt > 0:
+                            cand = loc.first if hasattr(loc, "first") else loc
+                            if cand.is_visible():
+                                input_elem = cand
+                                break
+                    except Exception:
+                        continue
+
+            if image_elem is None:
+                for sel in img_selectors:
+                    try:
+                        loc = scope.locator(sel)
+                        cnt = loc.count() if hasattr(loc, "count") else (1 if loc else 0)
+                        if cnt > 0:
+                            cand = loc.first if hasattr(loc, "first") else loc
+                            try:
+                                src = (cand.evaluate("el => el.getAttribute('src') || ''") or "").lower()
+                                if any(x in src for x in ("sound", "reload", "icon", "help")):
+                                    continue
+                            except Exception:
+                                pass
+                            if cand.is_visible():
+                                image_elem = cand
+                                break
+                    except Exception:
+                        continue
+
+            if reload_elem is None:
+                for sel in reload_selectors:
+                    try:
+                        loc = scope.locator(sel)
+                        cnt = loc.count() if hasattr(loc, "count") else (1 if loc else 0)
+                        if cnt > 0:
+                            cand = loc.first if hasattr(loc, "first") else loc
+                            if cand.is_visible():
+                                reload_elem = cand
+                                break
+                    except Exception:
+                        continue
+
+            if image_elem is not None and input_elem is not None:
+                break
+
+        if image_elem is None:
+            image_elem, _ = wait_for_captcha_image_ready(page, timeout_ms=1200, trigger_refresh_if_missing=False)
+
+        if image_elem is not None:
+            _emit("CAPTCHA_IMAGE_FOUND", result="found", message=f"تصویر کپچای {step_fa} شناسایی شد.")
+        elif bot is not None and hasattr(bot, "log"):
+            bot.log(f"تصویر کپچای {step_fa} یافت نشد.", "warning", page)
+
+        if input_elem is not None:
+            _emit("CAPTCHA_INPUT_FOUND", result="found", message=f"فیلد ورودی کپچای {step_fa} شناسایی شد.")
+        elif bot is not None and hasattr(bot, "log"):
+            bot.log(f"فیلد ورودی کپچای {step_fa} یافت نشد.", "warning", page)
+
+        if image_elem is None or input_elem is None:
+            if not is_step_1 and image_elem is None:
+                _emit("IMAGE_NOT_READY", result="image_missing", level="warning")
+            if attempt < max_attempts:
+                time.sleep(0.2)
+                continue
+            return CaptchaResult(success=False, attempts_used=attempt, error_reason="elements_missing")
+
+        # If refresh requested
+        if (force_refresh or attempt > 1) and reload_elem is not None:
+            try:
+                reload_elem.click(timeout=1000)
+                time.sleep(0.25)
+            except Exception:
+                try:
+                    image_elem.click(timeout=1000)
+                    time.sleep(0.25)
+                except Exception:
+                    pass
+
+        if not is_step_1:
+            try:
+                handle = image_elem.element_handle(timeout=1000) if hasattr(image_elem, "element_handle") else None
+                if hasattr(page, "wait_for_function"):
+                    page.wait_for_function(
+                        "(img) => img && img.complete && img.naturalWidth > 0",
+                        arg=handle,
+                        timeout=3000,
+                    )
+                elif hasattr(image_elem, "evaluate"):
+                    ready = image_elem.evaluate("(img) => img && img.complete && (img.naturalWidth === undefined || img.naturalWidth > 0)")
+                    if ready is False:
+                        _emit("IMAGE_NOT_READY", result="image_not_decoded", level="warning")
+                        if attempt < max_attempts:
+                            time.sleep(0.2)
+                            continue
+            except Exception:
+                _emit("IMAGE_NOT_READY", result="image_not_decoded", level="warning")
+                if attempt < max_attempts:
+                    time.sleep(0.2)
+                    continue
+                return CaptchaResult(success=False, attempts_used=attempt, error_reason="image_not_ready")
+        else:
+            # Wait for image DOM readiness (complete && naturalWidth > 0)
+            try:
+                handle = image_elem.element_handle() if hasattr(image_elem, "element_handle") else None
+                if handle and hasattr(page, "wait_for_function"):
+                    page.wait_for_function(
+                        "(img) => !img || (typeof img.complete === 'undefined') || (img.complete && (img.naturalWidth === undefined || img.naturalWidth > 0))",
+                        arg=handle,
+                        timeout=3000,
+                    )
+            except Exception:
+                pass
+
+        # Clear field before recognition
+        try:
+            input_elem.fill("")
+        except Exception:
+            pass
+
+        source_bytes = None
+        if bot is not None and hasattr(bot, "_capture_captcha_image"):
+            try:
+                source_bytes = bot._capture_captcha_image(image_elem, "otp" if not is_step_1 else "step1")
+            except Exception:
+                source_bytes = None
+
+        if not source_bytes:
+            try:
+                source_bytes = image_elem.screenshot(timeout=3000)
+            except Exception:
+                source_bytes = None
+
+        if is_step_1 and source_bytes and len(source_bytes) < 600:
+            source_bytes = None
+
+        if not is_step_1 and not source_bytes:
+            _emit("IMAGE_NOT_READY", result="image_capture_failed", level="warning")
+            continue
+
+        _emit("CAPTCHA_RECOGNITION_STARTED", message="آغاز پردازش و استخراج خودکار کد کپچا با مدل هوشمند...")
+
+        raw_code = ""
+        processing_error = False
+        if bot is not None and hasattr(bot, "captcha_service") and bot.captcha_service:
+            try:
+                if not is_step_1:
+                    from api_solver import CaptchaService
+                    service = bot.captcha_service
+                    options = {"raise_on_error": True} if isinstance(service, CaptchaService) else {}
+                    raw_code = str(service.solve(source_bytes, **options) or "")
+                else:
+                    raw_code = str((bot.captcha_service.solve(source_bytes) if source_bytes else bot.captcha_service.solve_element(image_elem)) or "")
+            except Exception:
+                processing_error = True
+        else:
+            try:
+                solver = ModelCaptchaSolver.get_instance()
+                if solver and solver.is_ready() and source_bytes:
+                    raw_code = str(solver.solve_image(source_bytes) or "")
+                else:
+                    processing_error = True
+            except Exception:
+                processing_error = True
+
+        if not is_step_1:
+            if processing_error:
+                _emit("MODEL_PROCESSING_ERROR", result="solver_failed", level="warning")
+            elif not raw_code.strip():
+                _emit("MODEL_OUTPUT_EMPTY", result="empty_prediction", level="warning")
+
+        code = re.sub(r'[^A-Z0-9]', '', str(raw_code or "").strip().upper())
+        is_valid = bool(re.fullmatch(rf"[0-9A-Z]{{{min_length},{max_length}}}", code)) and validate_captcha_prediction(code, min_length, max_length)
+
+        _emit(
+            "CAPTCHA_RECOGNITION_RESULT",
+            result=f"code={code}" if is_valid else "invalid",
+            message=f"نتیجه تشخیص مدل کپچا: {code}" if is_valid else f"پاسخ کپچا نامعتبر است: {raw_code}",
+            level="info" if is_valid else "warning",
+        )
+
+        if not is_valid:
+            if bot is not None and hasattr(bot, "nid"):
+                DBHandler.append_captcha_attempt(bot.nid, code, "failed", source=step_key)
+            try:
+                input_elem.fill("")
+            except Exception:
+                pass
+            force_refresh = True
+            time.sleep(0.2)
+            continue
+
+        try:
+            from browser_launcher import BrowserActions
+            BrowserActions.human_fill(input_elem, code)
+        except Exception:
+            try:
+                input_elem.fill(code, timeout=1500)
+            except Exception:
+                pass
+
+        try:
+            input_elem.dispatch_event("change")
+        except Exception:
+            pass
+
+        filled_val = (input_elem.input_value() or "").strip().upper()
+        if filled_val == code:
+            _emit(
+                "CAPTCHA_FILLED",
+                result="success",
+                message=f"کپچای {step_fa} با مقدار {code} با موفقیت پر شد.",
+                level="info",
+            )
+            if bot is not None and hasattr(bot, "nid"):
+                DBHandler.append_captcha_attempt(bot.nid, code, "filled", source=step_key)
+            return CaptchaResult(success=True, code=code, attempts_used=attempt, error_reason=None)
+        else:
+            if bot is not None and hasattr(bot, "nid"):
+                DBHandler.append_captcha_attempt(bot.nid, code, "fill_failed", source=step_key)
+            force_refresh = True
+            time.sleep(0.2)
+            continue
+
+    return CaptchaResult(success=False, code="", attempts_used=max_attempts, error_reason="max_attempts_exceeded")

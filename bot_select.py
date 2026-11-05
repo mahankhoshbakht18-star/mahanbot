@@ -112,6 +112,30 @@ class LoanTypeAdapter:
                         continue
 
 
+from dataclasses import dataclass
+from typing import Optional, Any, Dict
+
+@dataclass
+class JobStateContext:
+    applicant_national_id: str
+    current_state: str = "S1_ENTRY_FORM"
+    cached_otp_code: Optional[str] = None
+    otp_received_at: Optional[float] = None
+    otp_ttl_seconds: int = 120
+    captcha_retry_count: int = 0
+    page3_retry_count: int = 0
+    tracking_code: Optional[str] = None
+    error: Optional[str] = None
+
+    def is_otp_valid(self) -> bool:
+        if not self.cached_otp_code or not self.otp_received_at:
+            return False
+        return (time.time() - self.otp_received_at) < self.otp_ttl_seconds
+
+    def invalidate_otp(self):
+        self.cached_otp_code = None
+        self.otp_received_at = None
+
 class BankSelectionBot(BotCore):
     def __init__(self, nid, settings, log_callback=None, captcha_service=None, browser_profile=None):
         super().__init__(
@@ -131,6 +155,10 @@ class BankSelectionBot(BotCore):
         self.reopen_browser_on_close = False
         self._bank_monitor_lock = threading.Lock()
         self._last_state_sweep_sig = None
+        self.ctx = JobStateContext(
+            applicant_national_id=self.nid,
+            otp_ttl_seconds=int(self.settings.get("otp_validity_seconds", 120)) if hasattr(self, "settings") and self.settings else 120,
+        )
 
     def fetch_otp_fast(self, stop_event=None, timeout: int = 120, min_ts: float = 0.0):
         """Fetch OTP from wait endpoint."""
@@ -164,6 +192,7 @@ class BankSelectionBot(BotCore):
         elif self.detect_actual_page_stage(page) != 'STEP_1_ENTRY_FORM':
             self.live_owner.bank_page_active = False
             self._safe_goto_guarded(page, adapter.target_select_url,
+                                    force=True,
                                     timeout=int(self.settings.get('navigation_timeout_ms', 35000)),
                                     wait_until='domcontentloaded', log_callback=self.log)
         flow.redetect(page, 'official_authentication_recovery')
@@ -196,6 +225,9 @@ class BankSelectionBot(BotCore):
 
         actual_stage = self.detect_actual_page_stage(page)
         saved_step = cp.get("last_verified_step") or "IDLE"
+        saved_at = float(cp.get("saved_at") or 0.0)
+        if saved_at > 0 and (time.time() - saved_at > 600.0) and actual_stage != "STEP_3_BANK_SELECT":
+            saved_step = "IDLE"
 
         # Restore saved preferences into user_data if missing
         for k in ("state", "city", "priority_banks", "bank_mode"):
@@ -366,6 +398,29 @@ class BankSelectionBot(BotCore):
                         self._bank_page_detected_emitted = False
                         self._verified_step3_signature = None
 
+                    if hasattr(self, "ctx") and self.ctx is not None:
+                        formal_map = {
+                            "ENTRY_FORM": "S1_ENTRY_FORM",
+                            "S1_ENTRY_FORM": "S1_ENTRY_FORM",
+                            "OTP_FORM": "S2_OTP_VERIFICATION",
+                            "S2_OTP_VERIFICATION": "S2_OTP_VERIFICATION",
+                            "BANK_SELECT": "S3_BANK_SELECTION",
+                            "BANK_SELECTION": "S3_BANK_SELECTION",
+                            "S3_BANK_SELECTION": "S3_BANK_SELECTION",
+                            "BANK_CAPACITY_FULL": "S3_BANK_SELECTION",
+                            "BRANCH_SELECT": "S4_BRANCH_AND_SUBMIT",
+                            "WAITING_BRANCH_LIST": "S4_BRANCH_AND_SUBMIT",
+                            "SELECTING_BRANCH": "S4_BRANCH_AND_SUBMIT",
+                            "BRANCH_SELECTED": "S4_BRANCH_AND_SUBMIT",
+                            "S4_BRANCH_AND_SUBMIT": "S4_BRANCH_AND_SUBMIT",
+                            "WAITING_USER_INPUT": "S5_HOLD_FOR_USER",
+                            "MANUAL_CAPTCHA_OR_OTP": "S5_HOLD_FOR_USER",
+                            "S5_HOLD_FOR_USER": "S5_HOLD_FOR_USER",
+                            "DONE": "S6_COMPLETED",
+                            "S6_COMPLETED": "S6_COMPLETED",
+                        }
+                        self.ctx.current_state = formal_map.get(new_state, new_state)
+
                     if state != new_state:
                         state = new_state
                         state_since = time.time()
@@ -478,9 +533,15 @@ class BankSelectionBot(BotCore):
                     if resumed_stage == "DONE":
                         return
                     elif resumed_stage == "STEP_3_BANK_SELECT":
-                        set_state("BANK_SELECT")
+                        if self.detect_actual_page_stage(page) == "STEP_3_BANK_SELECT":
+                            set_state("BANK_SELECT")
+                        else:
+                            set_state("ENTRY_FORM")
                     elif resumed_stage == "STEP_2_OTP":
-                        set_state("OTP_FORM")
+                        if self._otp_input_visible(page):
+                            set_state("OTP_FORM")
+                        else:
+                            set_state("ENTRY_FORM")
 
                 def wait_for_state(selector, label, timeout=250):
                     if stop_event.is_set():
@@ -536,6 +597,8 @@ class BankSelectionBot(BotCore):
                     detection = flow.redetect(page)
                     if detection.state == 'PAUSED':
                         self.live_owner.paused = True
+                        if sleep_with_stop(stop_event, 0.5):
+                            break
                         continue
 
                     if page.is_closed():
@@ -567,6 +630,11 @@ class BankSelectionBot(BotCore):
                             continue
                         elif result in {'cycle_otp', 'entry_form'}:
                             actual = self.detect_actual_page_stage(page)
+                            if hasattr(self, "ctx") and self.ctx is not None:
+                                self.ctx.page3_retry_count += 1
+                                if self.ctx.is_otp_valid():
+                                    self._last_retained_otp = self.ctx.cached_otp_code
+                                    self.log(f"🔄 بازگشت از مرحله ۳ به تایید پیامک؛ استفاده مجدد از کد معتبر ({self.ctx.cached_otp_code})...", "info", page)
                             set_state({'STEP_1_ENTRY_FORM': 'ENTRY_FORM', 'STEP_3_BANK_SELECT': 'BANK_SELECT',
                                        'STEP_2_OTP': 'OTP_FORM'}.get(actual, 'PAGE_REDETECTING'))
                             continue
@@ -698,6 +766,19 @@ class BankSelectionBot(BotCore):
                             flow.transition('PAUSED', 'unverified_tracking_message')
                             continue
                         set_state("DONE")
+                        if hasattr(self, "ctx") and self.ctx is not None:
+                            self.ctx.current_state = "S6_COMPLETED"
+                            self.ctx.tracking_code = code
+                            if self.ctx.cached_otp_code:
+                                digest = hashlib.sha256(str(self.ctx.cached_otp_code).encode()).hexdigest()
+                                consumed = getattr(self, "_consumed_otp_digests", set())
+                                consumed.add(digest)
+                                self._consumed_otp_digests = consumed
+                                DBHandler.set_otp(self.nid, self.ctx.cached_otp_code, status="consumed",
+                                                  request_id=getattr(self, '_otp_request_id', None))
+                                from relay_transport import finish as finish_relay
+                                finish_relay(self, consumed=True)
+                                self.ctx.invalidate_otp()
                         DBHandler.save_success_data(self.nid, code)
                         self.set_runtime_state("SUCCESS", "DONE", browser_status="OPEN")
                         self.emit_event(
@@ -716,6 +797,9 @@ class BankSelectionBot(BotCore):
 
                     elif actual_stage == "STEP_2_OTP" or self._otp_input_visible(page):
                         set_state("OTP_FORM")
+                        if hasattr(self, "ctx") and self.ctx is not None and self.ctx.is_otp_valid():
+                            self._last_retained_otp = self.ctx.cached_otp_code
+                            self.log(f"🔄 استفاده مجدد از کد پیامک معتبر در نشست ({self.ctx.cached_otp_code})...", "info", page)
                         if stop_event.is_set():
                             break
 
@@ -737,6 +821,11 @@ class BankSelectionBot(BotCore):
                             if result == 'target_closed':
                                 break
                             self.live_owner.paused = True
+                            self.set_runtime_state("WAITING_USER_INPUT", "MANUAL_CAPTCHA_OR_OTP", browser_status="OPEN")
+                            self.log("منتظر اقدام دستی کاربر (کپچا یا پیامک)؛ مرورگر باز و نشست حفظ می‌شود.", "info", page)
+                            if sleep_with_stop(stop_event, 0.5):
+                                break
+                            continue
 
                     elif actual_stage == "FACILITY_SELECTION" or "seltcase" in page.url.lower():
                         set_state("FACILITY_SELECTION")
@@ -884,23 +973,28 @@ class BankSelectionBot(BotCore):
                 sleep_with_stop(stop_event, 0)
 
     def is_firewall_challenge(self, page) -> bool:
-        selectors = ["#ans", "#jar"]
-        for selector in selectors:
+        selectors = ["#ans", "#jar", "input[name*='TSPD']", "form[action*='TSPD']", "iframe[src*='TSPD']"]
+        frames = getattr(page, "frames", [page])
+        for frame in frames:
+            for selector in selectors:
+                try:
+                    locator = frame.locator(selector)
+                    if locator.count() > 0 and locator.first.is_visible():
+                        return True
+                except Exception:
+                    continue
+
+        challenge_markers = ["human visitor", "support id", "verify you are human", "tspd_"]
+        for frame in frames:
             try:
-                locator = page.locator(selector)
-                if locator.count() > 0 and locator.first.is_visible():
+                body_text = (frame.inner_text("body") or "").lower()
+                if "the requested url was rejected" in body_text:
+                    continue
+                if any(marker in body_text for marker in challenge_markers):
                     return True
             except Exception:
                 continue
-
-        challenge_markers = ["human visitor", "support id"]
-        try:
-            body_text = (page.inner_text("body") or "").lower()
-            if "the requested url was rejected" in body_text:
-                return False
-            return any(marker in body_text for marker in challenge_markers)
-        except Exception:
-            return False
+        return False
 
     def handle_firewall_challenge(self, page, stop_event):
         check_rejection(page)
@@ -939,6 +1033,26 @@ class BankSelectionBot(BotCore):
                 self.set_runtime_state("ERROR", "FIREWALL_TIMEOUT", last_error="manual_challenge_timeout")
                 return False
             if self._firewall_input_visible(page):
+                # Try auto-solving firewall challenge locally
+                try:
+                    for scope in ([page] + getattr(page, "frames", [])):
+                        ans_loc = scope.locator("#ans")
+                        if ans_loc.count() > 0 and ans_loc.first.is_visible():
+                            fw_img = scope.locator("img#captcha, img[src*='captcha' i], img").first
+                            if fw_img.count() > 0 and fw_img.is_visible():
+                                if not ans_loc.first.evaluate("el => el === document.activeElement"):
+                                    self.solve_captcha_with_model(
+                                        scope,
+                                        "#ans",
+                                        "#jar, input[type='submit']",
+                                        stop_event=stop_event,
+                                        source="firewall",
+                                        captcha_element=fw_img,
+                                    )
+                                    sleep_with_stop(stop_event, 1.0)
+                                    break
+                except Exception:
+                    pass
                 if sleep_with_stop(stop_event, 0.5):
                     return False
                 continue
@@ -996,8 +1110,16 @@ class BankSelectionBot(BotCore):
         if not page or getattr(page, "is_closed", lambda: False)() is True:
             return False
 
+        force = kwargs.pop("force", False)
         page_url = str(getattr(page, "url", "") or "").strip().lower()
         if not page_url or page_url in ("about:blank", "chrome://newtab/") or "mock" in page_url:
+            self._safe_goto_locked = False
+            self._otp_wait_lock = False
+            self._otp_guard_until = 0.0
+            safe_goto(page, url, **kwargs)
+            return True
+
+        if force:
             self._safe_goto_locked = False
             self._otp_wait_lock = False
             self._otp_guard_until = 0.0
@@ -1013,7 +1135,7 @@ class BankSelectionBot(BotCore):
 
         otp_visible = self._otp_input_visible(page)
         otp_guard_active = (time.time() < self._otp_guard_until) and otp_visible
-        if (self._otp_wait_lock and otp_visible) or otp_guard_active or (self._safe_goto_locked and otp_visible) or otp_visible:
+        if (self._otp_wait_lock and otp_visible) or otp_guard_active:
             self._safe_goto_locked = True
             self.log("🔒 safe_goto locked: waiting on OTP form; navigation suppressed.", "warning", page)
             return False
@@ -1047,7 +1169,7 @@ class BankSelectionBot(BotCore):
         return False
 
     def _capture_captcha_image(self, captcha_element, source):
-        if source not in {"primary", "step1_primary_assist"}:
+        if source not in {"primary", "step1_primary_assist", "otp"}:
             return super()._capture_captcha_image(captcha_element, source)
         try:
             # Persisted Chromium zoom can crop locator screenshots; read the loaded image's own pixels.
@@ -1083,7 +1205,7 @@ class BankSelectionBot(BotCore):
             "input[name$='btnCheck'], "
             "input[type='submit']"
         )
-        max_attempts = max(6, int(self.settings.get("captcha_max_retries", 8)))
+        max_attempts = max(1, int(self.settings.get("captcha_max_retries", 10)))
         attempts = 0
 
         while not stop_event.is_set() and attempts < max_attempts:
@@ -1155,7 +1277,10 @@ class BankSelectionBot(BotCore):
                 self.clear_otp_locks()
                 return True
 
-            self._refresh_captcha_or_reload(page, input_sel=input_sel, allow_reload=False)
+            # Server rejected or did not transition; auto-refresh image and clear input for next model attempt
+            self._refresh_captcha_or_reload(page, input_sel=input_sel, allow_reload=False, captcha_rejected=True)
+            if sleep_with_stop(stop_event, 0.25):
+                return False
 
         # Manual CAPTCHA handoff only if user explicitly enabled it
         pause_manual = str(self.settings.get("pause_for_manual_captcha", "false")).lower() in {"1", "true", "yes"}

@@ -60,6 +60,17 @@ class BankSelectionSessionController:
             interval = 5.0
         from capacity_monitor import CapacityMonitor
         self.capacity_monitor = CapacityMonitor(bot, owner, interval_seconds=interval)
+        try:
+            from core.page3_refresh_controller import Page3OfficialRefreshController
+            from core.page3_state_machine import ApplicantPage3StateMachine, Page3State
+            from core.province_bank_monitor import ProvinceBankMonitor
+            self.state_machine = ApplicantPage3StateMachine(bot.nid, Page3State.PAGE3_READY)
+            self.province_monitor = ProvinceBankMonitor(getattr(bot, "state_name", "سراسری"))
+            self.refresh_controller = Page3OfficialRefreshController(
+                bot, owner.page, fsm=self.state_machine, bank_monitor=self.province_monitor
+            )
+        except Exception:
+            self.refresh_controller = None
 
     @staticmethod
     def _is_final_request(request):
@@ -291,7 +302,11 @@ class BankSelectionSessionController:
                  'session_expired': State.SESSION_EXPIRED}.get(result, State.MANUAL_ACTION_REQUIRED)
         if result == 'access_denied':
             self._blocked = True
-        self.transition(state, result)
+        if result == 'online_age_restricted':
+            owner.paused = True
+            self.transition(state, bot._last_dialog_message)
+        else:
+            self.transition(state, result)
         enabled, interval = submission_policy(normalize_config(DBHandler.get_config()), self._preferences())
         retry = result == 'capacity_full' and enabled
         DBHandler.update_runtime(bot.nid, last_refresh=time.time(), next_refresh=time.time() + interval if retry else 0,
@@ -552,6 +567,11 @@ class BankSelectionSessionController:
             return 'waiting'
         self._next_bank_poll = self._monotonic() + interval
         flow.transition('RELOAD_PENDING', 'configured_native_reload')
+        if hasattr(self, "refresh_controller") and self.refresh_controller:
+            try:
+                self.refresh_controller.create_checkpoint()
+            except Exception:
+                pass
         bot.save_checkpoint('STEP_3_BANK_SELECT', page=owner.page, session_active=True,
                             expected_next_step='PAGE_REDETECTING')
         owner.bank_page_active = False
@@ -587,6 +607,11 @@ class BankSelectionSessionController:
             return 'reauthenticate'
         if detection.state == 'STEP3_ACTIVE':
             owner.bank_page_active = True
+            if hasattr(self, "refresh_controller") and self.refresh_controller:
+                try:
+                    self.refresh_controller.reenter_and_calculate_diff()
+                except Exception:
+                    pass
             self.transition(State.BANK_OPTIONS_READY, 'refreshed_step3')
             return 'waiting'
         self.transition(State.MANUAL_ACTION_REQUIRED, detection.reason)

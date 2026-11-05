@@ -1,3 +1,6 @@
+import inspect
+import logging
+_browser_audit_log = logging.getLogger('mahanbot.browser_audit')
 def apply_page_zoom(page, zoom_level: float = 1.0) -> None:
     if page is None:
         return
@@ -512,7 +515,23 @@ def ensure_allowed_url(url: str, allowed_domains: Optional[Iterable[str]] = None
         )
 
 
-def safe_goto(page, url: str, *, allowed_domains: Optional[Iterable[str]] = None, log_callback=None, **kwargs):
+def safe_goto(page, url: str, *, allowed_domains: Optional[Iterable[str]] = None, log_callback=None, reason: Optional[str] = None, nid: Optional[str] = None, **kwargs):
+    try:
+        caller_frame = inspect.currentframe().f_back
+        caller_file = os.path.basename(caller_frame.f_code.co_filename) if caller_frame else "unknown"
+        caller_func = caller_frame.f_code.co_name if caller_frame else "unknown"
+        caller_line = caller_frame.f_lineno if caller_frame else 0
+    except Exception:
+        caller_file, caller_func, caller_line = "unknown", "unknown", 0
+
+    masked_nid = ""
+    target_nid = nid or getattr(page, "_mahan_nid", None)
+    if target_nid:
+        s = str(target_nid)
+        masked_nid = s[:2] + "******" + s[-2:] if len(s) >= 4 else "***"
+
+    _browser_audit_log.debug(f"[BROWSER_GOTO] url={url} caller={caller_file}:{caller_func}:{caller_line} reason={reason or 'navigate'} nid={masked_nid or 'N/A'}")
+
     try:
         ensure_allowed_url(url, allowed_domains=allowed_domains)
         normalized = _normalize_url(url)
@@ -624,6 +643,8 @@ def launch_browser(profile: Dict[str, Any]) -> Tuple[Any, Any, Any, Any]:
                 "--no-default-browser-check",
                 "--disable-search-engine-choice-screen",
                 "--disable-infobars",
+                "--disable-session-crashed-bubble",
+                "--hide-crash-restore-bubble",
             ]
             for flag in stability_flags:
                 if flag not in args:
@@ -791,7 +812,23 @@ def launch_browser(profile: Dict[str, Any]) -> Tuple[Any, Any, Any, Any]:
         raise BrowserLaunchError("launch_failed", "Failed to launch browser", {"error": str(exc)})
 
 
-def close_browser(playwright, browser, context, page) -> None:
+def close_browser(playwright, browser, context, page, reason: Optional[str] = None, nid: Optional[str] = None) -> None:
+    try:
+        caller_frame = inspect.currentframe().f_back
+        caller_file = os.path.basename(caller_frame.f_code.co_filename) if caller_frame else "unknown"
+        caller_func = caller_frame.f_code.co_name if caller_frame else "unknown"
+        caller_line = caller_frame.f_lineno if caller_frame else 0
+    except Exception:
+        caller_file, caller_func, caller_line = "unknown", "unknown", 0
+
+    masked_nid = ""
+    target_nid = nid or getattr(page, "_mahan_nid", None) or getattr(context, "_mahan_nid", None)
+    if target_nid:
+        s = str(target_nid)
+        masked_nid = s[:2] + "******" + s[-2:] if len(s) >= 4 else "***"
+
+    _browser_audit_log.info(f"[BROWSER_CLOSE] caller={caller_file}:{caller_func}:{caller_line} reason={reason or 'normal_teardown'} nid={masked_nid or 'N/A'}")
+
     try:
         if page:
             setattr(page, "_mahan_closing_intentionally", True)

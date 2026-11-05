@@ -67,6 +67,7 @@ class BotCore:
         self._current_step = "IDLE"
         self._recovery_lock = threading.RLock()
         self._recovery_in_progress = False
+        self._submit_mutex = threading.Lock()
         self._error_signatures = {}
 
     @staticmethod
@@ -295,14 +296,13 @@ class BotCore:
     def clear_otp_backend(self):
         from relay_transport import finish
         finish(self)
-        try:
-            requests.post(f"{self.api_base_url}/otp/clear/{self.nid}", timeout=3)
-        except Exception:
-            pass
-        try:
-            requests.post(f"{self.local_api_base}/otp/clear/{self.nid}", timeout=3)
-        except Exception:
-            pass
+        secret = os.getenv("MAHANBOT_OTP_SECRET") or os.getenv("MAHAN_OTP_SECRET")
+        headers = {"X-OTP-Secret": secret} if secret else {}
+        for base in dict.fromkeys((self.api_base_url, self.local_api_base)):
+            try:
+                requests.post(f"{base}/otp/clear/{self.nid}", headers=headers, timeout=3)
+            except Exception:
+                pass
         try:
             DBHandler.clear_otp(self.nid)
         except Exception:
@@ -528,9 +528,23 @@ class BotCore:
                 pass
 
         try:
-            # Manual text belongs to the user; OCR must never overwrite it.
-            if captcha_input.input_value().strip():
+            # Manual text belongs to the user; OCR must never overwrite it if user is actively typing.
+            is_user_actively_typing = False
+            try:
+                if captcha_input.input_value().strip() and hasattr(captcha_input, "evaluate"):
+                    is_user_actively_typing = bool(captcha_input.evaluate("el => el === document.activeElement"))
+            except Exception:
+                pass
+            if is_user_actively_typing or captcha_input.input_value().strip():
                 return False
+
+            # Clear any stale text before capturing image so clean automated solving proceeds
+            try:
+                if captcha_input.input_value().strip():
+                    captcha_input.fill("")
+            except Exception:
+                pass
+
             initial_src = captcha_element.evaluate("el => el.getAttribute('src') || ''") if hasattr(captcha_element, 'evaluate') else None
             source_bytes = self._capture_captcha_image(captcha_element, source)
             if source_bytes and len(source_bytes) < 600:
@@ -561,7 +575,7 @@ class BotCore:
                 self.log("پیش‌بینی کپچا اعتبارسنجی را رد کرد.", "warning", page)
                 return False
 
-            if captcha_input.input_value().strip():
+            if is_user_actively_typing or captcha_input.input_value().strip():
                 return False
             if initial_src and hasattr(captcha_element, 'evaluate'):
                 try:
@@ -1082,32 +1096,7 @@ class BotCore:
             except Exception:
                 continue
 
-        # Check Step 3: Bank Selection (ddlBankName or ddlCity+btnSave on SelectBnkShb.aspx)
-        bank_selectors = [
-            "#ctl00_ContentPlaceHolder1_ddlBankName",
-            "select[name$='ddlBankName']",
-        ]
-        for sel in bank_selectors:
-            try:
-                loc = page.locator(sel)
-                if loc.count() > 0 and loc.first.is_visible():
-                    return "STEP_3_BANK_SELECT"
-            except Exception:
-                continue
-        try:
-            city_loc = page.locator("#ctl00_ContentPlaceHolder1_ddlCity")
-            save_loc = page.locator("#ctl00_ContentPlaceHolder1_btnSave")
-            if (
-                city_loc.count() > 0
-                and city_loc.first.is_visible()
-                and save_loc.count() > 0
-                and save_loc.first.is_visible()
-            ):
-                return "STEP_3_BANK_SELECT"
-        except Exception:
-            pass
-
-        # Check Step 2: OTP Confirmation
+        # Check Step 2: OTP Confirmation (Priority over Step 3 on shared SelectBnkShb.aspx wizard)
         from otp_form_detector import detect_otp_form
         otp_form = detect_otp_form(page)
         if otp_form.resolve('otp') is not None:
@@ -1126,6 +1115,19 @@ class BotCore:
                 loc = page.locator(sel)
                 if loc.count() > 0 and loc.first.is_visible():
                     return "STEP_2_OTP"
+            except Exception:
+                continue
+
+        # Check Step 3: Bank Selection (Strictly requires visible ddlBankName)
+        bank_selectors = [
+            "#ctl00_ContentPlaceHolder1_ddlBankName",
+            "select[name$='ddlBankName']",
+        ]
+        for sel in bank_selectors:
+            try:
+                loc = page.locator(sel)
+                if loc.count() > 0 and loc.first.is_visible():
+                    return "STEP_3_BANK_SELECT"
             except Exception:
                 continue
 
@@ -1262,9 +1264,37 @@ class BotCore:
             pass
 
         # Do not trigger watchdog while waiting for user manual input (CAPTCHA / OTP / Capacity decision)
-        if self._current_step in {"CAPTCHA_MANUAL_REQUIRED", "OTP_MANUAL_REQUIRED", "BANK_CAPACITY_FULL", "FINAL_SUBMIT_WAIT", "RESERVE_PENDING"}:
+        if getattr(self, "runtime_state", {}).get("status") == "WAITING_USER_INPUT" or self._current_step in {
+            "CAPTCHA_MANUAL_REQUIRED", "OTP_MANUAL_REQUIRED", "WAITING_USER_INPUT", "MANUAL_REQUIRED",
+            "BANK_CAPACITY_FULL", "FINAL_SUBMIT_WAIT", "RESERVE_PENDING", "STEP2_CAPTCHA_REQUIRED"
+        }:
             self._last_progress_time = now
             return False
+
+        # Active User Typing & Focus Guard: Never reload if user is focused on or typing into inputs!
+        try:
+            if page and hasattr(page, "evaluate") and not page.is_closed():
+                is_user_active = page.evaluate("""() => {
+                    const el = document.activeElement;
+                    if (el && (el.tagName === 'INPUT' || el.tagName === 'SELECT' || el.tagName === 'TEXTAREA')) {
+                        return true;
+                    }
+                    const captchaInp = document.querySelector("input[name*='tbCaptcha'], #ans");
+                    if (captchaInp && captchaInp.value && captchaInp.value.trim().length > 0) {
+                        return true;
+                    }
+                    const otpInp = document.querySelector("#ctl00_ContentPlaceHolder1_tbMobileConfCode, input[name$='tbMobileConfCode']");
+                    if (otpInp && otpInp.value && otpInp.value.trim().length > 0) {
+                        return true;
+                    }
+                    return false;
+                }""")
+                if is_user_active:
+                    self._last_progress_time = now
+                    return False
+        except Exception:
+            pass
+
         if now - self._last_progress_time < self._watchdog_timeout:
             return False
 

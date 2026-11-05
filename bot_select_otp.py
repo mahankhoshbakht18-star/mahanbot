@@ -110,12 +110,16 @@ def _locate_otp_captcha_controls(page, wait_ms: int = 3500):
     If the image hasn't appeared yet, triggers the reload icon so it renders and can be solved by the model.
     """
     from otp_form_detector import detect_otp_form
+    image, captcha_input, submit_btn = None, None, None
     form = detect_otp_form(page, timeout_ms=wait_ms)
     if form.fields:
-        image = form.scope.locator(form.fields['image']['selector']) if 'image' in form.fields else None
-        return image, form.resolve('captcha'), form.resolve('continue')
-    if form.reason.startswith('ambiguous') or form.reason == 'postback_pending':
-        return None, None, None
+        if 'image' in form.fields:
+            image = form.scope.locator(form.fields['image']['selector'])
+        captcha_input = form.resolve('captcha')
+        submit_btn = form.resolve('continue')
+        if image is not None and captcha_input is not None and submit_btn is not None:
+            return image, captcha_input, submit_btn
+
     btn_selectors = [
         "#ctl00_ContentPlaceHolder1_btnContinue1",
         "input[name$='btnContinue1']",
@@ -127,8 +131,8 @@ def _locate_otp_captcha_controls(page, wait_ms: int = 3500):
         "button:has-text('ادامه')",
     ]
 
-    image, _ = wait_for_captcha_image_ready(page, timeout_ms=wait_ms, trigger_refresh_if_missing=True)
-    captcha_input, submit_btn = None, None
+    if image is None:
+        image, _ = wait_for_captcha_image_ready(page, timeout_ms=wait_ms, trigger_refresh_if_missing=True)
 
     if not image:
         for _, scope in _iter_scopes(page):
@@ -143,91 +147,279 @@ def _locate_otp_captcha_controls(page, wait_ms: int = 3500):
             if image:
                 break
 
-    for _, scope in _iter_scopes(page):
-        captcha_input = BrowserActions.find_captcha_input(
-            scope, "#ctl00_ContentPlaceHolder1_tbCaptcha2"
-        )
-        if not captcha_input:
+    if captcha_input is None:
+        for _, scope in _iter_scopes(page):
             captcha_input = BrowserActions.find_captcha_input(
-                scope, "input[name$='tbCaptcha2']"
+                scope, "#ctl00_ContentPlaceHolder1_tbCaptcha2"
             )
-        if captcha_input:
-            break
+            if not captcha_input:
+                captcha_input = BrowserActions.find_captcha_input(
+                    scope, "input[name$='tbCaptcha2']"
+                )
+            if not captcha_input:
+                captcha_input = BrowserActions.find_captcha_input(
+                    scope, "input[name*='tbCaptcha']"
+                )
+            if captcha_input:
+                break
 
-    for _, scope in _iter_scopes(page):
-        for selector in btn_selectors:
-            try:
-                loc = scope.locator(selector)
-                if loc.count() > 0 and loc.first.is_visible():
-                    submit_btn = loc.first
-                    break
-            except Exception:
-                continue
-        if submit_btn:
-            break
+    if submit_btn is None:
+        for _, scope in _iter_scopes(page):
+            for selector in btn_selectors:
+                try:
+                    loc = scope.locator(selector)
+                    if loc.count() > 0 and loc.first.is_visible():
+                        submit_btn = loc.first
+                        break
+                except Exception:
+                    continue
+            if submit_btn:
+                break
 
     return image, captcha_input, submit_btn
 
 
 def _refresh_captcha_image(bot, page, captcha_rejected=False, **kwargs):
-    return refresh_captcha_or_reload(bot, page, allow_reload=False, captcha_rejected=captcha_rejected)
+    return refresh_captcha_or_reload(bot, page, allow_reload=False, captcha_rejected=captcha_rejected, **kwargs)
+
+
+def ensure_otp_captcha_prefilled(bot, page, stop_event=None, force_refresh=False) -> bool:
+    """
+    Proactively locates and solves the OTP-stage CAPTCHA before OTP arrives or during OTP wait.
+    Emits required lifecycle events and fills tbCaptcha2 without submitting the form prematurely.
+    Uses the unified solve_step_captcha engine.
+    """
+    if stop_event is not None and stop_event.is_set():
+        return False
+
+    if bot.settings.get('pause_for_manual_captcha', False):
+        bot.emit_event(
+            "CAPTCHA_MANUAL_REQUIRED",
+            step="STEP_2_OTP",
+            reason="settings_pause_for_manual",
+            message="ورود دستی کپچا فعال است؛ منتظر اقدام کاربر.",
+            level="warning",
+            page=page,
+        )
+        DBHandler.update_runtime(bot.nid, otp_state='CAPTCHA_REQUIRED')
+        return False
+
+    from bot_select_captcha import solve_step_captcha
+    res = solve_step_captcha(
+        page=page,
+        step_name="STEP_2_OTP",
+        force_refresh=force_refresh,
+        max_attempts=1,
+        bot=bot,
+        stop_event=stop_event,
+    )
+    if res.success:
+        bot._otp_prefilled_captcha = res.code
+        return True
+    return False
+
+    bot.emit_event(
+        "CAPTCHA_ELEMENT_SEARCH",
+        step="STEP_2_OTP",
+        message="در حال جستجوی المان‌های کپچای مرحله پیامک...",
+        page=page,
+    )
+
+    image, captcha_input, submit_btn = _locate_otp_captcha_controls(page, wait_ms=2500)
+
+    if image is None and force_refresh:
+        _refresh_captcha_image(bot, page, captcha_rejected=True)
+        image, captcha_input, submit_btn = _locate_otp_captcha_controls(page, wait_ms=2500)
+
+    if image is not None:
+        bot.emit_event(
+            "CAPTCHA_IMAGE_FOUND",
+            step="STEP_2_OTP",
+            result="found",
+            message="تصویر کپچای مرحله پیامک شناسایی شد.",
+            page=page,
+        )
+    else:
+        _log_fa(bot, "تصویر کپچای مرحله پیامک یافت نشد.", "warning", page)
+
+    if captcha_input is not None:
+        bot.emit_event(
+            "CAPTCHA_INPUT_FOUND",
+            step="STEP_2_OTP",
+            result="found",
+            message="فیلد ورودی کپچای مرحله پیامک شناسایی شد.",
+            page=page,
+        )
+    else:
+        _log_fa(bot, "فیلد ورودی کپچای مرحله پیامک یافت نشد.", "warning", page)
+
+    if not image or not captcha_input:
+        return False
+
+    # Respect user typing
+    try:
+        if captcha_input.evaluate("el => el === document.activeElement"):
+            return False
+    except Exception:
+        pass
+
+    min_length = max(1, int(bot.settings.get("captcha_min_length", 4)))
+    max_length = max(min_length, int(bot.settings.get("captcha_max_length", 12)))
+
+    # Check if already filled and valid (unless force_refresh is requested)
+    current_val = (captcha_input.input_value() or "").strip().upper()
+    if not force_refresh and current_val and min_length <= len(current_val) <= max_length and current_val.isalnum():
+        bot._otp_prefilled_captcha = current_val
+        return True
+
+    # If manual captcha is configured
+    if bot.settings.get('pause_for_manual_captcha', False):
+        bot.emit_event(
+            "CAPTCHA_MANUAL_REQUIRED",
+            step="STEP_2_OTP",
+            reason="settings_pause_for_manual",
+            message="ورود دستی کپچا فعال است؛ منتظر اقدام کاربر.",
+            level="warning",
+            page=page,
+        )
+        DBHandler.update_runtime(bot.nid, otp_state='CAPTCHA_REQUIRED')
+        return False
+
+    # Start solving with local model / captcha service
+    bot.emit_event(
+        "CAPTCHA_RECOGNITION_STARTED",
+        step="STEP_2_OTP",
+        message="آغاز پردازش و استخراج خودکار کد کپچا با مدل هوشمند...",
+        page=page,
+    )
+
+    try:
+        # Clear field before solving
+        try:
+            captcha_input.fill("")
+        except Exception:
+            pass
+
+        # Capture image bytes or solve via element
+        source_bytes = bot._capture_captcha_image(image, "otp") if hasattr(bot, "_capture_captcha_image") else None
+        if source_bytes and len(source_bytes) < 600:
+            source_bytes = None
+
+        code = str((bot.captcha_service.solve(source_bytes) if source_bytes else bot.captcha_service.solve_element(image)) or "").strip().upper()
+
+        from bot_select_captcha import validate_captcha_prediction
+        is_valid = bool(re.fullmatch(rf"[0-9A-Z]{{{min_length},{max_length}}}", code)) and validate_captcha_prediction(code, min_length, max_length)
+
+        bot.emit_event(
+            "CAPTCHA_RECOGNITION_RESULT",
+            step="STEP_2_OTP",
+            result=f"code={code}" if is_valid else "invalid",
+            message=f"نتیجه تشخیص مدل کپچا: {code}" if is_valid else f"پاسخ کپچا نامعتبر است: {code}",
+            level="info" if is_valid else "warning",
+            page=page,
+        )
+
+        if not is_valid:
+            DBHandler.append_captcha_attempt(bot.nid, code, "failed", source="otp")
+            # If invalid, trigger a refresh for the next attempt
+            _refresh_captcha_image(bot, page, captcha_rejected=True)
+            return False
+
+        # Fill the input
+        try:
+            BrowserActions.human_fill(captcha_input, code)
+        except Exception:
+            captcha_input.fill(code, timeout=1500)
+
+        try:
+            captcha_input.dispatch_event("change")
+        except Exception:
+            pass
+
+        filled_val = (captcha_input.input_value() or "").strip().upper()
+        if filled_val == code:
+            bot.emit_event(
+                "CAPTCHA_FILLED",
+                step="STEP_2_OTP",
+                result="success",
+                message=f"کپچای مرحله پیامک با مقدار {code} با موفقیت پر شد.",
+                page=page,
+            )
+            bot._otp_prefilled_captcha = code
+            return True
+        else:
+            DBHandler.append_captcha_attempt(bot.nid, code, "fill_failed", source="otp")
+            return False
+
+    except Exception as exc:
+        _log_fa(bot, f"خطا در پردازش خودکار کپچا: {exc}", "warning", page)
+        return False
 
 
 def _solve_otp_captcha_fast(bot, page):
-    """Wait for the OTP-stage CAPTCHA to appear/render and solve it with the local model."""
+    """Wait for the OTP-stage CAPTCHA to appear/render and solve it with the unified solver."""
     from otp_form_detector import detect_otp_form
     form = detect_otp_form(page, timeout_ms=1500)
+    button, otp, captcha = None, None, None
+
     if form.fields:
-        button, otp = form.resolve('continue'), form.resolve('otp')
+        button = form.resolve('continue')
+        otp = form.resolve('otp')
+        captcha = form.resolve('captcha')
         if button is None or otp is None or not otp.input_value().strip():
             return False
         if 'captcha' not in form.fields:
             button.click(timeout=1500)
             return True
-        captcha = form.resolve('captcha')
-        from otp_form_detector import captcha_fingerprint
-        fingerprint = captcha_fingerprint(form)
-        challenge = (getattr(bot, '_otp_request_id', None), fingerprint)
-        previous = getattr(bot, '_otp_captcha_challenge', None)
-        if fingerprint:
-            bot._otp_captcha_challenge = challenge
-        if fingerprint and previous and previous != challenge and captcha is not None:
-            captcha.fill('', timeout=1000)
-            DBHandler.update_runtime(bot.nid, otp_state='CAPTCHA_REQUIRED')
-            return False
-        if captcha is not None and captcha.input_value().strip():
+
+    if button is None or captcha is None:
+        _, captcha_inp, submit_btn = _locate_otp_captcha_controls(page, wait_ms=2000)
+        button = button or submit_btn
+        captcha = captcha or captcha_inp
+
+    captcha_rejected = False
+    if getattr(bot, "_last_dialog_action", None) == "captcha_invalid" or getattr(bot, "_recovery_flags", {}).get("captcha_invalid"):
+        captcha_rejected = True
+        if hasattr(bot, "consume_recovery_flag"):
+            bot.consume_recovery_flag("captcha_invalid")
+        bot._last_dialog_action = None
+
+    min_length = max(1, int(bot.settings.get("captcha_min_length", 4))) if hasattr(bot, "settings") else 4
+    max_length = max(min_length, int(bot.settings.get("captcha_max_length", 12))) if hasattr(bot, "settings") else 12
+
+    current_val = (captcha.input_value() or "").strip().upper() if captcha is not None else ""
+    if not captcha_rejected and current_val and min_length <= len(current_val) <= max_length and current_val.isalnum():
+        if button is not None:
             button.click(timeout=1500)
             return True
-        if bot.settings.get('pause_for_manual_captcha', False):
-            DBHandler.update_runtime(bot.nid, otp_state='CAPTCHA_REQUIRED')
-            return False
-    image, captcha_input, submit_btn = _locate_otp_captcha_controls(page, wait_ms=4000)
-    if not image:
-        _refresh_captcha_image(bot, page)
-        image, captcha_input, submit_btn = _locate_otp_captcha_controls(page, wait_ms=3000)
 
-    if not captcha_input or not image or not submit_btn:
-        missing = []
-        if not image:
-            missing.append("تصویر کپچا")
-        if not captcha_input:
-            missing.append("فیلد کپچا")
-        if not submit_btn:
-            missing.append("دکمه ادامه")
-        _log_fa(bot, f"⏳ منتظر ظاهر شدن المان‌های کپچا در صفحه ({'، '.join(missing)})...", "warning", page)
+    if bot.settings.get('pause_for_manual_captcha', False):
+        bot.emit_event(
+            "CAPTCHA_MANUAL_REQUIRED",
+            step="STEP_2_OTP",
+            reason="settings_pause_for_manual",
+            message="ورود دستی کپچا طبق تنظیمات فعال است.",
+            page=page,
+        )
+        DBHandler.update_runtime(bot.nid, otp_state='CAPTCHA_REQUIRED')
         return False
 
-    stop_event = getattr(bot, "_active_stop_event", None)
-    if stop_event is not None and stop_event.is_set():
-        return False
-    return bot.solve_captcha_with_model(
-        page,
-        captcha_input,
-        submit_btn,
-        stop_event=stop_event,
-        source="otp",
-        captcha_element=image,
+    from bot_select_captcha import solve_step_captcha
+    res = solve_step_captcha(
+        page=page,
+        step_name="STEP_2_OTP",
+        force_refresh=captcha_rejected,
+        max_attempts=1,
+        bot=bot,
+        stop_event=getattr(bot, "_active_stop_event", None),
     )
+    if res.success:
+        bot._otp_prefilled_captcha = res.code
+        if button is not None:
+            button.click(timeout=1500)
+            return True
+        return False
+    return False
 
 
 def get_otp_from_db_fresh(bot):
@@ -395,8 +587,6 @@ def _post_submit_watch(bot, page, stop_event, sleep_with_stop_fn, last_code: str
             return "otp_expired", None, None
         elif fail_type == "captcha" or getattr(bot, "_last_dialog_action", None) == "captcha_invalid":
             bot._last_dialog_action = None
-            _log_fa(bot, "❌ کپچای مرحله پیامک اشتباه بود؛ دریافت تصویر جدید و حل مجدد با مدل...", "warning", page)
-            _refresh_captcha_image(bot, page, captcha_rejected=True)
             return "retry", None, None
         elif getattr(bot, "_last_dialog_action", None) in ("otp_step_capacity_retry", "system_capacity_updating", "bank_capacity_full", "generic_error"):
             dialog_msg = getattr(bot, "_last_dialog_message", "")
@@ -420,7 +610,13 @@ def _run_otp_step(bot, page, stop_event, sleep_with_stop_fn):
     """
     default_ttl = int(bot.settings.get("otp_validity_seconds", 120))
     effective_ttl = _detect_site_otp_ttl(page, default_seconds=default_ttl)
-    otp_issued_at = float(getattr(bot, "_otp_entry_time", 0) or 0) or bot.mark_otp_entry_time()
+    now_ts = time.time()
+    existing_entry = float(getattr(bot, "_otp_entry_time", 0) or 0)
+    # If uninitialized or older than effective TTL, mark a fresh challenge start time & new request ID
+    if not existing_entry or (now_ts - existing_entry >= effective_ttl):
+        otp_issued_at = bot.mark_otp_entry_time(now_ts)
+    else:
+        otp_issued_at = existing_entry
     receive_deadline = time.monotonic() + max(1, int(bot.settings.get("otp_receive_timeout", effective_ttl)))
     manual_required = False
 
@@ -443,6 +639,32 @@ def _run_otp_step(bot, page, stop_event, sleep_with_stop_fn):
         expected_next_step="STEP_3_BANK_SELECT",
         last_operation_result="OTP_REQUIRED",
     )
+    bot.emit_event(
+        "OTP_PAGE_DETECTED",
+        step="STEP_2_OTP",
+        result="detected",
+        message="صفحه تأیید پیامک شناسایی شد.",
+        page=page,
+    )
+    manual_captcha = False
+
+    def begin_manual_captcha(reason):
+        DBHandler.update_runtime(bot.nid, otp_state="MANUAL_OTP_REQUIRED")
+        bot.set_runtime_state("WAITING_USER_INPUT", "MANUAL_CAPTCHA_OR_OTP", browser_status="OPEN")
+        flow = workflow_for(bot)
+        flow.transition("STEP2_CAPTCHA_REQUIRED", reason)
+        for event in ("CAPTCHA_MANUAL_REQUIRED", "MANUAL_REQUIRED", "MANUAL_WAITING"):
+            bot.emit_event(event, step="STEP_2_OTP", reason=reason, result="waiting_for_user", page=page)
+        _log_fa(bot, "منتظر اقدام دستی کاربر (کپچا یا پیامک)؛ مرورگر باز و نشست حفظ می‌شود.", "info", page)
+
+    if bot.settings.get("pause_for_manual_captcha", False):
+        begin_manual_captcha("settings_pause_for_manual")
+        manual_captcha = True
+    else:
+        try:
+            ensure_otp_captcha_prefilled(bot, page, stop_event=stop_event)
+        except Exception as exc:
+            _log_fa(bot, f"پیش‌بارگذاری اولیه کپچا با خطا مواجه شد: {exc}", "warning", page)
 
     try:
         bot.suspend_watchdog(max(180, effective_ttl + 60))
@@ -455,7 +677,7 @@ def _run_otp_step(bot, page, stop_event, sleep_with_stop_fn):
     otp_received_at = 0.0
     otp_not_found_ts = 0.0
     captcha_failures = 0
-    max_captcha_retries = max(3, int(bot.settings.get("captcha_max_retries", 5)))
+    max_captcha_retries = max(1, int(bot.settings.get("otp_captcha_max_retries", bot.settings.get("captcha_max_retries", 10))))
     form_wait_started = 0.0
 
     while not stop_event.is_set():
@@ -491,7 +713,20 @@ def _run_otp_step(bot, page, stop_event, sleep_with_stop_fn):
                 last_operation_result="OTP_ACCEPTED",
             )
             _log_fa(bot, "✅ مرحله انتخاب بانک فعال شد؛ خروج از سیکل OTP.", "success", page)
+            if manual_captcha:
+                from core.otp_queue import OTPQueueManager
+                OTPQueueManager.mark_verified(bot.nid, getattr(bot, "_otp_request_id", None))
+                bot.emit_event("MANUAL_ACCEPTED", step="STEP_2_OTP", result="bank_dom_confirmed", page=page)
+                bot.emit_event("PAGE3_READY", step="STEP_3_BANK_SELECT", result="bank_dom_confirmed", page=page)
             return "bank_ready"
+
+        if manual_captcha:
+            if (getattr(bot, "_recovery_flags", {}).get("session_expired")
+                    or _entry_form_visible_now(page) or time.time() - otp_issued_at >= effective_ttl):
+                return "otp_expired"
+            if sleep_with_stop_fn(stop_event, 0.3):
+                break
+            continue
 
         if _entry_form_visible_now(page):
             if hasattr(bot, "clear_otp_locks"):
@@ -542,6 +777,15 @@ def _run_otp_step(bot, page, stop_event, sleep_with_stop_fn):
                 DBHandler.set_otp(bot.nid, dom_val, ts=time.time(), status="manual",
                                   request_id=getattr(bot, '_otp_request_id', None))
                 _log_fa(bot, "کد تایید دستی دریافت شد؛ در حال بررسی.", "info")
+
+        if not code:
+            ctx = getattr(bot, "ctx", None)
+            if ctx is not None and ctx.is_otp_valid():
+                code = ctx.cached_otp_code
+                source = "context_cache"
+            elif getattr(bot, "_last_retained_otp", None):
+                code = bot._last_retained_otp
+                source = "retained_cache"
 
         if code and not submission_pending:
             digest = hashlib.sha256(str(code).encode()).hexdigest()
@@ -600,14 +844,10 @@ def _run_otp_step(bot, page, stop_event, sleep_with_stop_fn):
             DBHandler.update_runtime(bot.nid, otp_state="VERIFYING_OTP")
             if not submission_pending and not _solve_otp_captcha_fast(bot, page):
                 captcha_failures += 1
-                if bot.settings.get('pause_for_manual_captcha', False):
-                    flow.transition('STEP2_CAPTCHA_REQUIRED', 'current_challenge_needs_user')
-                    if sleep_with_stop_fn(stop_event, .2):
-                        break
-                    continue
                 if captcha_failures >= max_captcha_retries:
-                    flow.transition('PAUSED', 'captcha_attempt_limit')
-                    return 'manual_required'
+                    begin_manual_captcha("captcha_attempt_limit")
+                    manual_captcha = True
+                    continue
                 # Auto-retry with model: refresh image and continue
                 if _detect_failure_type(page, bot) == 'captcha':
                     _refresh_captcha_image(bot, page, captcha_rejected=True)
@@ -635,22 +875,50 @@ def _run_otp_step(bot, page, stop_event, sleep_with_stop_fn):
             bot._set_recovery_flag("otp_expired")
             return "otp_expired"
 
-        if status == "bank":
-            consumed = getattr(bot, "_consumed_otp_digests", set())
-            consumed.add(hashlib.sha256(str(code).encode()).hexdigest())
-            bot._consumed_otp_digests = consumed
+        if status == "retry":
+            submission_pending = False
+            captcha_failures += 1
             record = DBHandler.get_otp_record(bot.nid) or {}
-            DBHandler.set_otp(bot.nid, code, ts=record.get("ts"), status="consumed",
+            if record.get("otp"):
+                DBHandler.set_otp(bot.nid, record["otp"], ts=record.get("ts"), status="received",
+                                  request_id=getattr(bot, "_otp_request_id", None))
+            DBHandler.update_runtime(bot.nid, otp_state="CAPTCHA_RETRY")
+            bot.emit_event("CAPTCHA_REJECTED_BY_SERVER", step="STEP_2_OTP", result="rejected", page=page)
+            _log_fa(bot, f"🔄 کپچای مرحله پیامک نامعتبر بود؛ پاکسازی فیلد و تلاش مجدد روی کپچای جدید ({captcha_failures}/{max_captcha_retries})...", "warning", page)
+            try:
+                _, captcha_inp, _ = _locate_otp_captcha_controls(page, wait_ms=1000)
+                if captcha_inp is not None:
+                    captcha_inp.fill('')
+            except Exception:
+                pass
+            bot._otp_prefilled_captcha = None
+            if captcha_failures >= max_captcha_retries:
+                begin_manual_captcha("captcha_rejection_limit")
+                manual_captcha = True
+                continue
+            _refresh_captcha_image(bot, page, captcha_rejected=True)
+            if sleep_with_stop_fn(stop_event, 0.3):
+                break
+            continue
+
+        if status == "bank":
+            # Retain OTP for Step 3 duration; only mark final consumed upon tracking code
+            record = DBHandler.get_otp_record(bot.nid) or {}
+            DBHandler.set_otp(bot.nid, code, ts=record.get("ts"), status="bank_ready",
                               request_id=getattr(bot, '_otp_request_id', None))
-            from relay_transport import finish as finish_relay
-            finish_relay(bot, consumed=True)
             DBHandler.update_runtime(bot.nid, otp_state="OTP_ACCEPTED")
-            bot._last_retained_otp = None
+            bot._last_retained_otp = code
+            ctx = getattr(bot, "ctx", None)
+            if ctx is not None:
+                ctx.cached_otp_code = code
+                if not ctx.otp_received_at:
+                    ctx.otp_received_at = time.time()
+                ctx.current_state = "S3_BANK_SELECTION"
             from core.otp_queue import OTPQueueManager
             OTPQueueManager.mark_verified(bot.nid, getattr(bot, '_otp_request_id', None))
             if hasattr(bot, "clear_otp_locks"):
                 bot.clear_otp_locks()
-            return "bank_ready"
+            return "bank_ready" 
 
         if status == "retry":
             submission_pending = False
