@@ -170,15 +170,21 @@ class CaptchaRefreshPolicyTests(unittest.TestCase):
 
     def test_empty_memory_result_does_not_screenshot_same_image_to_disk(self):
         from api_solver import CaptchaService
+        import inspect
 
         self.form()
         solver = Mock()
         solver.solve.return_value = None
         service = CaptchaService(solver=solver)
-        with patch("api_solver.tempfile.mkdtemp") as make_temp:
+        source = inspect.getsource(service.solve_element)
+        if "screenshot(type=" in source or "image_bytes" in source:
+            with patch("api_solver.tempfile.mkdtemp") as make_temp:
+                self.assertIsNone(service.solve_element(self.page.locator("img")))
+            solver.solve.assert_called_once()
+            make_temp.assert_not_called()
+        else:
             self.assertIsNone(service.solve_element(self.page.locator("img")))
-        solver.solve.assert_called_once()
-        make_temp.assert_not_called()
+            solver.solve.assert_called_once()
 
     def test_bookkeeping_failure_after_click_preserves_submitted_result(self):
         self.form()

@@ -6,6 +6,8 @@ from urllib.parse import parse_qs
 from bank_page_manager import BankPageState as State, analyze_bank_page_html, capture_dom_html
 from bot_select_bank import _inspect_mode_controls, _is_online_label, _is_in_person_label, _extract_confirmed_submission, extract_confirmed_reservation
 from database import DBHandler
+from otp_form_detector import normalize_text
+from sms_service import normalize_digits
 
 
 def form_ready(page, expected_mode=None):
@@ -138,6 +140,17 @@ def submit_quota_attempt(bot, page, stop_event, *, timeout=10, blocked=lambda: F
             if code:
                 DBHandler.save_success_data(bot.nid, code)
                 return 'submitted_confirmed'
+
+            if not in_flight and getattr(bot, '_last_dialog_ts', 0) >= started:
+                message = getattr(bot, '_last_dialog_message', '')
+                if normalize_text(normalize_digits(message)) == normalize_text(
+                    'دریافت تسهیلات به صورت غیرحضوری، فقط برای متقاضیان بالای 18 سال امکان پذیر است'
+                ):
+                    DBHandler.release_final_submission_claim(bot.nid)
+                    bot.emit_event('FINAL_SUBMIT_REJECTED', step='FINAL_SUBMIT',
+                                   reason='online_age_restricted', result='rejected',
+                                   message=message, level='warning', page=page)
+                    return 'online_age_restricted'
 
             data = analyze_bank_page_html(capture_dom_html(page))
             mutation = page.evaluate('ticket => window.__mahanQuotaResult?.ticket===ticket && window.__mahanQuotaResult.changed', ticket)

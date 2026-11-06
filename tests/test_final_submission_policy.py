@@ -4,7 +4,10 @@ from pathlib import Path
 import threading
 from unittest.mock import Mock
 
-import test_critical_repair as repair
+try:
+    import test_critical_repair as repair
+except ImportError:
+    from tests import test_critical_repair as repair
 from bank_session_controller import BankSelectionSessionController
 from bank_page_manager import BankPageState as State
 from bot_select import BankSelectionBot
@@ -305,9 +308,11 @@ class SubmissionSettingsApiTests(repair.RepairTestCase):
     def test_settings_patch_is_validated_preserves_other_data_and_supports_inheritance(self):
         from fastapi.testclient import TestClient
         from server import app
-        with TestClient(app) as client:
-            url = f'/applicants/{self.nid}/submission-settings'
-            self.assertEqual(client.patch(url, json={'auto_final_submit': False, 'final_submit_interval_seconds': 2.5}).status_code, 200)
+        from unittest.mock import patch
+        with patch('core.deps._session_user', return_value={'username': 'admin', 'is_admin': 1, 'active': 1}), patch('server._session_user', return_value={'username': 'admin', 'is_admin': 1, 'active': 1}):
+            with TestClient(app, cookies={'mahan_session': 'test_token'}) as client:
+                url = f'/applicants/{self.nid}/submission-settings'
+                self.assertEqual(client.patch(url, json={'auto_final_submit': False, 'final_submit_interval_seconds': 2.5}).status_code, 200)
             data = json.loads(DBHandler.get_applicant(self.nid)['data'])
             self.assertIs(data['auto_final_submit'], False)
             self.assertEqual(data['final_submit_interval_seconds'], 2.5)

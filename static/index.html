@@ -1002,6 +1002,74 @@
         </div>
       </div>
 
+      
+      <!-- Page 3 Official Console & Session Diagnostics -->
+      <div class="card mb-4 border-0 shadow-sm" style="background:#ffffff; border-radius:12px; border:1px solid #e2e8f0 !important;">
+        <div class="card-header bg-white border-bottom py-3 d-flex justify-content-between align-items-center flex-wrap gap-2">
+          <div class="d-flex align-items-center gap-2">
+            <span class="stat-icon violet" style="width:36px; height:36px; font-size:1rem;"><i class="fa-solid fa-satellite-dish"></i></span>
+            <div>
+              <h5 class="mb-0 fw-bold text-dark" style="font-size:1rem;">کنسول رسمی مدیریت و پایش استانی صفحه سوم</h5>
+              <small class="text-muted">کنترل ریلود رسمی، تطبیق سهمیه‌ها در سطح استان و اعتبارسنجی نشست</small>
+            </div>
+          </div>
+          <div class="d-flex align-items-center gap-2">
+            <span id="p3SessionBadge" class="badge" style="background-color:#6B7280; color:#fff; font-size:0.85rem; padding:6px 12px; border-radius:20px;">
+              وضعیت نشست: نامشخص (SESSION_UNKNOWN)
+            </span>
+          </div>
+        </div>
+        <div class="card-body">
+          <div class="row g-3 mb-3">
+            <div class="col-md-3">
+              <div class="p-2 rounded border bg-light text-center">
+                <small class="text-muted d-block">ماهیت منبع صفحه</small>
+                <strong id="p3PageModeText" class="text-dark">زنده (LIVE_NETWORK)</strong>
+              </div>
+            </div>
+            <div class="col-md-3">
+              <div class="p-2 rounded border bg-light text-center">
+                <small class="text-muted d-block">آخرین تازه‌سازی رسمی</small>
+                <strong id="p3LastRefreshTime" class="text-dark">در انتظار بررسی</strong>
+              </div>
+            </div>
+            <div class="col-md-3">
+              <div class="p-2 rounded border bg-light text-center">
+                <small class="text-muted d-block">بانک‌های زنده استان</small>
+                <strong id="p3LiveBanksCount" class="text-primary">--</strong>
+              </div>
+            </div>
+            <div class="col-md-3">
+              <div class="p-2 rounded border bg-light text-center">
+                <small class="text-muted d-block">مغایرت منسوخ (STALE_ONLY)</small>
+                <strong id="p3StaleBanksCount" class="text-danger">۰ بانک</strong>
+              </div>
+            </div>
+          </div>
+
+          <div id="p3FailureAlertBox" class="alert alert-warning py-2 mb-3" style="display:none; font-size:0.88rem;">
+            <i class="fa-solid fa-triangle-exclamation me-1"></i>
+            <strong>علت توقف / هشدار:</strong> <span id="p3FailureReasonText"></span>
+          </div>
+
+          <!-- Action Buttons -->
+          <div class="d-flex gap-2 flex-wrap align-items-center">
+            <button id="btnOfficialRefresh" class="btn btn-sm btn-primary action-pill" onclick="triggerOfficialPage3Refresh(prompt('کدملی متقاضی را وارد کنید:'))">
+              <i class="fa-solid fa-arrows-rotate me-1"></i> تازه‌سازی از مسیر رسمی
+            </button>
+            <button class="btn btn-sm btn-outline-secondary action-pill" onclick="inspectSavedPageModal()">
+              <i class="fa-solid fa-file-code me-1"></i> بررسی فایل ذخیره‌شده
+            </button>
+            <button class="btn btn-sm btn-outline-info action-pill" onclick="compareBankListsModal(prompt('کدملی متقاضی را وارد کنید:'))">
+              <i class="fa-solid fa-scale-balanced me-1"></i> مقایسه فهرست‌ها
+            </button>
+            <button class="btn btn-sm btn-outline-dark action-pill" onclick="alert('چک‌پوینت بدون ذخیره اطلاعات محرمانه در پایگاه‌داده نگهداری می‌شود.')">
+              <i class="fa-solid fa-bookmark me-1"></i> ذخیره وضعیت (Checkpoint)
+            </button>
+          </div>
+        </div>
+      </div>
+
       <!-- Tier 1: Active Snipers (کارت‌های پایش زنده و فعال) -->
       <section id="sectionActiveSnipers" class="mb-4">
         <div class="two-tier-header">
@@ -2500,5 +2568,6 @@
   <script src="/static/messages_fa.js?v=20261016-2"></script>
   <script src="/static/script.js?v=20261022-license-1"></script>
   <script src="/static/licensing.js?v=20261022-1"></script>
+  <script src="/static/page3_management.js"></script>
 </body>
 </html>

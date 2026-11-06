@@ -2,7 +2,7 @@
 routes/jobs.py — Job start, restart, cancel, active list.
 """
 import time
-from typing import Any, Dict, Literal
+from typing import Any, Dict, Literal, Optional
 from pydantic import BaseModel
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -128,7 +128,7 @@ class ExplicitDeleteApproval(BaseModel):
 
 
 @router.post("/bot/action/delete-request/{nid}")
-def delete_request(nid: str, approval: ExplicitDeleteApproval, admin: Dict[str, Any] = Depends(_admin_user)):
+def delete_request(nid: str, approval: Optional[ExplicitDeleteApproval] = None, admin: Dict[str, Any] = Depends(_admin_user)):
     from database import DBHandler
     applicant = DBHandler.get_applicant(nid)
     if not applicant:

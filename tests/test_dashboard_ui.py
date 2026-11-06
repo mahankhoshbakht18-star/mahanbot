@@ -107,6 +107,7 @@ class DashboardUiTests(unittest.TestCase):
             self.page.set_viewport_size({'width': 720, 'height': 850})
             self.page.screenshot(path=str(Path(output) / 'bank-panel-720.png'))
 
+    @unittest.skip("Redundant final submit controls removed in commit f46c2b3")
     def test_applicant_submission_controls_preserve_explicit_off_and_patch_only_target(self):
         self.users[0]['data'] = {'auto_final_submit': False, 'final_submit_interval_seconds': 2.5}
         self.page.evaluate('''users => {
@@ -130,6 +131,7 @@ class DashboardUiTests(unittest.TestCase):
         self.assertEqual(self.requests[-1][1], {'final_submit_interval_seconds': 4.5})
         self.assertFalse(second.is_checked())
 
+    @unittest.skip("Redundant final submit controls removed in commit f46c2b3")
     def test_edit_applicant_supports_inherited_and_explicit_submission_preferences(self):
         self.users[0]['data'] = {'auto_final_submit': False, 'final_submit_interval_seconds': 3}
         self.page.evaluate('''users => {

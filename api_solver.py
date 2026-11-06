@@ -22,7 +22,7 @@ class CaptchaService:
         self.solver = solver or ModelCaptchaSolver()
         self.temp_root = os.fspath(temp_root) if temp_root is not None else None
 
-    def solve(self, image_source, mode="general"):
+    def solve(self, image_source, mode="general", *, raise_on_error=False):
         """Solve an image locally; ``mode`` is retained for call compatibility."""
         del mode
         if image_source is None:
@@ -30,6 +30,8 @@ class CaptchaService:
         try:
             return self.solver.solve(image_source)
         except Exception:
+            if raise_on_error:
+                raise
             # A bad screenshot or unavailable model is recoverable by refreshing
             # the CAPTCHA, so callers receive a simple unsuccessful result.
             return None

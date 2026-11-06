@@ -124,8 +124,11 @@ class LicenseClientIntegrationTests(RepairTestCase):
         self.transport.start()
         licensing.clear_cache()
         self.key = self.store.issue('مشتری یکپارچه آزمایشی',30,1)
+        self.session_patch = patch('core.deps._session_user', return_value={'username': 'admin', 'is_admin': 1, 'active': 1, 'expires_at': time.time() + 86400})
+        self.session_patch.start()
 
     def tearDown(self):
+        self.session_patch.stop()
         self.transport.stop();self.url_patch.stop();self.env_license.stop()
         licensing.clear_cache();self.authority.close()
         super().tearDown()

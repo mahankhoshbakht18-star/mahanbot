@@ -117,8 +117,11 @@ class UnifiedOTPFormDetector:
                             roles['resend'].append(item)
                         elif 'btncontinue' in identity or any(w in text for w in ('ادامه', 'تایید', 'تأیید')):
                             roles['continue'].append(item)
-                    if tag == 'img' and ('captcha' in normalize_text(item['src'] + identity)):
-                        roles['image'].append(item)
+                    if tag == 'img':
+                        src_id = normalize_text(item['src'] + ' ' + identity)
+                        if not any(noise in src_id for noise in ('sound', 'reload', 'icon', 'progressbar', 'help', 'ico')):
+                            if 'captcha' in src_id or 'botdetect' in src_id:
+                                roles['image'].append(item)
                 if not roles['otp']:
                     continue
                 if len(roles['otp']) != 1:
@@ -132,8 +135,23 @@ class UnifiedOTPFormDetector:
                     if matches:
                         fields[role] = matches[0]
                 images = roles['image']
-                if len(images) == 1:
-                    fields['image'] = images[0]
+                best_image = None
+                if images:
+                    for img in images:
+                        s_id = normalize_text(img.get('id', '') + ' ' + img.get('src', ''))
+                        if 'captchaimage' in s_id or 'get=image' in s_id:
+                            best_image = img
+                            break
+                    if not best_image:
+                        for img in images:
+                            s_id = normalize_text(img.get('id', '') + ' ' + img.get('src', ''))
+                            if 'captcha2' in s_id:
+                                best_image = img
+                                break
+                    if not best_image and len(images) == 1:
+                        best_image = images[0]
+                if best_image:
+                    fields['image'] = best_image
                 for role, item in list(fields.items()):
                     selector = self._selector(item)
                     if not selector or scope.locator(selector).count() != 1:

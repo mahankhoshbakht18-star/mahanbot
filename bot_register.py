@@ -189,7 +189,7 @@ class RegistrationBot(BotCore):
                         if self._captcha_retry <= self._captcha_retry_limit:
                             self._refresh_captcha_in_place(page, captcha_rejected=True)
                         else:
-                            if bool(self.settings.get("pause_for_manual_captcha", True)):
+                            if bool(self.settings.get("pause_for_manual_captcha", False)):
                                 wait_for_manual_captcha_handoff(
                                     self,
                                     page,
@@ -665,7 +665,7 @@ class RegistrationBot(BotCore):
 
     def _solve_captcha_wrapper(self, page, input_sel, btn_sel, mode):
         del mode
-        max_retries = max(1, int(self.settings.get("captcha_max_retries", 3)))
+        max_retries = max(1, int(self.settings.get("captcha_max_retries", 10)))
         for _ in range(max_retries):
             if self._active_stop_event and self._active_stop_event.is_set():
                 return False
@@ -683,7 +683,7 @@ class RegistrationBot(BotCore):
             else:
                 break
 
-        if bool(self.settings.get("pause_for_manual_captcha", True)):
+        if bool(self.settings.get("pause_for_manual_captcha", False)):
             return wait_for_manual_captcha_handoff(
                 self,
                 page,

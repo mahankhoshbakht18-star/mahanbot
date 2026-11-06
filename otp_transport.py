@@ -40,14 +40,15 @@ def fresh_record(bot, record, now=None):
     owner = getattr(bot, 'live_owner', None)
     if record.get('session_id') and owner is not None and record['session_id'] != owner.session_id:
         return None
+    is_manual = record.get("status") == "manual" or record.get("source") == "manual"
     request_id = record.get("request_id")
-    if request_id and request_id != getattr(bot, "_otp_request_id", None):
+    # For automated messages, ensure request ID matches; for manual user entry, never drop the code
+    if not is_manual and request_id and request_id != getattr(bot, "_otp_request_id", None):
         return None
     issued = float(getattr(bot, "_otp_entry_time", 0) or 0)
     ttl = float(bot.settings.get("otp_validity_seconds", 120))
     if record.get("status") in {"consumed", "expired", "rejected", "submitted"}:
         return None
-    is_manual = record.get("status") == "manual" or record.get("source") == "manual"
     operation = getattr(bot, "OTP_TYPE", "REGISTRATION_OTP")
     if record.get('otp_type') and record['otp_type'] != operation:
         return None
@@ -56,15 +57,13 @@ def fresh_record(bot, record, now=None):
     digest = hashlib.sha256(code.encode()).hexdigest()
     if digest in getattr(bot, "_consumed_otp_digests", set()):
         return None
-    issued = float(getattr(bot, "_otp_entry_time", 0) or 0)
-    ttl = float(bot.settings.get("otp_validity_seconds", 120))
     if not code.isascii() or not code.isdigit() or not 4 <= len(code) <= 8:
         return None
     if not ts:
         return None
     if is_manual:
-        # User manually entered the OTP: accept immediately if within 120s validity window
-        if now - ts > ttl or now - ts < -5 or ts < issued:
+        # User manually entered the OTP: accept immediately if within validity window without strict clock-skew rejection
+        if (not record.get("request_id") and issued and ts < issued) or now - ts > ttl or now - ts < -10:
             return None
         return code
     if ts < issued or not -2 <= now - ts <= ttl or (issued and now - issued >= ttl):

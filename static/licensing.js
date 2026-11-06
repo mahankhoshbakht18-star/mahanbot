@@ -73,7 +73,7 @@
         try {
             const r=await fetch('/auth/me');if(!r.ok)return;
             const me=await r.json();const panel=el('centralLicenseManager');
-            panel.hidden=!me.is_admin || me.edition==='CLIENT';if(panel.hidden)return;
+            panel.hidden=!me.is_admin || me.edition==='CLIENT';if(panel.hidden)return;panel.style.display='';document.body.classList.remove('client-edition');
             const licenses=await api('/admin/licenses');const body=el('licenseRows');body.replaceChildren();
             for(const item of licenses) {
                 const row=document.createElement('tr');

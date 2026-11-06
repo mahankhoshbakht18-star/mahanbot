@@ -204,6 +204,20 @@ class CriticalRepairTests(RepairTestCase):
             self.assertEqual(manual.status_code, 200)
             self.assertEqual(self.bot.get_otp_code(timeout=1), '567890')
 
+    def test_otp_clear_requires_session_or_configured_secret(self):
+        from fastapi.testclient import TestClient
+        from server import app
+        path = f"/otp/clear/{self.nid}"
+        with patch.dict(os.environ, {
+            "MAHANBOT_DISABLE_AUTH": "0", "MAHANBOT_OTP_SECRET": "fixture-secret",
+        }), patch("core.licensing.license_required", return_value=False), TestClient(app) as client:
+            DBHandler.set_otp(self.nid, "123456")
+            self.assertEqual(client.post(path).status_code, 401)
+            self.assertEqual(client.post(path, headers={"X-OTP-Secret": "wrong"}).status_code, 401)
+            self.assertEqual(DBHandler.get_otp_record(self.nid)["otp"], "123456")
+            self.assertEqual(client.post(path, headers={"X-OTP-Secret": "fixture-secret"}).status_code, 200)
+            self.assertFalse((DBHandler.get_otp_record(self.nid) or {}).get("otp"))
+
     def test_ambiguous_waiters_and_unknown_explicit_applicant_are_rejected(self):
         from sms_service import find_active_otp_waiter, route_incoming_sms
         waiters = [{'national_id': nid, 'status': 'منتظر پیامک'} for nid in (self.nid, '0098765432')]
@@ -387,6 +401,83 @@ class ChromiumBankSessionTests(RepairTestCase):
         self.controller.tick(force=True)
         self.assertEqual(self.page.locator('#ctl00_ContentPlaceHolder1_ddlBankName').input_value(), '127')
         self.assertEqual(self.controller.state, State.FINAL_SUBMIT_READY)
+
+    def test_otp_capture_uses_original_pixels_at_browser_zoom(self):
+        import base64
+        import io
+        from PIL import Image
+
+        original = Image.new("RGB", (250, 40), "white")
+        original.paste("green", (120, 0, 250, 40))
+        encoded = io.BytesIO()
+        original.save(encoded, format="PNG")
+        src = "data:image/png;base64," + base64.b64encode(encoded.getvalue()).decode("ascii")
+        self.page.evaluate("""src => {
+            const image = document.createElement('img');
+            image.id = 'otp-captcha-test';
+            image.src = src;
+            image.style.zoom = '1.75';
+            image.style.width = '125px';
+            document.body.appendChild(image);
+        }""", src)
+        self.page.wait_for_function("document.querySelector('#otp-captcha-test').naturalWidth === 250")
+        image = self.page.locator("#otp-captcha-test")
+        captured = self.bot._capture_captcha_image(image, "otp")
+        with Image.open(io.BytesIO(captured)) as actual:
+            self.assertEqual(actual.size, original.size)
+            self.assertEqual(actual.convert("RGB").tobytes(), original.tobytes())
+
+    def test_manual_otp_resumes_bank_controller_in_same_worker(self):
+        LIVE_SESSIONS.release(self.owner)
+        self.bot.settings["otp_captcha_max_retries"] = 1
+        self.bot.settings["pause_for_manual_captcha"] = False
+        self.page.evaluate("""() => {
+            const bank = document.body.innerHTML;
+            document.body.innerHTML = `<form>
+                <input id="ctl00_ContentPlaceHolder1_tbMobileConfCode" maxlength="6">
+                <input id="ctl00_ContentPlaceHolder1_tbCaptcha2">
+                <button type="button" id="ctl00_ContentPlaceHolder1_btnContinue1">ادامه</button>
+            </form>`;
+            document.querySelector('button').onclick = () => { document.body.innerHTML = bank; };
+        }""")
+        url = self.page.url
+        seen = []
+        emit_event = self.bot.emit_event
+
+        def emit(name, **details):
+            seen.append(name)
+            if name == "MANUAL_WAITING":
+                self.assertFalse(self.bot.live_owner.paused)
+                self.assertEqual(DBHandler.get_runtime(self.nid)["status"], "WAITING_USER_INPUT")
+                self.page.locator("#ctl00_ContentPlaceHolder1_tbCaptcha2").fill("TEST5")
+                self.page.locator("#ctl00_ContentPlaceHolder1_btnContinue1").click()
+            return emit_event(name, **details)
+
+        def tick(controller, force=False):
+            self.assertIs(controller.owner, self.bot.live_owner)
+            self.assertIs(controller.owner.page, self.page)
+            self.assertIs(self.page.context, self.context)
+            self.assertEqual(self.page.url, url)
+            self.assertFalse(controller.owner.paused)
+            seen.append("BANK_SELECTION_CONTROLLER")
+            self.stop.set()
+            return "stopped"
+
+        deadline = threading.Timer(12, self.stop.set)
+        self.addCleanup(deadline.cancel)
+        deadline.start()
+        with patch.object(self.bot, "setup_browser", return_value=(self.pw, self.browser, self.context, self.page)) as setup, \
+             patch.object(self.bot, "_safe_goto_guarded"), \
+             patch.object(self.bot, "emit_event", side_effect=emit), \
+             patch("bot_select_otp.get_otp_from_db_fresh", return_value=("123456", "test")), \
+             patch("bot_select_otp.ensure_otp_captcha_prefilled", return_value=False), \
+             patch("bot_select_otp._solve_otp_captcha_fast", return_value=False), \
+             patch("bank_session_controller.BankSelectionSessionController.tick", tick):
+            self.bot.run(self.stop)
+        self.assertEqual(setup.call_count, 1)
+        handoff = ["MANUAL_REQUIRED", "MANUAL_WAITING", "MANUAL_ACCEPTED", "PAGE3_READY", "BANK_SELECTION_CONTROLLER"]
+        self.assertEqual([event for event in seen if event in handoff], handoff)
+        self.assertEqual(len(self.network), 1)
 
     def test_entire_worker_remains_on_page_three_until_explicit_stop(self):
         LIVE_SESSIONS.release(self.owner)

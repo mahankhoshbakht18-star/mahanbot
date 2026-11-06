@@ -20,6 +20,8 @@ _TRUE_VALUES = {"1", "true", "yes", "on"}
 
 def require_reconciled_submission(nid: str):
     checkpoint = DBHandler.get_checkpoint(nid)
+    if checkpoint.get('final_submit_status') in {'pending', 'unknown'}:
+        raise HTTPException(status_code=409, detail='نتیجه ثبت قبلی نامشخص است. برای این متقاضی ابتدا «مشاهده وضعیت» را اجرا کنید.')
     if checkpoint.get('final_submit_status') or checkpoint.get('reserve_confirmed') or DBHandler.has_final_submission(nid):
         raise HTTPException(status_code=409, detail='ابتدا نتیجه درخواست یا رزرو قبلی را از مسیر رسمی بررسی کنید')
 

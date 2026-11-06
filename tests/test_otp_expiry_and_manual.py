@@ -80,9 +80,10 @@ class OtpExpiryAndManualTests(unittest.TestCase):
         locator.input_value.return_value = "654321"
         page = Mock()
         stop = Mock()
-        stop.is_set.side_effect = [False, False, True]
+        stop.is_set.return_value = False
 
-        with patch("bot_select_otp._bank_select_visible_now", return_value=False), \
+        with patch("bot_select_otp.ensure_otp_captcha_prefilled", return_value=False), \
+             patch("bot_select_otp._bank_select_visible_now", return_value=False), \
              patch("bot_select_otp._entry_form_visible_now", return_value=False), \
              patch("bot_select_otp._locate_otp_input", return_value=(locator, page)), \
              patch("bot_select_otp._detect_site_otp_ttl", return_value=120), \

@@ -36,7 +36,7 @@ class LicenseUiTests(unittest.TestCase):
             request_route.fulfill(json={'status':'ok'})
         self.context.route('**/auth/me',auth)
         self.context.route('**/api/license/**',route)
-        self.page.locator('.sidebar-nav').get_by_role('button',name='لایسنس ماهان',exact=True).click()
+        self.page.evaluate("switchView('license')")
         self.page.evaluate('MahanLicense.refresh();MahanLicense.loadManager()')
         self.page.wait_for_function("MahanLicense.getState().state==='not_activated'")
 
@@ -56,7 +56,7 @@ class LicenseUiTests(unittest.TestCase):
 
     def test_manager_issue_renew_revoke_and_customer_text_is_not_html(self):
         self.is_manager=True
-        self.page.evaluate('MahanLicense.loadManager()')
+        self.page.evaluate("switchView('license'); MahanLicense.loadManager()")
         self.page.wait_for_function("!document.getElementById('centralLicenseManager').hidden")
         self.page.on('dialog',lambda dialog:dialog.accept())
         name='<img src=x onerror="window.injected=true"> مشتری آزمایشی'

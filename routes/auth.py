@@ -106,13 +106,13 @@ def logout(request: Request):
 @router.get("/auth/me")
 def auth_me(user: Dict[str, Any] = Depends(_current_user)):
     edition = os.environ.get("MAHANBOT_EDITION", "").strip().upper()
-    is_admin = bool(user["is_admin"])
+    is_admin = bool(user.get("is_admin", False))
     if edition == "CLIENT":
         is_admin = False
     return {
-        "username": user["username"],
+        "username": user.get("username", "admin"),
         "mobile": user.get("mobile") or "",
-        "expires_at": user["expires_at"],
+        "expires_at": user.get("expires_at", 0),
         "is_admin": is_admin,
         "edition": edition or ("ADMIN" if is_admin else "CLIENT"),
     }

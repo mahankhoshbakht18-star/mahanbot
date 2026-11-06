@@ -168,8 +168,8 @@ class CapacityMonitor:
             "waiting_duration_seconds": waiting_duration,
             "last_system_message": self.last_system_message,
             "interval_seconds": round(self.current_interval * self.backoff_factor, 1),
-            "session_active": bool(self.owner.alive and self.owner.bank_page_active),
-            "paused": bool(self.owner.paused),
+            "session_active": bool(getattr(self.owner, "alive", False) and getattr(self.owner, "bank_page_active", False)),
+            "paused": bool(getattr(self.owner, "paused", False)),
             "tracking_code": self.tracking_code or DBHandler.has_final_submission(self.nid) or "",
         }
 

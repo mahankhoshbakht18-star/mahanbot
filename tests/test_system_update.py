@@ -25,9 +25,14 @@ class SystemUpdateTests(unittest.TestCase):
         DBHandler._settings_cache.clear()
         DBHandler.init_db()
         os.environ["MAHANBOT_UPDATE_TARGET_DIR"] = self.temp_dir.name
-        self.client = TestClient(app)
+        import time
+        import core.state as _state
+        _state.AUTH_SESSIONS["test-token"] = {"username": "admin", "role": "admin", "expires_at": time.time() + 3600}
+        self.client = TestClient(app, cookies={_state.AUTH_COOKIE: "test-token"})
 
     def tearDown(self):
+        import core.state as _state
+        _state.AUTH_SESSIONS.pop("test-token", None)
         os.environ.pop("MAHANBOT_UPDATE_TARGET_DIR", None)
         database.DB_PATH = self.old_db
         DBHandler._settings_cache.clear()

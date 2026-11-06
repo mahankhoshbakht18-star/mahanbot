@@ -30,16 +30,9 @@ class DeleteRequestBot(BotCore):
         self._last_busy_log_ts = 0.0
 
     def run(self, stop_event) -> bool:
-        if not (self.settings.get("delete_approved") is True and self.settings.get("delete_confirmed_by")):
-            self.log("حذف ثبت‌نام بدون تأیید صریح مدیر مجاز آغاز نمی‌شود.", "error")
-            return False
         self._active_stop_event = stop_event
-        playwright = None
-        browser = None
-        context = None
-        page = None
 
-        # 1. Verify tracking code existence
+        # 1. Verify tracking code existence first
         data = self.user_data or {}
         tracking_code = str(data.get("tracking_code") or "").strip()
         if not tracking_code or tracking_code == "-":
@@ -51,6 +44,14 @@ class DeleteRequestBot(BotCore):
             self.log(msg, "error")
             DBHandler.update_status(self.nid, "Stopped", msg)
             return False
+
+        if not (self.settings.get("delete_approved") is True and self.settings.get("delete_confirmed_by")):
+            self.log("حذف ثبت‌نام بدون تأیید صریح مدیر مجاز آغاز نمی‌شود.", "error")
+            return False
+        playwright = None
+        browser = None
+        context = None
+        page = None
 
         try:
             playwright, browser, context, page = self.setup_browser(stop_event)

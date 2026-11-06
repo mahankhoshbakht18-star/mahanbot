@@ -157,6 +157,20 @@ class CapacitySnipingTests(repair.RepairTestCase):
         self.assertEqual(self.page.evaluate('fixtureEvents.submits'), 2)
         self.assertFalse(DBHandler.get_checkpoint(self.nid).get('final_submit_status'))
 
+    def test_quota_age_rejection_releases_claim_without_retry(self):
+        self.bot.attach_dialog_handler(self.page)
+        self.page.evaluate("""text => {
+            document.querySelector('#ctl00_ContentPlaceHolder1_btnSave').onclick = () => {
+                fixtureEvents.submits++;
+                alert(text);
+            };
+        }""", "دریافت تسهیلات به صورت غیرحضوری، فقط برای متقاضیان بالای 18 سال امکان پذیر است")
+        self.prepare_and_attempt()
+        self.assertFalse(DBHandler.get_checkpoint(self.nid).get("final_submit_status"))
+        self.clock += 15
+        self.controller.tick(force=True)
+        self.assertEqual(self.page.evaluate("fixtureEvents.submits"), 1)
+
     def test_quota_fresh_post_response_can_reject_without_dom_replacement(self):
         body = f'<span id="ctl00_ContentPlaceHolder1_labErrMsg">{FULL}</span>'
         self.context.route('**/quota-submit', lambda route: route.fulfill(content_type='text/html', body=body))
