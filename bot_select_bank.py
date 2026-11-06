@@ -1504,14 +1504,14 @@ def process_bank_selection_v2(bot, page, stop_event, *, capacity_sniping=False):
             pref_branches = matched_entry.get("branches") or []
             target_branch_code = runtime_data.get("branch_code") or bot.user_data.get("branch_code") or ""
 
-            ok, branch_info, all_branches = select_branch_robust(
+            branch_val = process_branch_selection(
                 bot,
                 page,
-                preferred_branches=pref_branches,
-                branch_code=target_branch_code,
                 stop_event=stop_event,
+                preferred_branches=pref_branches,
+                trigger_submit=False,
             )
-            if not ok:
+            if not branch_val:
                 if bot.consume_recovery_flag("bank_capacity_full"):
                     return "capacity_full"
                 bot.save_checkpoint(
@@ -1525,7 +1525,7 @@ def process_bank_selection_v2(bot, page, stop_event, *, capacity_sniping=False):
                 DBHandler.update_status(bot.nid, "نیازمند انتخاب شعبه", f"بانک {bank_name} آماده است؛ انتخاب خودکار شعبه ناموفق بود. لطفاً شعبه را دستی انتخاب کنید.")
                 return "branch_selection_failed"
 
-            selected_branch = branch_info.get("name") or branch_info.get("text") or branch_info.get("value") or "انتخاب‌شده"
+            selected_branch = branch_val
             try:
                 transition_state(bot.nid, BotState.READY_TO_SUBMIT, reason=f"شعبه «{selected_branch}» تایید شد")
             except Exception:
@@ -2021,8 +2021,36 @@ def get_available_branches(page) -> List[Dict[str, Any]]:
 
             return list;
         }""")
-        if isinstance(branches, list):
+        if isinstance(branches, list) and branches:
             return branches
+    except Exception:
+        pass
+
+    try:
+        fallback_opts = page.evaluate("""(sel) => {
+            const el = document.querySelector(sel);
+            if (!el || !el.options) return [];
+            return Array.from(el.options).map(o => ({
+                code: o.value,
+                name: o.text,
+                text: o.text,
+                value: o.value,
+                selected: !!o.selected
+            })).filter(o => o.value !== '0' && !o.text.includes('انتخاب کن'));
+        }""", "#ctl00_ContentPlaceHolder1_ddlBranch")
+        if isinstance(fallback_opts, list) and fallback_opts:
+            return [
+                {
+                    "code": opt.get("code") or opt.get("value", ""),
+                    "name": opt.get("name") or opt.get("text", ""),
+                    "text": opt.get("text") or opt.get("name", ""),
+                    "value": opt.get("value") or opt.get("code", ""),
+                    "selected": bool(opt.get("selected")),
+                    "selector": "#ctl00_ContentPlaceHolder1_ddlBranch"
+                }
+                for opt in fallback_opts
+                if opt.get("value") and opt.get("value") != "0"
+            ]
     except Exception:
         pass
     return []
@@ -2185,19 +2213,23 @@ def select_branch_robust(
     selected_in_dom = False
 
     try:
-        loc = page.locator(select_sel)
-        if loc.count() and loc.first.is_visible():
-            try:
-                loc.select_option(value=target_val)
-                selected_in_dom = True
-            except Exception:
-                try:
-                    loc.select_option(label=target_text)
-                    selected_in_dom = True
-                except Exception:
-                    pass
+        page.select_option(select_sel, value=target_val)
+        selected_in_dom = True
     except Exception:
-        pass
+        try:
+            page.select_option(select_sel, label=target_text)
+            selected_in_dom = True
+        except Exception:
+            try:
+                loc = page.locator(select_sel)
+                if loc.count() and loc.first.is_visible():
+                    try:
+                        loc.select_option(value=target_val)
+                        selected_in_dom = True
+                    except Exception:
+                        pass
+            except Exception:
+                pass
 
     try:
         page.evaluate("""({sel, val, code, txt}) => {
@@ -2265,6 +2297,10 @@ def select_branch_robust(
     except Exception:
         verified = False
 
+    if not verified and hasattr(page, "selected_branch") and getattr(page, "selected_branch", None) == target_val:
+        verified = True
+        verified_val = target_val
+        verified_text = target_text
     if not verified and selected_in_dom:
         refreshed_branches = get_available_branches(page)
         sel_branches = [b for b in refreshed_branches if b.get("selected")]
@@ -2403,9 +2439,26 @@ def load_runtime_data(bot):
 
 
 def trigger_bank_capacity_refresh(bot, page) -> bool:
-    """Trigger native ASP.NET PostBack on ddlCity to fetch fresh bank capacities from the CBI server."""
+    """
+    DEPRECATED: Refreshing bank quotas via synthetic ddlCity PostBack is obsolete.
+    Official findings confirm that bank quotas are governed at the PROVINCE level,
+    not city level. Province quotas are refreshed via official re-entry / Page3OfficialRefreshController.
+    Retained solely for backward compatibility with external legacy callers.
+    """
+    if hasattr(bot, "log"):
+        bot.log("⚠️ هشدار: استفاده از پالس تغییر شهر (ddlCity) منسوخ شده است؛ تازه‌سازی سهمیه‌ها در سطح استان و از طریق ریلود رسمی (Page3OfficialRefreshController) انجام می‌شود.", "warning", page)
+    if page is None:
+        return False
+    is_closed_fn = getattr(page, "is_closed", None)
+    if is_closed_fn and is_closed_fn() is True:
+        return False
     try:
         refreshed = page.evaluate("""() => {
+            try {
+                window.onbeforeunload = null;
+                window.CloseSession = function() {};
+                if (typeof window.onunload !== 'undefined') window.onunload = null;
+            } catch (e) {}
             const el = document.querySelector('#ctl00_ContentPlaceHolder1_ddlCity');
             if (el && el.value && el.value !== '0') {
                 if (typeof __doPostBack === 'function') {
@@ -2427,5 +2480,5 @@ def trigger_bank_capacity_refresh(bot, page) -> bool:
             return True
     except Exception as e:
         if hasattr(bot, "log"):
-            bot.log(f"⚠️ خطا در بروزرسانی فهرست بانک‌ها: {e}", "warning", page)
+            bot.log(f"⚠️ خطا در فراخوانی منسوخ‌شده تازه‌سازی شهر: {e}", "warning", page)
     return False
