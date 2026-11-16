@@ -1059,115 +1059,11 @@ class BotCore:
 
     def detect_actual_page_stage(self, page) -> str:
         """
-        Compute actual stage from DOM controls, page title, URL, and status messages together.
+        Legacy-compatible stage string from the unified live-DOM detector (SSOT).
         URL alone is NEVER sufficient because ASP.NET keeps the same URL across wizard steps.
         """
-        if page is None:
-            return "UNKNOWN"
-        from urllib.parse import urlparse
-        if urlparse(str(getattr(page, "url", ""))).scheme in {"file", "data"}:
-            return "OFFLINE_SNAPSHOT"
-        try:
-            if page.is_closed():
-                return "BROWSER_CLOSED"
-        except Exception:
-            return "BROWSER_CLOSED"
-
-        try:
-            check_rejection(page)
-        except SiteRejectedError:
-            return "WAF_BLOCKED"
-
-        if self.is_firewall_challenge(page):
-            return "FIREWALL_CHALLENGE"
-
-        # Check tracking code / final success first
-        success_selectors = [
-            "#ctl00_ContentPlaceHolder1_lblTrackingCode",
-            "span[id*='TrackingCode']",
-        ]
-        for sel in success_selectors:
-            try:
-                loc = page.locator(sel)
-                if loc.count() > 0 and loc.first.is_visible():
-                    txt = (loc.first.inner_text() or "").strip()
-                    if txt:
-                        return "DONE"
-            except Exception:
-                continue
-
-        # Check Step 2: OTP Confirmation (Priority over Step 3 on shared SelectBnkShb.aspx wizard)
-        from otp_form_detector import detect_otp_form
-        otp_form = detect_otp_form(page)
-        if otp_form.resolve('otp') is not None:
-            return 'STEP_2_OTP'
-        if otp_form.reason.startswith('ambiguous'):
-            return 'UNKNOWN'
-        otp_selectors = [
-            "#ctl00_ContentPlaceHolder1_tbMobileConfCode",
-            "input[name$='tbMobileConfCode']",
-            "#ctl00_ContentPlaceHolder1_tbMobConfCode",
-        ]
-        if otp_form.inspected or otp_form.reason == 'postback_pending':
-            otp_selectors = []
-        for sel in otp_selectors:
-            try:
-                loc = page.locator(sel)
-                if loc.count() > 0 and loc.first.is_visible():
-                    return "STEP_2_OTP"
-            except Exception:
-                continue
-
-        # Check Step 3: Bank Selection (Strictly requires visible ddlBankName)
-        bank_selectors = [
-            "#ctl00_ContentPlaceHolder1_ddlBankName",
-            "select[name$='ddlBankName']",
-        ]
-        for sel in bank_selectors:
-            try:
-                loc = page.locator(sel)
-                if loc.count() > 0 and loc.first.is_visible():
-                    return "STEP_3_BANK_SELECT"
-            except Exception:
-                continue
-
-        # Check Facility Case Selection Form (SelTasCase.aspx)
-        facility_selectors = [
-            "#ctl00_ContentPlaceHolder1_rbtnNaghdi",
-            "#ctl00_ContentPlaceHolder1_rbtnKala",
-            "input[name$='rbtnNaghdi']",
-            "input[name$='rbtnKala']",
-        ]
-        for sel in facility_selectors:
-            try:
-                loc = page.locator(sel)
-                if loc.count() > 0 and loc.first.is_visible():
-                    return "FACILITY_SELECTION"
-            except Exception:
-                continue
-
-        # Check Step 1: Entry Form (National ID)
-        nid_selectors = [
-            "#ctl00_ContentPlaceHolder1_tbIDNo",
-            "input[name$='tbIDNo']",
-        ]
-        for sel in nid_selectors:
-            try:
-                loc = page.locator(sel)
-                if loc.count() > 0 and loc.first.is_visible():
-                    return "STEP_1_ENTRY_FORM"
-            except Exception:
-                continue
-
-        # Check Residence / Step 3 of initial registration
-        try:
-            loc = page.locator("#ctl00_ContentPlaceHolder1_btnContinue2")
-            if loc.count() > 0 and loc.first.is_visible():
-                return "REGISTER_STEP_3"
-        except Exception:
-            pass
-
-        return "UNKNOWN"
+        from core.stage_detector import detect_current_stage
+        return detect_current_stage(page, bot=self).legacy
 
     def wait_for_aspnet_postback(self, page, timeout_ms: int = 8000) -> bool:
         """Wait for ASP.NET PageRequestManager / waitDiv / UpdatePanel postback to finish."""
@@ -1344,27 +1240,33 @@ class BotCore:
                 )
                 return True
 
-            if not self.register_repeatable_error("watchdog_reload", max_repeats=3):
-                self.set_runtime_state("WAITING_USER_INPUT", "PAUSED_UNRECOVERABLE", browser_status="OPEN", last_error="repeated_watchdog_timeout")
-                DBHandler.update_status(self.nid, "نیازمند بررسی کاربر", "تکرار خطای بارگذاری؛ منتظر اقدام کاربر")
-                self.log("⏸️ تکرار خطای عدم پاسخگویی صفحه؛ عملیات متوقف و منتظر اقدام کاربر است.", "error", page)
-                self.suspend_watchdog(300)
-                return True
-
+            # Phase-1: NEVER page.reload() on UNKNOWN / active / transient missing inputs.
+            # Only dismiss modals (already done) and wait for ASP.NET postback idle.
             try:
-                page.reload(wait_until="domcontentloaded")
-                new_stage = self.detect_actual_page_stage(page)
-                self.emit_event(
-                    "RECOVERY_COMPLETED",
-                    step=new_stage,
-                    reason="watchdog_reload",
-                    result="reloaded",
-                    message=f"بازیابی صفحه انجام شد؛ وضعیت فعلی: {new_stage}",
-                    level="info",
-                    page=page,
-                )
+                self.wait_for_aspnet_postback(page, timeout_ms=3500)
             except Exception:
                 pass
+            if not self.register_repeatable_error("watchdog_no_reload", max_repeats=5):
+                self.set_runtime_state(
+                    "WAITING_USER_INPUT",
+                    "PAUSED_UNRECOVERABLE",
+                    browser_status="OPEN",
+                    last_error="repeated_watchdog_timeout_no_reload",
+                )
+                DBHandler.update_status(self.nid, "نیازمند بررسی کاربر", "تکرار خطای بارگذاری؛ ریلود ممنوع — منتظر اقدام کاربر")
+                self.log("⏸️ تکرار خطای عدم پاسخگویی صفحه؛ ریلود کامل ممنوع است و منتظر اقدام کاربر می‌مانیم.", "error", page)
+                self.suspend_watchdog(300)
+                return True
+            self.emit_event(
+                "RECOVERY_COMPLETED",
+                step=actual_stage,
+                reason="reload_forbidden",
+                result="wait_postback_or_manual",
+                message=f"وضعیت {actual_stage}: ریلود کامل ممنوع؛ فقط انتظار postback/DOM.",
+                level="warning",
+                page=page,
+            )
+            self.suspend_watchdog(20)
             return True
         finally:
             self._recovery_in_progress = False

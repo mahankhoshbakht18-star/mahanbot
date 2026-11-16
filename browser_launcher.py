@@ -616,7 +616,10 @@ def launch_browser(profile: Dict[str, Any]) -> Tuple[Any, Any, Any, Any]:
     try:
         if sync_playwright is None:
             raise RuntimeError("playwright is not installed in this environment")
-        playwright = sync_playwright().start()
+        from core.browser_pool import get_shared_playwright
+        # One process-wide Playwright driver; never start/stop per applicant.
+        playwright = get_shared_playwright()
+        setattr(playwright, "_mahan_shared", True)
         selected_browser = normalized["browser"]
         browser_type = getattr(playwright, "chromium" if selected_browser in {"chrome", "edge"} else selected_browser)
         launch_options: Dict[str, Any] = {
@@ -688,17 +691,27 @@ def launch_browser(profile: Dict[str, Any]) -> Tuple[Any, Any, Any, Any]:
             "height": geom["height"],
         }
 
+        from core.browser_pool import acquire_context, install_resource_guards
         if normalized["user_data_dir"]:
             if not normalized.get("start_maximized", False):
                 _sanitize_chromium_preferences_window_placement(normalized["user_data_dir"], geom)
-            context = browser_type.launch_persistent_context(
-                normalized["user_data_dir"],
-                **launch_options,
+            browser, context = acquire_context(
+                playwright,
+                browser_type,
+                launch_options,
+                user_data_dir=normalized["user_data_dir"],
                 viewport=effective_viewport,
             )
         else:
-            browser = browser_type.launch(**launch_options)
-            context = browser.new_context(viewport=effective_viewport)
+            browser, context = acquire_context(
+                playwright,
+                browser_type,
+                launch_options,
+                user_data_dir=None,
+                viewport=effective_viewport,
+            )
+        # Defense in depth if acquire path skipped guards
+        install_resource_guards(context)
 
         zoom_level = normalized.get("page_zoom", 1.0)
         if zoom_level and zoom_level != 1.0:
@@ -842,6 +855,9 @@ def close_browser(playwright, browser, context, page, reason: Optional[str] = No
         _remember_window_bounds_before_close(page, context)
     except Exception:
         pass
+    shared_browser = bool(getattr(browser, "_mahan_shared", False)) if browser is not None else False
+    shared_ctx = bool(getattr(context, "_mahan_shared_browser", False)) if context is not None else False
+    shared_pw = bool(getattr(playwright, "_mahan_shared", False)) if playwright is not None else False
     try:
         if page:
             page.close()
@@ -852,13 +868,14 @@ def close_browser(playwright, browser, context, page, reason: Optional[str] = No
             context.close()
     except Exception:
         pass
+    # Shared pool Browser/Playwright must survive applicant teardown.
     try:
-        if browser:
+        if browser and not (shared_browser or shared_ctx):
             browser.close()
     except Exception:
         pass
     try:
-        if playwright:
+        if playwright and not shared_pw:
             playwright.stop()
     except Exception:
         pass

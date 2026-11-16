@@ -44,7 +44,7 @@ class Page3State(str, enum.Enum):
 # Default timeouts in seconds per state
 DEFAULT_STATE_TIMEOUTS: Dict[Page3State, float] = {
     Page3State.WAITING_FOR_AUTH: 30.0,
-    Page3State.OTP_REQUIRED: 120.0,
+    Page3State.OTP_REQUIRED: 115.0,
     Page3State.OTP_VERIFIED: 15.0,
     Page3State.PAGE3_LOADING: 25.0,
     Page3State.PAGE3_READY: 180.0,
@@ -229,6 +229,24 @@ class ApplicantPage3StateMachine:
             self.paused_state = None
             return self.transition(target, reason=reason)
         return False
+
+    def sync_from_live_dom(self, page, bot=None) -> Optional[Page3State]:
+        """Align Page3 FSM with unified detect_current_stage (SSOT) without inventing transitions."""
+        from core.stage_detector import detect_current_stage, PAGE_3_BANK_STAGE, SMS_OTP_STAGE, COMPLETED, SESSION_EXPIRED, NATIONAL_ID_STAGE
+        det = detect_current_stage(page, bot=bot)
+        target_map = {
+            PAGE_3_BANK_STAGE: Page3State.PAGE3_READY,
+            SMS_OTP_STAGE: Page3State.OTP_REQUIRED,
+            COMPLETED: Page3State.REGISTRATION_CONFIRMED,
+            SESSION_EXPIRED: Page3State.SESSION_EXPIRED,
+            NATIONAL_ID_STAGE: Page3State.WAITING_FOR_AUTH,
+        }
+        target = target_map.get(det.stage)
+        if target is None or target == self.current_state:
+            return self.current_state
+        if self.transition(target, reason=f"ssot:{det.reason or det.stage}"):
+            return self.current_state
+        return None
 
     def to_dict(self) -> Dict[str, Any]:
         return {

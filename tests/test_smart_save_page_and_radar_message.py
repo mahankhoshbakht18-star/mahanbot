@@ -77,6 +77,33 @@ class TestSmartSavePageAndRadarMessage(unittest.TestCase):
         self.assertIn("۲,۱۰۰", msg)
         self.assertIn("پایش فعال ظرفیت", msg)
 
+    @patch.object(TelegramNotifierService, "send_raw_telegram", return_value=(True, "OK"))
+    def test_page3_banks_broadcast_directly_to_channel(self, mock_send):
+        active = [{"bank_name": "ملت", "waiting_count": 10}]
+        reserve = [{"bank_name": "تجارت", "waiting_count": 20}]
+        with patch.object(TelegramNotifierService, "get_channel_id", return_value="-1003720759140"):
+            ok1, detail1 = self.notifier.broadcast_page3_banks_to_channel(
+                province_name="فارس",
+                active_banks=active,
+                reserve_banks=reserve,
+                provincial_only=True,
+            )
+            ok2, detail2 = self.notifier.broadcast_page3_banks_to_channel(
+                province_name="فارس",
+                active_banks=active,
+                reserve_banks=reserve,
+                provincial_only=True,
+            )
+        self.assertTrue(ok1)
+        self.assertEqual(detail1, "sent")
+        self.assertFalse(ok2)
+        self.assertEqual(detail2, "duplicate_digest")
+        self.assertGreaterEqual(mock_send.call_count, 1)
+        sent_text = mock_send.call_args_list[0][0][1]
+        self.assertIn("ملت", sent_text)
+        self.assertIn("تجارت", sent_text)
+        self.assertIn("فارس", sent_text)
+
 
 if __name__ == "__main__":
     unittest.main()

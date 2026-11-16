@@ -523,7 +523,9 @@ class BankSelectionSessionController:
                     return 'confirmed'
 
                 if result == 'no_match':
-                    poll_interval = max(3.0, float(bot.settings.get("bank_list_refresh_seconds", bot.settings.get("bank_refresh_interval", 5.0))))
+                    from core.aspnet_postback import QUOTA_POLL_INTERVAL_SEC
+                    configured = float(bot.settings.get("bank_list_refresh_seconds", bot.settings.get("bank_refresh_interval", QUOTA_POLL_INTERVAL_SEC)))
+                    poll_interval = QUOTA_POLL_INTERVAL_SEC if configured in (0, 5, 5.0) or configured < QUOTA_POLL_INTERVAL_SEC else configured
                     now = self._monotonic()
                     self._next_bank_poll = now + poll_interval
                     if not getattr(self, "_bank_not_found_since", 0):
@@ -533,10 +535,10 @@ class BankSelectionSessionController:
                         bot.nid,
                         status="پایش بانک‌ها",
                         current_step="PREFERRED_BANK_NOT_FOUND",
-                        last_error=f"بانک اولویت‌دار در فهرست باز نیست؛ در حال پایش مداوم (بررسی بعدی در {int(poll_interval)} ثانیه)...",
+                        last_error=f"بانک اولویت‌دار در فهرست استانی باز نیست؛ ریلود رسمی صفحه ۳ در {int(poll_interval)}ث...",
                         next_refresh=time.time() + poll_interval,
                         check_interval=poll_interval,
-                        check_method="live_poll",
+                        check_method="official_page3_reload",
                     )
                 else:
                     self._bank_not_found_since = 0
@@ -548,7 +550,10 @@ class BankSelectionSessionController:
             return 'waiting' 
 
     def reload_and_redetect(self):
-        """Native reload is not an authentication shortcut; classify its actual result."""
+        """
+        Official Page-3 bank refresh: province quotas update only after real page.reload
+        (or GET re-entry if the current document was a POST). ddlCity does nothing for quotas.
+        """
         bot, owner = self.bot, self.owner
         owner.assert_owner()
         if owner.paused or owner.cancellation_token.is_set() or self._blocked:
@@ -562,11 +567,13 @@ class BankSelectionSessionController:
             return 'waiting'
         flow = workflow_for(bot)
         flow.bind(owner.page)
-        interval = max(1.0, float(bot.settings.get('bank_list_refresh_seconds', bot.settings.get('bank_refresh_interval', 5))))
+        from core.aspnet_postback import QUOTA_POLL_INTERVAL_SEC, refresh_page3_banks_via_official_reload
+        configured = float(bot.settings.get('bank_list_refresh_seconds', bot.settings.get('bank_refresh_interval', QUOTA_POLL_INTERVAL_SEC)))
+        interval = QUOTA_POLL_INTERVAL_SEC if configured <= 0 or configured in (5.0, 5) else max(QUOTA_POLL_INTERVAL_SEC, configured)
         if self._monotonic() < self._next_bank_poll:
             return 'waiting'
         self._next_bank_poll = self._monotonic() + interval
-        flow.transition('RELOAD_PENDING', 'configured_native_reload')
+        flow.transition('RELOAD_PENDING', 'official_page3_reload_for_province_quota')
         if hasattr(self, "refresh_controller") and self.refresh_controller:
             try:
                 self.refresh_controller.create_checkpoint()
@@ -577,34 +584,48 @@ class BankSelectionSessionController:
         owner.bank_page_active = False
         try:
             timeout = int(bot.settings.get('navigation_timeout_ms', 15000))
-            if flow.last_navigation_method == 'POST':
-                from urllib.parse import urlsplit
-                target = urlsplit(owner.page.url)
-                if target.hostname not in {'ve.cbi.ir', '127.0.0.1', 'localhost'} or target.scheme not in {'http', 'https'}:
+            ok, reason = refresh_page3_banks_via_official_reload(
+                owner.page,
+                bot=bot,
+                timeout_ms=timeout,
+                last_navigation_method=getattr(flow, 'last_navigation_method', 'GET') or 'GET',
+            )
+            if not ok:
+                if owner.page.is_closed():
+                    flow.transition('FAILED', 'target_closed')
+                    return 'stopped'
+                if 'unsafe_navigation_target' in str(reason):
                     self.transition(State.MANUAL_ACTION_REQUIRED, 'unsafe_navigation_target')
                     return 'waiting'
-                # Reloading a POST document resends its payload. Use the official GET entry instead.
-                target_url = target.scheme + '://' + target.netloc + getattr(bot, '_workflow_entry_path', '/SelectBnkShb.aspx')
-                if urlsplit(target_url).netloc != target.netloc:
-                    self.transition(State.MANUAL_ACTION_REQUIRED, 'unsafe_navigation_target')
-                    return 'waiting'
-                owner.page.goto(target_url, wait_until='domcontentloaded', timeout=timeout)
-            else:
-                owner.page.reload(wait_until='domcontentloaded', timeout=timeout)
+                if hasattr(bot, 'log'):
+                    bot.log(f"ریلود رسمی صفحه ۳ ناموفق بود ({reason})؛ DOM پس از خطا بازخوانی می‌شود.", "warning", owner.page)
         except Exception:
             if owner.page.is_closed():
                 flow.transition('FAILED', 'target_closed')
                 return 'stopped'
-            # A timeout can occur after navigation commits. Inspect before acting.
         self._prepared = False
-        detection = flow.redetect(owner.page, 'post_reload_navigation')
+        detection = flow.redetect(owner.page, 'post_official_page3_reload')
         self._next_bank_poll = self._monotonic() + interval
+        # OTP expired / session dead after reload → full cycle restart from Step 1
+        if detection.state == 'SESSION_EXPIRED' or 'otp_expired' in (detection.visible_errors or []):
+            owner.bank_page_active = False
+            if hasattr(bot, '_set_recovery_flag'):
+                bot._set_recovery_flag('otp_expired')
+            return 'reauthenticate'
         if detection.state in {'STEP2_OTP_REQUIRED', 'STEP2_CAPTCHA_REQUIRED', 'STEP2_READY_TO_CONTINUE'}:
+            owner.bank_page_active = False
+            # If OTP window already dead, do not try soft re-entry — restart cycle
+            ctx = getattr(bot, 'ctx', None)
+            if ctx is not None and hasattr(ctx, 'is_otp_valid') and not ctx.is_otp_valid():
+                if hasattr(bot, '_set_recovery_flag'):
+                    bot._set_recovery_flag('otp_expired')
+                return 'reauthenticate'
             return 'cycle_otp'
         if detection.state in {'STEP1_IDENTIFICATION', 'STEP1_CAPTCHA_REQUIRED'}:
+            owner.bank_page_active = False
+            if hasattr(bot, '_set_recovery_flag'):
+                bot._set_recovery_flag('otp_expired')
             return 'entry_form'
-        if detection.state == 'SESSION_EXPIRED':
-            return 'reauthenticate'
         if detection.state == 'STEP3_ACTIVE':
             owner.bank_page_active = True
             if hasattr(self, "refresh_controller") and self.refresh_controller:
@@ -612,7 +633,7 @@ class BankSelectionSessionController:
                     self.refresh_controller.reenter_and_calculate_diff()
                 except Exception:
                     pass
-            self.transition(State.BANK_OPTIONS_READY, 'refreshed_step3')
+            self.transition(State.BANK_OPTIONS_READY, 'refreshed_step3_official_reload')
             return 'waiting'
         self.transition(State.MANUAL_ACTION_REQUIRED, detection.reason)
         return 'waiting'

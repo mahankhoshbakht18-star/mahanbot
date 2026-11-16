@@ -103,6 +103,9 @@ class TestPage3ComprehensiveSuite(unittest.TestCase):
         mock_bot = MagicMock(nid="1112223334", state_name="تهران")
         mock_page = MagicMock()
         mock_page.is_closed.return_value = False
+        mock_page.url = "https://ve.cbi.ir/SelectBnkShb.aspx"
+        # Official Page-3 refresh uses disarm evaluate + page.reload
+        mock_page.evaluate.return_value = ""
         mock_page.reload.side_effect = RuntimeError("net::ERR_CONNECTION_RESET")
 
         ctrl = Page3OfficialRefreshController(mock_bot, mock_page)

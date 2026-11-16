@@ -67,21 +67,32 @@ class PostbackSynchronizer:
         selector: str,
         value: str,
         timeout_ms: int = 7000,
+        label: str = "",
     ) -> bool:
         """
         Select an option in an ASP.NET dropdown and wait for the resulting postback.
-        Ensures value is set in DOM and change event triggers UpdatePanel refresh.
+        Prefer label when duplicate values exist. Never fires a second synthetic __doPostBack.
         """
         try:
+            from core.aspnet_postback import read_viewstate, wait_for_viewstate_change
             locator = page.locator(selector).first
             if not locator.is_visible(timeout=timeout_ms):
                 return False
 
-            # Select the option value
-            locator.select_option(value=value)
+            previous_vs = read_viewstate(page)
+            selected = False
+            if label:
+                try:
+                    locator.select_option(label=label)
+                    selected = True
+                except Exception:
+                    selected = False
+            if not selected:
+                locator.select_option(value=value)
             locator.dispatch_event("change")
 
-            # Wait for ASP.NET to process and finish postback
-            return cls.wait_for_postback_complete(page, timeout_ms=timeout_ms)
+            ok = cls.wait_for_postback_complete(page, timeout_ms=timeout_ms)
+            wait_for_viewstate_change(page, previous_vs, timeout_ms=min(2500, timeout_ms))
+            return ok
         except Exception:
             return False

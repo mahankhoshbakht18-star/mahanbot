@@ -179,10 +179,15 @@ class RegistrationBot(BotCore):
                             self._consumed_otp_digests.clear()
                         self.log("🔄 کد تایید منقضی شد؛ بازگشت به صفحه اول ثبت‌نام جهت صدور کد جدید...", "warning", page)
                         DBHandler.update_status(self.nid, "کد منقضی - شروع مجدد", "کد تایید منقضی شد؛ بازگشت به مرحله ۱")
+                        # Explicit otp_expired flag only: navigate to entry form. Never page.reload().
                         try:
                             self._safe_goto(page, getattr(self, "target_url", "https://ve.cbi.ir/TasRequest.aspx"))
                         except Exception:
-                            page.reload()
+                            self.log("بازگشت به مرحله ۱ بدون ریلود کامل ناموفق بود؛ انتظار DOM...", "warning", page)
+                            try:
+                                self.wait_for_aspnet_postback(page, timeout_ms=3500)
+                            except Exception:
+                                pass
                         continue
 
                     if self.consume_recovery_flag("captcha_invalid"):
@@ -199,11 +204,9 @@ class RegistrationBot(BotCore):
                                     source="register_captcha",
                                 )
                             else:
+                                # Soft reset retry counter and refresh ONLY the captcha image (no page.reload).
                                 self._captcha_retry = 0
-                                try:
-                                    page.reload()
-                                except Exception:
-                                    pass
+                                self._refresh_captcha_in_place(page, captcha_rejected=True)
                         continue
 
                     if self.consume_recovery_flag("generic_error"):

@@ -12,7 +12,6 @@ from core.bank_selection.catalog_parser import BankCatalogParser
 from core.bank_selection.quota_classifier import BankQuotaClassifier, QuotaStatus
 from core.bank_selection.postback_sync import PostbackSynchronizer
 from core.step3_bank_page import Step3BankPage
-from core.telegram_notifier import TelegramNotifierService
 from database import DBHandler
 
 logger = logging.getLogger("mahanbot.bank_orchestrator")
@@ -154,20 +153,15 @@ class BankSelectionOrchestrator:
                 for o in options if o.is_reserve
             ]
 
-            notifier = TelegramNotifierService()
-            msg = notifier.format_beautiful_radar_message(
+            from core.telegram_notifier import TELEGRAM_NOTIFIER
+            TELEGRAM_NOTIFIER.broadcast_page3_banks_to_channel(
                 province_name=prov,
                 city_name=city,
                 active_banks=active_banks,
                 reserve_banks=reserve_banks,
                 applicant_nid=str(self.bot.nid),
-                action_status="پایش فعال ظرفیت"
+                action_status="پایش فعال ظرفیت",
+                provincial_only=True,
             )
-            admin_cid = notifier.get_admin_chat_id()
-            if admin_cid:
-                notifier.send_raw_telegram(admin_cid, msg)
-            channel_cid = notifier.get_channel_id()
-            if channel_cid and channel_cid != admin_cid:
-                notifier.send_raw_telegram(channel_cid, msg)
         except Exception as e:
             logger.debug(f"Radar broadcast ignored error: {e}")

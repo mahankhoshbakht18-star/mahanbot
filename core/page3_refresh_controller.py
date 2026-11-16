@@ -28,7 +28,7 @@ class Page3OfficialRefreshController:
         fsm: Optional[ApplicantPage3StateMachine] = None,
         bank_monitor: Optional[ProvinceBankMonitor] = None,
         max_reload_attempts: int = 3,
-        otp_validity_window_sec: float = 120.0,
+        otp_validity_window_sec: float = 115.0,
     ):
         self.bot = bot
         self.page = page
@@ -36,7 +36,7 @@ class Page3OfficialRefreshController:
         self.fsm = fsm or ApplicantPage3StateMachine(self.applicant_nid, Page3State.PAGE3_READY)
         self.bank_monitor = bank_monitor or ProvinceBankMonitor(getattr(bot, "state_name", "سراسری"))
         self.max_reload_attempts = max(1, int(max_reload_attempts))
-        self.otp_validity_window_sec = float(otp_validity_window_sec)
+        self.otp_validity_window_sec = min(115.0, float(otp_validity_window_sec))
 
         self._reload_lock = threading.Lock()
         self._reload_attempts = 0
@@ -99,13 +99,11 @@ class Page3OfficialRefreshController:
         self.fsm.transition(Page3State.CHECKPOINT_SAVED, reason="checkpoint_captured_safely")
         return checkpoint
 
-    # ── Stage 2: Controlled Reload Execution ─────────────────────────────
+    # ── Stage 2: Official Page-3 reload (province quota refresh) ─────────
     def execute_controlled_reload(self, timeout_ms: int = 25000) -> Tuple[bool, str]:
         """
-        Stage 2: Execute official controlled reload under strict safety guards:
-        - Prevents concurrent reloads
-        - Prevents reload while a final submission is pending
-        - Aborts if max retry attempts exceeded
+        Stage 2: Official page.reload / GET re-entry for province-level bank quotas.
+        ddlCity changes do NOT refresh quotas. OTP/Step1 paths must not call this.
         """
         if not self._reload_lock.acquire(blocking=False):
             return False, "concurrent_reload_blocked"
@@ -122,19 +120,28 @@ class Page3OfficialRefreshController:
             self._reload_attempts += 1
             self.fsm.transition(Page3State.RELOADING, reason=f"attempt_{self._reload_attempts}_of_{self.max_reload_attempts}")
 
-            # Disarm logout trap before reload
+            from core.aspnet_postback import refresh_page3_banks_via_official_reload
+            method = "GET"
             try:
-                self.page.evaluate("""() => {
-                    window.onbeforeunload = null;
-                    window.CloseSession = function() {};
-                    if (typeof window.onunload !== 'undefined') window.onunload = null;
-                }""")
+                from core.loan_workflow import workflow_for
+                method = getattr(workflow_for(self.bot), "last_navigation_method", "GET") or "GET"
+            except Exception:
+                method = "GET"
+            logger.info(
+                f"[{self.applicant_nid}] Official Page-3 reload for province quota "
+                f"(Attempt {self._reload_attempts}; ddlCity ignored)..."
+            )
+            ok, reason = refresh_page3_banks_via_official_reload(
+                self.page, bot=self.bot, timeout_ms=timeout_ms, last_navigation_method=method
+            )
+            if not ok:
+                self.fsm.transition(Page3State.ERROR, reason="official_reload_failed", error=reason)
+                return False, reason
+            try:
+                self.fsm.sync_from_live_dom(self.page, bot=self.bot)
             except Exception:
                 pass
-
-            logger.info(f"[{self.applicant_nid}] Executing official controlled reload (Attempt {self._reload_attempts})...")
-            self.page.reload(wait_until="domcontentloaded", timeout=timeout_ms)
-            return True, "reload_dispatched"
+            return True, reason or "official_reload_dispatched"
 
         except Exception as exc:
             self.fsm.transition(Page3State.ERROR, reason="reload_exception", error=str(exc))
@@ -146,10 +153,7 @@ class Page3OfficialRefreshController:
     # ── Stage 3: Destination Page Detection ──────────────────────────────
     def detect_destination_stage(self) -> Dict[str, Any]:
         """
-        Stage 3: Inspect destination page after reload:
-        - Is it still Page 3?
-        - Did it return to Step 2 OTP (SelTasCase.aspx)?
-        - Is it a maintenance or security gate?
+        Stage 3: Inspect destination after soft postback using unified stage detector + diagnostics.
         """
         if not self.page or getattr(self.page, "is_closed", lambda: False)():
             self.fsm.transition(Page3State.ERROR, reason="browser_closed_after_reload")
@@ -182,21 +186,28 @@ class Page3OfficialRefreshController:
             self.fsm.transition(Page3State.SESSION_EXPIRED, reason="otp_window_expired")
             return {"destination": "OTP_EXPIRED", "diagnostics": diagnostics}
 
-        if "seltcase.aspx" in url or "ctl00_ContentPlaceHolder1_tbPass" in html:
+        from core.stage_detector import detect_current_stage, PAGE_3_BANK_STAGE, SMS_OTP_STAGE, NATIONAL_ID_STAGE
+        det = detect_current_stage(self.page, bot=self.bot)
+        if det.stage == SMS_OTP_STAGE or "seltcase.aspx" in url or "ctl00_ContentPlaceHolder1_tbPass" in html:
             self.fsm.transition(Page3State.OFFICIAL_REENTRY_REQUIRED, reason="returned_to_otp_step")
             return {
                 "destination": "OTP_FORM",
                 "diagnostics": diagnostics,
                 "can_reenter_with_cached_otp": (time.time() - otp_time) < self.otp_validity_window_sec if otp_time else False,
+                "ssot_stage": det.stage,
             }
 
-        if "selectbnkshb.aspx" in url or "ctl00_ContentPlaceHolder1_ddlBankName" in html:
-            self.fsm.transition(Page3State.PAGE3_READY, reason="retained_page3_after_reload")
-            return {"destination": "PAGE3_ACTIVE", "diagnostics": diagnostics}
+        if det.stage == PAGE_3_BANK_STAGE or "selectbnkshb.aspx" in url or "ctl00_ContentPlaceHolder1_ddlBankName" in html:
+            self.fsm.transition(Page3State.PAGE3_READY, reason="retained_page3_after_official_reload")
+            return {"destination": "PAGE3_ACTIVE", "diagnostics": diagnostics, "ssot_stage": det.stage}
+
+        if det.stage == NATIONAL_ID_STAGE:
+            self.fsm.transition(Page3State.SESSION_EXPIRED, reason="regressed_to_national_id")
+            return {"destination": "ENTRY_FORM", "diagnostics": diagnostics, "ssot_stage": det.stage}
 
         # Any other unexpected redirect
         self.fsm.transition(Page3State.RECOVERY_REQUIRED, reason=f"unexpected_destination_{url}")
-        return {"destination": "UNKNOWN", "diagnostics": diagnostics}
+        return {"destination": "UNKNOWN", "diagnostics": diagnostics, "ssot_stage": det.stage}
 
     # ── Stage 4: Re-entry & Bank List Differential ───────────────────────
     def reenter_and_calculate_diff(self) -> Dict[str, Any]:

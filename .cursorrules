@@ -1,0 +1,22 @@
+# MAHANBOT Project Rules & Architecture Context
+
+## 1. Domain & Target System (ve.cbi.ir)
+- Target is an ASP.NET WebForms portal (`https://ve.cbi.ir/DefaultVE.aspx` / `SelectBnkShb.aspx`).
+- State is strictly tied to hidden fields: `__VIEWSTATE`, `__VIEWSTATEGENERATOR`, `__EVENTVALIDATION`, `__EVENTTARGET`, and `__EVENTARGUMENT`.
+- Bank quotas are PROVINCE-level (province is chosen only during registration). Changing `ddlCity` on Page 3 does NOT refresh bank quotas.
+- Page 3 bank-list refresh MUST use official `page.reload()` (or GET re-entry to `/SelectBnkShb.aspx` when the document was loaded via POST). Do NOT use `ddlCity` / synthetic bank postback as a quota sniper.
+- Never `page.reload()` on OTP / national-id / UNKNOWN recovery paths; there preserve session with CAPTCHA image refresh, modal dismiss, or ASP.NET idle waits.
+- Workflow: NATIONAL_ID+CAPTCHA -> SMS_OTP(+CAPTCHA) -> PAGE_3 bank select (in-person/non-presential) -> final submit+tracking code; if preferred bank missing -> official Page3 reload and re-check; if OTP expired after reload -> restart full cycle from Step 1.
+
+## 2. Tech Stack & Hardware Constraints
+- Stack: Python 3.10+, FastAPI, Playwright (Async API), SQLite (aiosqlite/WAL mode), PyTorch / ddddocr / OpenCV for CAPTCHA.
+- Hardware Constraint: Local machine has NVIDIA GTX 1650 (4GB VRAM). Keep CAPTCHA inference models lightweight (CPU or quantized/shared singleton on GPU) so multiple worker instances never cause CUDA Out-Of-Memory (OOM).
+- Browser Stability: Never close or recreate the whole Browser instance on recoverable errors. Reuse persistent `BrowserContext` and manage memory leaks by blocking unnecessary media/fonts while keeping essential ASP.NET scripts.
+
+## 3. Coding & Output Standards (Token Efficiency)
+- Be concise. Do NOT output unchanged functions or boilerplate explanations.
+- Use strict Finite State Machine (FSM) transitions: `INIT -> NATIONAL_ID_STAGE -> SMS_OTP_STAGE -> PAGE_3_BANK_STAGE -> APPLICANT_INFO_STAGE -> COMPLETED`.
+- Every step must guard against:
+  1. Session expiration / regression to Step 1 on wrong OTP or expired CAPTCHA.
+  2. OTP TTL window (115 seconds max limit) with controlled polling (3.5s interval).
+  3. SQLite `database is locked` errors under concurrent FastAPI/Playwright workers.

@@ -306,13 +306,15 @@ class BankSelectionBot(BotCore):
             )
             return
 
-        cp = DBHandler.get_checkpoint(self.nid)
+        cp = DBHandler.get_checkpoint(self.nid) or {}
         final_status = cp.get("final_submit_status")
-        # Closing a browser or an old capacity message cannot resolve a submitted request.
         if final_status:
-            self.set_runtime_state("WAITING_USER_INPUT", "PREVIOUS_SUBMISSION_UNRESOLVED", browser_status="CLOSED")
-            self.log("ابتدا نتیجه درخواست یا رزرو قبلی بررسی شود؛ از شروع ثبت‌نام و پیامک جدید جلوگیری شد.", "warning")
-            return
+            if not cp.get("tracking_code"):
+                DBHandler.release_final_submission_claim(self.nid)
+            else:
+                self.set_runtime_state("DONE", "ALREADY_REGISTERED", browser_status="CLOSED")
+                self.log(f"درخواست متقاضی قبلاً ثبت نهایی شده است (کد رهگیری: {self._mask(cp.get('tracking_code'))}).", "info")
+                return
 
         adapter = LoanTypeAdapter(loan_type=loan_type, user_data=getattr(self, "user_data", {}))
         from urllib.parse import urlsplit
@@ -327,8 +329,9 @@ class BankSelectionBot(BotCore):
         while attempt < self.retry_limit:
             if stop_event.is_set():
                 break
-            if DBHandler.get_checkpoint(self.nid).get('final_submit_status'):
-                self.set_runtime_state('WAITING_USER_INPUT', 'PREVIOUS_SUBMISSION_UNRESOLVED', browser_status='CLOSED')
+            cp_chk = DBHandler.get_checkpoint(self.nid) or {}
+            if cp_chk.get('final_submit_status') and cp_chk.get('tracking_code'):
+                self.set_runtime_state('DONE', 'ALREADY_REGISTERED', browser_status='CLOSED')
                 return
             attempt += 1
             self.reset_attempt_state(attempt)
@@ -625,18 +628,28 @@ class BankSelectionBot(BotCore):
                         page = self.live_owner.page
                         self.page = page
                         if result == 'reauthenticate':
+                            # OTP/session expired after Page-3 reload → full cycle from Step 1
                             self.recover_authentication(page, stop_event, adapter, 'page3_requires_authentication')
                             set_state('ENTRY_FORM')
                             continue
-                        elif result in {'cycle_otp', 'entry_form'}:
+                        elif result == 'entry_form':
+                            self.recover_authentication(page, stop_event, adapter, 'page3_reload_regressed_to_entry')
+                            set_state('ENTRY_FORM')
+                            continue
+                        elif result == 'cycle_otp':
                             actual = self.detect_actual_page_stage(page)
                             if hasattr(self, "ctx") and self.ctx is not None:
                                 self.ctx.page3_retry_count += 1
-                                if self.ctx.is_otp_valid():
-                                    self._last_retained_otp = self.ctx.cached_otp_code
-                                    self.log(f"🔄 بازگشت از مرحله ۳ به تایید پیامک؛ استفاده مجدد از کد معتبر ({self.ctx.cached_otp_code})...", "info", page)
-                            set_state({'STEP_1_ENTRY_FORM': 'ENTRY_FORM', 'STEP_3_BANK_SELECT': 'BANK_SELECT',
-                                       'STEP_2_OTP': 'OTP_FORM'}.get(actual, 'PAGE_REDETECTING'))
+                            # Soft OTP re-entry only while code still valid; otherwise restart full cycle
+                            if hasattr(self, "ctx") and self.ctx is not None and self.ctx.is_otp_valid():
+                                self._last_retained_otp = self.ctx.cached_otp_code
+                                self.log(f"🔄 بازگشت از مرحله ۳ به تایید پیامک؛ استفاده مجدد از کد معتبر ({self.ctx.cached_otp_code})...", "info", page)
+                                set_state({'STEP_1_ENTRY_FORM': 'ENTRY_FORM', 'STEP_3_BANK_SELECT': 'BANK_SELECT',
+                                           'STEP_2_OTP': 'OTP_FORM'}.get(actual, 'OTP_FORM'))
+                            else:
+                                self.log("🔄 پس از ریلود صفحه ۳ کد پیامک منقضی است؛ شروع مجدد چرخه از مرحله ۱...", "warning", page)
+                                self.recover_authentication(page, stop_event, adapter, 'page3_reload_otp_expired')
+                                set_state('ENTRY_FORM')
                             continue
                         elif result == "confirmed":
                             return
@@ -1082,8 +1095,8 @@ class BankSelectionBot(BotCore):
         return firewall_input_visible(page)
 
     def _reload_guarded(self, page, reason: str = "") -> bool:
-        # CRITICAL FIX: Only suppress reload when the OTP input is ACTUALLY present on the page!
-        # If the bot is on Step 3 (SelectBnkShb.aspx with ddlBankName), clear stale OTP locks first.
+        # Phase-1: page.reload() is forbidden for active / UNKNOWN / transient missing inputs.
+        # Only allow modal dismiss / postback wait; never full reload.
         actual_stage = self.detect_actual_page_stage(page)
         if actual_stage == "STEP_3_BANK_SELECT":
             self.clear_otp_locks()
@@ -1100,11 +1113,16 @@ class BankSelectionBot(BotCore):
                 msg = f"{msg} ({reason})"
             self.log(msg, "warning", page)
             return False
+        msg = f"🔒 Reload forbidden (stage={actual_stage}); waiting ASP.NET postback/DOM only."
+        if reason:
+            msg = f"{msg} ({reason})"
+        self.log(msg, "warning", page)
         try:
-            page.reload()
-            return True
+            if hasattr(self, "wait_for_aspnet_postback"):
+                self.wait_for_aspnet_postback(page, timeout_ms=3500)
         except Exception:
-            return False
+            pass
+        return False
 
     def _safe_goto_guarded(self, page, url, **kwargs):
         if not page or getattr(page, "is_closed", lambda: False)() is True:

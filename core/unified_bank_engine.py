@@ -697,20 +697,14 @@ class UnifiedBankEngine:
     # Helper Methods
     # --------------------------------------------------------------------------
     def _is_on_otp_page(self, page) -> bool:
-        """Check if currently on the OTP stage (SelTasCase.aspx)."""
-        url = page.url.lower()
-        if "seltascase" in url:
-            return True
-        otp_field = page.locator("#ctl00_ContentPlaceHolder1_tbMobileConfCode")
-        return otp_field.count() > 0 and otp_field.first.is_visible()
+        """Check if currently on the OTP stage via unified live-DOM detector."""
+        from core.stage_detector import detect_current_stage, SMS_OTP_STAGE
+        return detect_current_stage(page, bot=None).stage == SMS_OTP_STAGE
 
     def _is_on_page3(self, page) -> bool:
-        """Check if currently on Page 3 (SelectBnkShb.aspx)."""
-        url = page.url.lower()
-        if "selectbnkshb" in url:
-            bank_ddl = page.locator("#ctl00_ContentPlaceHolder1_ddlBankName")
-            return bank_ddl.count() > 0 and bank_ddl.first.is_visible()
-        return False
+        """Check if currently on Page 3 via unified live-DOM detector."""
+        from core.stage_detector import detect_current_stage, PAGE_3_BANK_STAGE
+        return detect_current_stage(page, bot=None).stage == PAGE_3_BANK_STAGE
 
     def _solve_captcha_element(self, page, img_selector: str) -> Optional[str]:
         """Capture screenshot of the captcha image element and solve with pure CRNN."""

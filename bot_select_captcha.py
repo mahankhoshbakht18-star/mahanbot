@@ -168,7 +168,14 @@ class ModelCaptchaSolver:
     def is_loaded(self):
         return self._model is not None or ModelCaptchaSolver._SHARED_MODEL is not None
 
+    def _ddddocr_enabled(self) -> bool:
+        """ddddocr is opt-in only — default off to avoid VRAM/RAM double-load beside CRNN singleton."""
+        flag = str(os.environ.get("MAHAN_ENABLE_DDDDOCR", "0") or "0").strip().lower()
+        return flag in {"1", "true", "yes", "on"}
+
     def _get_ddddocr(self):
+        if not self._ddddocr_enabled():
+            return None
         if self._ddddocr is not None:
             return self._ddddocr
         with ModelCaptchaSolver._SHARED_LOCK:
@@ -997,11 +1004,33 @@ def solve_step_captcha(
                 continue
             return CaptchaResult(success=False, attempts_used=attempt, error_reason="elements_missing")
 
-        # If refresh requested
-        if (force_refresh or attempt > 1) and reload_elem is not None:
+        # Refresh ONLY on explicit server rejection (force_refresh). Never refresh preemptively.
+        if force_refresh and reload_elem is not None:
             try:
+                prev_src = ""
+                try:
+                    prev_src = str(image_elem.get_attribute("src") or "")
+                except Exception:
+                    pass
                 reload_elem.click(timeout=1000)
                 time.sleep(0.25)
+                # Wait until src changes (or naturalWidth becomes ready again)
+                try:
+                    if prev_src and hasattr(page, "wait_for_function"):
+                        handle = image_elem.element_handle(timeout=1000) if hasattr(image_elem, "element_handle") else None
+                        page.wait_for_function(
+                            """(args) => {
+                                const img = args && args.img;
+                                const prev = (args && args.prev) || '';
+                                if (!img) return false;
+                                const src = img.getAttribute('src') || '';
+                                return img.complete && img.naturalWidth > 0 && (!prev || src !== prev);
+                            }""",
+                            arg={"img": handle, "prev": prev_src},
+                            timeout=3000,
+                        )
+                except Exception:
+                    pass
             except Exception:
                 try:
                     image_elem.click(timeout=1000)
@@ -1009,40 +1038,48 @@ def solve_step_captcha(
                 except Exception:
                     pass
 
-        if not is_step_1:
+        # Require naturalWidth > 0 and stable src before screenshot / OCR
+        try:
+            handle = image_elem.element_handle(timeout=1000) if hasattr(image_elem, "element_handle") else None
+            if hasattr(page, "wait_for_function"):
+                page.wait_for_function(
+                    "(img) => img && img.complete && img.naturalWidth > 0",
+                    arg=handle,
+                    timeout=3000,
+                )
+            elif hasattr(image_elem, "evaluate"):
+                ready = image_elem.evaluate(
+                    "(img) => img && img.complete && (img.naturalWidth === undefined || img.naturalWidth > 0)"
+                )
+                if ready is False:
+                    _emit("IMAGE_NOT_READY", result="image_not_decoded", level="warning")
+                    if attempt < max_attempts:
+                        time.sleep(0.2)
+                        continue
+                    return CaptchaResult(success=False, attempts_used=attempt, error_reason="image_not_ready")
+            src1 = ""
             try:
-                handle = image_elem.element_handle(timeout=1000) if hasattr(image_elem, "element_handle") else None
-                if hasattr(page, "wait_for_function"):
-                    page.wait_for_function(
-                        "(img) => img && img.complete && img.naturalWidth > 0",
-                        arg=handle,
-                        timeout=3000,
-                    )
-                elif hasattr(image_elem, "evaluate"):
-                    ready = image_elem.evaluate("(img) => img && img.complete && (img.naturalWidth === undefined || img.naturalWidth > 0)")
-                    if ready is False:
-                        _emit("IMAGE_NOT_READY", result="image_not_decoded", level="warning")
-                        if attempt < max_attempts:
-                            time.sleep(0.2)
-                            continue
+                src1 = str(image_elem.get_attribute("src") or "")
             except Exception:
-                _emit("IMAGE_NOT_READY", result="image_not_decoded", level="warning")
+                src1 = ""
+            time.sleep(0.15)
+            src2 = src1
+            try:
+                src2 = str(image_elem.get_attribute("src") or "")
+            except Exception:
+                pass
+            if src1 and src2 and src1 != src2:
+                _emit("IMAGE_NOT_READY", result="src_unstable", level="warning")
                 if attempt < max_attempts:
                     time.sleep(0.2)
                     continue
-                return CaptchaResult(success=False, attempts_used=attempt, error_reason="image_not_ready")
-        else:
-            # Wait for image DOM readiness (complete && naturalWidth > 0)
-            try:
-                handle = image_elem.element_handle() if hasattr(image_elem, "element_handle") else None
-                if handle and hasattr(page, "wait_for_function"):
-                    page.wait_for_function(
-                        "(img) => !img || (typeof img.complete === 'undefined') || (img.complete && (img.naturalWidth === undefined || img.naturalWidth > 0))",
-                        arg=handle,
-                        timeout=3000,
-                    )
-            except Exception:
-                pass
+                return CaptchaResult(success=False, attempts_used=attempt, error_reason="src_unstable")
+        except Exception:
+            _emit("IMAGE_NOT_READY", result="image_not_decoded", level="warning")
+            if attempt < max_attempts:
+                time.sleep(0.2)
+                continue
+            return CaptchaResult(success=False, attempts_used=attempt, error_reason="image_not_ready")
 
         # Clear field before recognition
         try:
@@ -1118,7 +1155,7 @@ def solve_step_captcha(
                 input_elem.fill("")
             except Exception:
                 pass
-            force_refresh = True
+            # Do NOT refresh captcha image on OCR miss — only server rejection sets force_refresh.
             time.sleep(0.2)
             continue
 
@@ -1150,7 +1187,7 @@ def solve_step_captcha(
         else:
             if bot is not None and hasattr(bot, "nid"):
                 DBHandler.append_captcha_attempt(bot.nid, code, "fill_failed", source=step_key)
-            force_refresh = True
+            # Fill mismatch: retry same image; refresh only if caller set force_refresh (server reject).
             time.sleep(0.2)
             continue
 

@@ -6,6 +6,7 @@ import sys
 import time
 import hmac
 import secrets
+import threading
 from contextlib import contextmanager
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -36,7 +37,7 @@ DEFAULT_CONFIG = {
     "captcha_manual_timeout": 300,
     "pause_for_manual_captcha": False,
     "pause_for_manual_otp": True,
-    "otp_validity_seconds": 120,
+    "otp_validity_seconds": 115,
     "otp_retry_limit": 5,
     "otp_hard_stop": False,
     "bank_monitor_enabled": True,
@@ -213,13 +214,15 @@ def normalize_config(stored: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
 
 class DBHandler:
     _settings_cache = {}
+    _write_lock = threading.RLock()
     """
     SQLite access layer.
 
     Goals:
     - reduce 'database is locked' by:
       - WAL mode
-      - busy_timeout
+      - busy_timeout=5000 (unified with aiosqlite helpers)
+      - process-wide write lock for hot status/runtime/checkpoint paths
       - consistent pragmas on every connection
       - explicit close via context manager
     """
@@ -241,7 +244,8 @@ class DBHandler:
             except sqlite3.OperationalError:
                 pass
             conn.execute("PRAGMA synchronous=NORMAL;")
-            conn.execute("PRAGMA busy_timeout=20000;")
+            # Unified busy_timeout across sync/async writers (Phase-2)
+            conn.execute("PRAGMA busy_timeout=5000;")
             conn.execute("PRAGMA foreign_keys=ON;")
 
             yield conn
@@ -1143,16 +1147,17 @@ class DBHandler:
 
     @staticmethod
     def update_status(nid: str, status: str, log: str) -> None:
-        try:
-            with DBHandler._connect() as conn:
-                c = conn.cursor()
-                c.execute(
-                    "UPDATE applicants SET status=?, last_log=? WHERE national_id=?",
-                    (status, log, nid),
-                )
-                conn.commit()
-        except Exception:
-            pass
+        with DBHandler._write_lock:
+            try:
+                with DBHandler._connect() as conn:
+                    c = conn.cursor()
+                    c.execute(
+                        "UPDATE applicants SET status=?, last_log=? WHERE national_id=?",
+                        (status, log, nid),
+                    )
+                    conn.commit()
+            except Exception:
+                pass
 
     @staticmethod
     def save_otp(nid: str, code: str, status: str = "received") -> bool:
@@ -1161,29 +1166,30 @@ class DBHandler:
 
     @staticmethod
     def set_otp(nid: str, code: str, ts: Optional[float] = None, status: str = "received", request_id: Optional[str] = None, otp_type: Optional[str] = None) -> bool:
-        try:
-            with DBHandler._connect() as conn:
-                conn.execute('BEGIN IMMEDIATE')
-                data = DBHandler._load_applicant_data(conn, nid)
-                if data is None:
-                    return False
-                data["otp_code"] = str(code).strip()
-                data["otp_status"] = status
-                if otp_type is not None:
-                    data['otp_type'] = otp_type
-                if request_id is not None:
-                    data["otp_request_id"] = str(request_id)
-                timestamp_seconds = float(ts) if ts is not None else DBHandler._current_timestamp_seconds_ms()
-                data["otp_ts"] = timestamp_seconds
-                data["otp_ts_ms"] = int(timestamp_seconds * 1000)
-                conn.execute(
-                    "UPDATE applicants SET data=? WHERE national_id=?",
-                    (json.dumps(data, ensure_ascii=False), nid),
-                )
-                conn.commit()
-                return True
-        except Exception:
-            return False
+        with DBHandler._write_lock:
+            try:
+                with DBHandler._connect() as conn:
+                    conn.execute('BEGIN IMMEDIATE')
+                    data = DBHandler._load_applicant_data(conn, nid)
+                    if data is None:
+                        return False
+                    data["otp_code"] = str(code).strip()
+                    data["otp_status"] = status
+                    if otp_type is not None:
+                        data['otp_type'] = otp_type
+                    if request_id is not None:
+                        data["otp_request_id"] = str(request_id)
+                    timestamp_seconds = float(ts) if ts is not None else DBHandler._current_timestamp_seconds_ms()
+                    data["otp_ts"] = timestamp_seconds
+                    data["otp_ts_ms"] = int(timestamp_seconds * 1000)
+                    conn.execute(
+                        "UPDATE applicants SET data=? WHERE national_id=?",
+                        (json.dumps(data, ensure_ascii=False), nid),
+                    )
+                    conn.commit()
+                    return True
+            except Exception:
+                return False
 
     @staticmethod
     def get_otp_record(nid: str) -> Optional[Dict[str, Any]]:
@@ -1262,24 +1268,25 @@ class DBHandler:
     @staticmethod
     def update_runtime(nid: str, **updates: Any) -> Dict[str, Any]:
         now = time.time()
-        try:
-            with DBHandler._connect() as conn:
-                row = conn.execute("SELECT payload FROM automation_runtime WHERE nid=?", (nid,)).fetchone()
-                try:
-                    payload = json.loads(row[0]) if row and row[0] else {}
-                except Exception:
-                    payload = {}
-                payload.update(updates)
-                payload["last_activity_at"] = updates.get("last_activity_at", now)
-                conn.execute(
-                    """INSERT INTO automation_runtime(nid,payload,updated_at) VALUES(?,?,?)
-                       ON CONFLICT(nid) DO UPDATE SET payload=excluded.payload,updated_at=excluded.updated_at""",
-                    (nid, json.dumps(payload, ensure_ascii=False), now),
-                )
-                conn.commit()
-                return payload
-        except Exception:
-            return {}
+        with DBHandler._write_lock:
+            try:
+                with DBHandler._connect() as conn:
+                    row = conn.execute("SELECT payload FROM automation_runtime WHERE nid=?", (nid,)).fetchone()
+                    try:
+                        payload = json.loads(row[0]) if row and row[0] else {}
+                    except Exception:
+                        payload = {}
+                    payload.update(updates)
+                    payload["last_activity_at"] = updates.get("last_activity_at", now)
+                    conn.execute(
+                        """INSERT INTO automation_runtime(nid,payload,updated_at) VALUES(?,?,?)
+                           ON CONFLICT(nid) DO UPDATE SET payload=excluded.payload,updated_at=excluded.updated_at""",
+                        (nid, json.dumps(payload, ensure_ascii=False), now),
+                    )
+                    conn.commit()
+                    return payload
+            except Exception:
+                return {}
 
     @staticmethod
     def reset_runtime(nid: str, *, run_id: str = "", target_bank: str = "") -> Dict[str, Any]:
@@ -1461,7 +1468,7 @@ class DBHandler:
             row = conn.execute("SELECT payload FROM checkpoints WHERE nid=?", (nid,)).fetchone()
             if row and row[0]:
                 payload = json.loads(row[0])
-                if payload.get("final_submit_status") == "pending":
+                if payload.get("final_submit_status") in {"pending", "unknown"} or not payload.get("tracking_code"):
                     payload.pop("final_submit_status", None)
                     payload.pop("final_submit_started_at", None)
                     conn.execute(

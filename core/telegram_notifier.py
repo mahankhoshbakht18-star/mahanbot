@@ -5,6 +5,7 @@ Delivers capacity radar alerts, provincial/city digests, tariff/capacity posts, 
 subscribers and channels with persistent queue delivery, rate limiting, and exponential backoff retry.
 """
 from datetime import datetime
+import hashlib
 import json
 import logging
 import os
@@ -18,6 +19,32 @@ import urllib.request
 from database import DBHandler
 
 logger = logging.getLogger("mahanbot.telegram_notifier")
+
+
+def hashlib_key(
+    province_name: str,
+    city_name: str,
+    active_banks: List[Dict[str, Any]],
+    reserve_banks: List[Dict[str, Any]],
+) -> str:
+    """Stable digest signature for Page-3 bank list broadcasts."""
+    def _norm_items(items: List[Dict[str, Any]]) -> List[str]:
+        rows = []
+        for item in items or []:
+            name = str(item.get("bank_name") or item.get("clean_title") or item.get("text") or "").strip()
+            wait = item.get("waiting_count", 0) or 0
+            rows.append(f"{name}|{wait}")
+        return sorted(rows)
+
+    payload = "|".join(
+        [
+            str(province_name or "").strip(),
+            str(city_name or "").strip(),
+            "A:" + ",".join(_norm_items(active_banks)),
+            "R:" + ",".join(_norm_items(reserve_banks)),
+        ]
+    )
+    return hashlib.sha1(payload.encode("utf-8")).hexdigest()
 
 
 class TelegramNotifierService:
@@ -439,6 +466,81 @@ class TelegramNotifierService:
             ]
         }
         return msg, reply_markup
+
+    def broadcast_page3_banks_to_channel(
+        self,
+        *,
+        province_name: str,
+        city_name: str = "",
+        active_banks: Optional[List[Dict[str, Any]]] = None,
+        reserve_banks: Optional[List[Dict[str, Any]]] = None,
+        applicant_nid: str = "",
+        action_status: str = "استخراج زنده صفحه ۳",
+        provincial_only: bool = True,
+        force: bool = False,
+        dedupe_key: str = "",
+    ) -> Tuple[bool, str]:
+        """
+        Send the full Page-3 bank extraction digest directly to the configured Telegram channel.
+        Dedupes identical digests unless force=True.
+        """
+        active_banks = active_banks or []
+        reserve_banks = reserve_banks or []
+        if not active_banks and not reserve_banks:
+            return False, "empty_bank_list"
+
+        key = dedupe_key or hashlib_key(province_name, city_name, active_banks, reserve_banks)
+        with self._lock:
+            last = getattr(self, "_last_page3_digest_keys", {}) or {}
+            if not force and last.get(str(province_name or "سراسری")) == key:
+                return False, "duplicate_digest"
+            last[str(province_name or "سراسری")] = key
+            # Cap memory
+            if len(last) > 64:
+                last = dict(list(last.items())[-32:])
+            self._last_page3_digest_keys = last
+
+        body = self.format_beautiful_radar_message(
+            province_name=province_name or "سراسری",
+            city_name="" if provincial_only else (city_name or ""),
+            active_banks=active_banks,
+            reserve_banks=reserve_banks,
+            applicant_nid="" if provincial_only else applicant_nid,
+            action_status=action_status,
+            provincial_only=provincial_only,
+        )
+        channel_cid = self.get_channel_id()
+        if not channel_cid:
+            return False, "channel_not_configured"
+
+        # Attach channel/shop buttons for channel posts
+        _, reply_markup = self.format_channel_post(
+            title="📡 استخراج زنده بانک‌های صفحه ۳",
+            body_text=f"استان {province_name or 'سراسری'} — {len(active_banks)} ظرفیت قطعی / {len(reserve_banks)} رزرو",
+        )
+        ok, detail = self.send_raw_telegram(channel_cid, body, reply_markup=reply_markup)
+        if ok:
+            # Also mirror to admin if different from channel
+            admin_cid = self.get_admin_chat_id()
+            if admin_cid and str(admin_cid) != str(channel_cid):
+                try:
+                    self.send_raw_telegram(admin_cid, body)
+                except Exception:
+                    pass
+            return True, "sent"
+        # Fallback to durable queue if direct send failed
+        try:
+            DBHandler.enqueue_telegram_message(
+                chat_id=channel_cid,
+                message_text=body,
+                message_type="page3_bank_digest",
+                event_id=f"page3-{int(time.time())}",
+                scheduled_at=int(time.time()),
+            )
+            self.start_background_worker()
+            return False, f"queued:{detail}"
+        except Exception as exc:
+            return False, f"send_failed:{detail}:{exc}"
 
     # ── NOTIFICATION DISPATCHING & QUEUE (Phase 6 & 10) ───────────────
     def dispatch_capacity_event(

@@ -359,6 +359,72 @@ def _is_reserve_option(option_text: str) -> bool:
     return any(m in norm for m in reserve_markers)
 
 
+def _broadcast_page3_banks_to_telegram(bot, page, available: List[Tuple[str, str, bool]], province_name: str = "", city_name: str = "") -> bool:
+    """
+    Immediately push the extracted Page-3 bank list to the configured Telegram channel.
+    Deduped by list signature so official Page-3 reloads do not spam identical digests.
+    """
+    try:
+        from core.bank_matcher import PersianBankMatcher
+        from core.telegram_notifier import TELEGRAM_NOTIFIER
+
+        active_banks: List[Dict[str, Any]] = []
+        reserve_banks: List[Dict[str, Any]] = []
+        for text, value, _selected in available:
+            parsed = PersianBankMatcher.parse_option_text(text)
+            item = {
+                "bank_name": parsed.clean_title or text,
+                "waiting_count": int(getattr(parsed, "waiting_count", 0) or 0),
+                "value": value,
+                "raw_text": text,
+            }
+            if _is_reserve_option(text) or getattr(parsed, "is_reserve", False):
+                reserve_banks.append(item)
+            elif _is_active_capacity_option(text) or getattr(parsed, "has_active_quota", False):
+                active_banks.append(item)
+            else:
+                # Plain option without marker — treat as observed capacity candidate
+                active_banks.append(item)
+
+        if not active_banks and not reserve_banks:
+            return False
+
+        prov = (
+            province_name
+            or getattr(bot, "state_name", "")
+            or getattr(bot, "province_name", "")
+            or (getattr(bot, "user_data", {}) or {}).get("state")
+            or "سراسری"
+        )
+        city = city_name or getattr(bot, "city_name", "") or (getattr(bot, "user_data", {}) or {}).get("city") or ""
+
+        ok, detail = TELEGRAM_NOTIFIER.broadcast_page3_banks_to_channel(
+            province_name=prov,
+            city_name=city,
+            active_banks=active_banks,
+            reserve_banks=reserve_banks,
+            applicant_nid=str(getattr(bot, "nid", "") or ""),
+            action_status="استخراج زنده صفحه ۳",
+            provincial_only=True,
+        )
+        if hasattr(bot, "log"):
+            if ok:
+                bot.log(
+                    f"📢 لیست بانک‌های صفحه ۳ به کانال تلگرام ارسال شد ({len(active_banks)} ظرفیت / {len(reserve_banks)} رزرو).",
+                    "success",
+                    page,
+                )
+            elif detail == "duplicate_digest":
+                bot.log("📢 لیست بانک‌ها تکراری بود؛ ارسال تلگرام رد شد.", "info", page)
+            else:
+                bot.log(f"⚠️ ارسال لیست بانک‌ها به تلگرام: {detail}", "warning", page)
+        return bool(ok)
+    except Exception as exc:
+        if hasattr(bot, "log"):
+            bot.log(f"⚠️ خطا در ارسال بانک‌های صفحه ۳ به تلگرام: {exc}", "warning", page)
+        return False
+
+
 def _normalize_mode_value(raw_mode: Any) -> str:
     """Normalize reception mode strings into 'only_online', 'prefer_online', 'prefer_in_person', 'only_in_person', or 'online', 'in_person'."""
     m = _normalize_persian(raw_mode).lower().strip()
@@ -446,10 +512,12 @@ def _read_dropdown_options(page, selector: str) -> List[Dict[str, Any]]:
             "(sel) => {"
             "const el = document.querySelector(sel);"
             "if (!el) return [];"
-            "return Array.from(el.options || []).map(opt => ({"
+            "return Array.from(el.options || []).map((opt, idx) => ({"
             "value: String(opt.value ?? ''),"
             "text: (opt.textContent || '').trim(),"
-            "selected: !!opt.selected || (el.value === opt.value)"
+            "selected: !!opt.selected || (el.value === opt.value),"
+            "disabled: !!opt.disabled,"
+            "index: idx"
             "}));"
             "}",
             selector,
@@ -461,34 +529,126 @@ def _read_dropdown_options(page, selector: str) -> List[Dict[str, Any]]:
     return []
 
 
-def _select_dropdown_with_postback(bot, page, selector: str, target_value: str) -> bool:
+def _resolve_dropdown_option(
+    page,
+    selector: str,
+    *,
+    target_value: str = "",
+    target_text: str = "",
+) -> Optional[Dict[str, Any]]:
     """
-    Select an option in an ASP.NET dropdown (#ddlCity, #ddlBankName, #ddlBranch)
-    and wait for setTimeout('__doPostBack(...)', 0) + UpdatePanel/Page postback to complete.
+    Resolve a dropdown option preferring (value, text, enabled).
+    Duplicate values are disambiguated by normalized Persian text; disabled options are skipped.
     """
-    val_str = str(target_value)
+    opts = _read_dropdown_options(page, selector)
+    if not opts:
+        return None
+    val_str = str(target_value or "")
+    text_key = _normalize_persian_key(target_text) if target_text else ""
+    enabled = [o for o in opts if not o.get("disabled") and str(o.get("value") or "") not in ("", "0")]
+
+    # Exact value + text
+    if val_str and text_key:
+        for o in enabled:
+            if str(o.get("value")) == val_str and _normalize_persian_key(o.get("text")) == text_key:
+                return o
+    # Text-only (handles duplicate values)
+    if text_key:
+        for o in enabled:
+            if _normalize_persian_key(o.get("text")) == text_key:
+                return o
+            # Soft contains for labels like "بانک صادرات ایران [دارای ظرفیت...]"
+            if text_key and text_key in _normalize_persian_key(o.get("text")):
+                return o
+    # Value-only — if duplicates exist, prefer non-placeholder enabled first match
+    if val_str:
+        matches = [o for o in enabled if str(o.get("value")) == val_str]
+        if len(matches) == 1:
+            return matches[0]
+        if len(matches) > 1 and text_key:
+            for o in matches:
+                if text_key in _normalize_persian_key(o.get("text")):
+                    return o
+        if matches:
+            return matches[0]
+    return None
+
+
+def _select_dropdown_with_postback(
+    bot,
+    page,
+    selector: str,
+    target_value: str,
+    target_text: str = "",
+) -> bool:
+    """
+    Select an ASP.NET dropdown option and wait for native postback + __VIEWSTATE settle.
+    Never fires a second synthetic __doPostBack (CloseSession race).
+    City selection is for local UI/branch only — it does NOT refresh province bank quotas.
+    """
+    from core.aspnet_postback import read_viewstate, wait_for_aspnet_idle, wait_for_viewstate_change
+    from core.bank_selection.postback_sync import PostbackSynchronizer
+
+    resolved = _resolve_dropdown_option(page, selector, target_value=target_value, target_text=target_text)
+    val_str = str((resolved or {}).get("value") or target_value)
+    if not val_str or val_str == "0":
+        bot._bank_selection_issue = "option_unresolved"
+        return False
+    if resolved and resolved.get("disabled"):
+        bot._bank_selection_issue = "option_disabled"
+        return False
+
+    previous_vs = read_viewstate(page)
     selected_ok = False
     try:
-        page.select_option(selector, value=val_str)
-        selected_ok = True
+        # Prefer label when duplicates share the same value
+        label = str((resolved or {}).get("text") or target_text or "").strip()
+        if label:
+            try:
+                page.select_option(selector, label=label)
+                selected_ok = True
+            except Exception:
+                selected_ok = False
+        if not selected_ok:
+            page.select_option(selector, value=val_str)
+            selected_ok = True
+        try:
+            page.locator(selector).first.dispatch_event("change")
+        except Exception:
+            pass
     except Exception:
         selected_ok = False
 
-    # Only native control events may initiate the site's postback. A second synthetic
-    # __doPostBack can race the first request and trigger CloseSession on full navigation.
+    if not selected_ok:
+        bot._bank_selection_issue = "select_failed"
+        return False
 
-    # Wait briefly for setTimeout('__doPostBack(...)', 0) to initiate async/sync postback
-    try:
-        page.wait_for_timeout(250)
-    except Exception:
+    # Deterministic ASP.NET idle wait (no fixed 250ms-only race)
+    synced = PostbackSynchronizer.wait_for_postback_complete(page, timeout_ms=8000)
+    if hasattr(bot, "wait_for_aspnet_postback"):
+        bot.wait_for_aspnet_postback(page, timeout_ms=8000)
+    else:
+        wait_for_aspnet_idle(page, bot=bot, timeout_ms=8000)
+    wait_for_viewstate_change(page, previous_vs, timeout_ms=2500)
+
+    if not synced and hasattr(bot, "wait_for_aspnet_postback"):
+        # Soft: some dropdowns finish without PageRequestManager flag; verify selection instead
         pass
 
-    if hasattr(bot, "wait_for_aspnet_postback"):
-        if bot.wait_for_aspnet_postback(page, timeout_ms=8000) is False:
-            bot._bank_selection_issue = "postback_timeout"
-            return False
-
-    return selected_ok
+    verified, _, _ = _verify_dropdown_selection(page, selector, val_str, expected_bank_name=target_text or "")
+    if not verified and target_text:
+        # Re-check by text for duplicate-value dropdowns
+        opts = _read_dropdown_options(page, selector)
+        text_key = _normalize_persian_key(target_text)
+        for o in opts:
+            if o.get("selected") and text_key and text_key in _normalize_persian_key(o.get("text")):
+                return True
+        bot._bank_selection_issue = "postback_selection_not_persisted"
+        return False
+    if not verified:
+        bot._bank_selection_issue = "postback_selection_not_persisted"
+        return False
+    return True
 
 
 def _verify_dropdown_selection(page, selector: str, expected_value: str, expected_bank_name: str = "") -> Tuple[bool, str, str]:
@@ -528,7 +688,10 @@ def _selection_issue(bot, page, reason, message):
 
 
 def _ensure_state_and_city_selected(bot, page, runtime_data: Dict[str, Any]) -> bool:
-    """Step 3.1: Ensure province (state) and city are selected and postbacks complete before bank selection."""
+    """
+    Step 3.1: Ensure province/city UI selection for branch locality.
+    NOTE: City change does NOT refresh province bank quotas — quota refresh is official Page-3 reload.
+    """
     user_state_raw = runtime_data.get("state") or bot.user_data.get("state") or ""
     user_city_raw = runtime_data.get("city") or bot.user_data.get("city") or ""
     user_state = _normalize_persian_key(re.sub(r"^\s*استان\s+", "", _normalize_persian(user_state_raw)))
@@ -549,61 +712,56 @@ def _ensure_state_and_city_selected(bot, page, runtime_data: Dict[str, Any]) -> 
     try:
         state_loc = page.locator(state_ddl)
         if state_loc.count() > 0 and state_loc.first.is_visible() and user_state:
-            state_opts = page.evaluate(
-                "(sel) => { const el = document.querySelector(sel); return el ? Array.from(el.options || []).map(o => ({v: o.value, t: (o.textContent||'').trim(), s: o.selected})) : []; }",
-                state_ddl,
-            ) or []
-            matched_state = False
-            for opt in state_opts:
-                t_norm = _normalize_persian_key(opt.get("t"))
-                val = str(opt.get("v") or "")
-                if not val or val == "0":
-                    continue
-                if user_state == t_norm:
-                    matched_state = True
-                    if not opt.get("s"):
-                        if not _select_dropdown_with_postback(bot, page, state_ddl, val):
-                            return False
-                    break
-            if not matched_state:
+            resolved = _resolve_dropdown_option(page, state_ddl, target_text=user_state_raw or user_state)
+            if not resolved:
                 return _selection_issue(bot, page, "province_not_available", "استان تنظیم‌شده در فهرست صفحه موجود نیست؛ تنظیمات متقاضی را بررسی کنید.")
+            if not resolved.get("selected"):
+                if not _select_dropdown_with_postback(bot, page, state_ddl, str(resolved.get("value")), target_text=str(resolved.get("text") or "")):
+                    return False
     except Exception:
         return False
 
-    # 2) Check if city dropdown exists and needs selection
+    # 2) City dropdown — locality only; never used as quota sniper
+    selected_city_val = ""
     try:
         city_loc = page.locator(city_ddl)
         if city_loc.count() > 0 and city_loc.first.is_visible():
-            city_opts = page.evaluate(
-                "(sel) => { const el = document.querySelector(sel); return el ? Array.from(el.options || []).map(o => ({v: o.value, t: (o.textContent||'').trim(), s: o.selected})) : []; }",
-                city_ddl,
-            ) or []
-            valid_cities = [o for o in city_opts if o.get("v") and str(o.get("v")) != "0"]
-            currently_selected = next((o for o in valid_cities if o.get("s")), None)
+            city_opts = _read_dropdown_options(page, city_ddl)
+            valid_cities = [o for o in city_opts if o.get("value") and str(o.get("value")) != "0" and not o.get("disabled")]
+            currently_selected = next((o for o in valid_cities if o.get("selected")), None)
 
             if user_city:
-                matched_city = False
+                resolved = None
                 for opt in valid_cities:
-                    t_norm = _normalize_persian_key(opt.get("t"))
-                    val = str(opt.get("v"))
+                    t_norm = _normalize_persian_key(opt.get("text"))
                     if user_city == t_norm:
-                        matched_city = True
                         if "سوران" in user_city and "سیب" not in user_city and "سیب" in t_norm:
                             continue
-                        if not opt.get("s"):
-                            if not _select_dropdown_with_postback(bot, page, city_ddl, val):
-                                return False
+                        resolved = opt
                         break
-                if not matched_city:
+                if resolved is None:
+                    resolved = _resolve_dropdown_option(page, city_ddl, target_text=user_city_raw or user_city)
+                if not resolved:
                     return _selection_issue(bot, page, "city_not_available", "شهر تنظیم‌شده در فهرست استان صفحه زنده موجود نیست؛ استان و شهر متقاضی را بررسی کنید.")
+                selected_city_val = str(resolved.get("value") or "")
+                if not resolved.get("selected"):
+                    if not _select_dropdown_with_postback(
+                        bot, page, city_ddl, selected_city_val, target_text=str(resolved.get("text") or user_city_raw or "")
+                    ):
+                        return False
             elif currently_selected is None and len(valid_cities) == 1:
-                # If applicant city was left blank and only one city exists in the province dropdown, select it
-                if not _select_dropdown_with_postback(bot, page, city_ddl, str(valid_cities[0]["v"])):
+                selected_city_val = str(valid_cities[0].get("value") or "")
+                if not _select_dropdown_with_postback(
+                    bot, page, city_ddl, selected_city_val, target_text=str(valid_cities[0].get("text") or "")
+                ):
                     return False
-            if user_city:
-                verified, _, _ = _verify_dropdown_selection(page, city_ddl, val)
+            if user_city and selected_city_val:
+                verified, _, _ = _verify_dropdown_selection(page, city_ddl, selected_city_val, expected_bank_name="")
                 if not verified:
-                    return _selection_issue(bot, page, "city_selection_not_persisted", "انتخاب شهر پس از پاسخ سامانه تایید نشد؛ صفحه فعلی حفظ شد.")
+                    # Duplicate-value safe recheck by text
+                    recheck = _resolve_dropdown_option(page, city_ddl, target_text=user_city_raw or user_city)
+                    if not (recheck and recheck.get("selected")):
+                        return _selection_issue(bot, page, "city_selection_not_persisted", "انتخاب شهر پس از پاسخ سامانه تایید نشد؛ صفحه فعلی حفظ شد.")
     except Exception:
         return False
     return True
@@ -1145,11 +1303,11 @@ def process_bank_selection_v2(bot, page, stop_event, *, capacity_sniping=False):
         _save_bank_page_if_changed(bot, page, bank_names)
 
         # Record Live DOM Observation into bank_page_observations
+        obs_prov = ""
+        obs_city = ""
         try:
             from core.applicant_config_service import ApplicantConfigurationService
             from database import DB_PATH
-            obs_prov = ""
-            obs_city = ""
             try:
                 p_lab = page.locator("#ctl00_ContentPlaceHolder1_labStateName")
                 if p_lab.count() and p_lab.first.is_visible():
@@ -1174,7 +1332,10 @@ def process_bank_selection_v2(bot, page, stop_event, *, capacity_sniping=False):
         except Exception:
             pass
 
-        # Ingest observed banks into Smart Capacity Radar & Dispatch to Telegram Channel
+        # Direct channel broadcast of the extracted Page-3 bank list (deduped by signature)
+        _broadcast_page3_banks_to_telegram(bot, page, available, province_name=obs_prov, city_name=obs_city)
+
+        # Ingest observed banks into Smart Capacity Radar (per-bank change alerts still apply)
         try:
             from core.capacity_radar import CAPACITY_RADAR, CapacityStatus
             obs_prov_val = obs_prov or getattr(bot, "state_name", "") or getattr(bot, "province_name", "") or (getattr(bot, "user_data", {}) or {}).get("state") or "سراسری"
@@ -1326,7 +1487,9 @@ def process_bank_selection_v2(bot, page, stop_event, *, capacity_sniping=False):
             # 5. Select the bank option in dropdown (and wait for ASP.NET postback)
             DBHandler.update_runtime(bot.nid, status="SELECTING_BANK", current_step="SELECT_BANK", target_bank=bank_name)
             if not cand_already_sel:
-                if not _select_dropdown_with_postback(bot, page, dropdown_id, target_value):
+                if not _select_dropdown_with_postback(
+                    bot, page, dropdown_id, target_value, target_text=str(target_text or bank_name)
+                ):
                     return "waiting"
 
             if getattr(bot, "_last_selected_bank_sig", None) != current_bank_sig:
@@ -2440,45 +2603,35 @@ def load_runtime_data(bot):
 
 def trigger_bank_capacity_refresh(bot, page) -> bool:
     """
-    DEPRECATED: Refreshing bank quotas via synthetic ddlCity PostBack is obsolete.
-    Official findings confirm that bank quotas are governed at the PROVINCE level,
-    not city level. Province quotas are refreshed via official re-entry / Page3OfficialRefreshController.
-    Retained solely for backward compatibility with external legacy callers.
+    Province-level bank quota refresh via official Page-3 reload.
+    ddlCity does NOT refresh quotas and is intentionally not used.
     """
-    if hasattr(bot, "log"):
-        bot.log("⚠️ هشدار: استفاده از پالس تغییر شهر (ddlCity) منسوخ شده است؛ تازه‌سازی سهمیه‌ها در سطح استان و از طریق ریلود رسمی (Page3OfficialRefreshController) انجام می‌شود.", "warning", page)
     if page is None:
         return False
     is_closed_fn = getattr(page, "is_closed", None)
     if is_closed_fn and is_closed_fn() is True:
         return False
     try:
-        refreshed = page.evaluate("""() => {
-            try {
-                window.onbeforeunload = null;
-                window.CloseSession = function() {};
-                if (typeof window.onunload !== 'undefined') window.onunload = null;
-            } catch (e) {}
-            const el = document.querySelector('#ctl00_ContentPlaceHolder1_ddlCity');
-            if (el && el.value && el.value !== '0') {
-                if (typeof __doPostBack === 'function') {
-                    __doPostBack('ctl00$ContentPlaceHolder1$ddlCity', '');
-                    return true;
-                }
-                el.dispatchEvent(new Event('change', { bubbles: true }));
-                return true;
-            }
-            return false;
-        }""")
-        if refreshed:
-            try:
-                page.wait_for_timeout(350)
-            except Exception:
-                pass
-            if hasattr(bot, "wait_for_aspnet_postback"):
-                bot.wait_for_aspnet_postback(page, timeout_ms=6000)
-            return True
+        from core.aspnet_postback import refresh_page3_banks_via_official_reload
+        method = "GET"
+        try:
+            from core.loan_workflow import workflow_for
+            method = getattr(workflow_for(bot), "last_navigation_method", "GET") or "GET"
+        except Exception:
+            method = "GET"
+        timeout = int(getattr(bot, "settings", {}).get("navigation_timeout_ms", 15000)) if hasattr(bot, "settings") else 15000
+        ok, reason = refresh_page3_banks_via_official_reload(
+            page, bot=bot, timeout_ms=timeout, last_navigation_method=method
+        )
+        if hasattr(bot, "log"):
+            level = "info" if ok else "warning"
+            bot.log(
+                f"{'✅' if ok else '⚠️'} رفرش سهمیه استانی صفحه ۳ با ریلود رسمی: {reason}",
+                level,
+                page,
+            )
+        return bool(ok)
     except Exception as e:
         if hasattr(bot, "log"):
-            bot.log(f"⚠️ خطا در فراخوانی منسوخ‌شده تازه‌سازی شهر: {e}", "warning", page)
-    return False
+            bot.log(f"⚠️ خطا در ریلود رسمی سهمیه صفحه ۳: {e}", "warning", page)
+        return False

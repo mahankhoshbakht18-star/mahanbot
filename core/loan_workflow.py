@@ -35,7 +35,8 @@ TRANSITIONS['FINAL_SUBMIT_CONFIRMED'] = {'FINAL_SUBMIT_CONFIRMED'}
 
 STAGE_MAP = {'STEP_1_ENTRY_FORM': 'STEP1_IDENTIFICATION', 'STEP_2_OTP': 'STEP2_OTP_REQUIRED',
              'STEP_3_BANK_SELECT': 'STEP3_ACTIVE', 'DONE': 'FINAL_SUBMIT_CONFIRMED',
-             'BROWSER_CLOSED': 'FAILED', 'WAF_BLOCKED': 'PAUSED', 'FIREWALL_CHALLENGE': 'PAUSED'}
+             'BROWSER_CLOSED': 'FAILED', 'WAF_BLOCKED': 'PAUSED', 'FIREWALL_CHALLENGE': 'PAUSED',
+             'SESSION_EXPIRED': 'SESSION_EXPIRED'}
 
 
 @dataclass
@@ -54,10 +55,14 @@ def detect_current_workflow_state(page, bot):
     started = time.perf_counter()
     parts = urlsplit(str(getattr(page, 'url', '')))
     result = WorkflowDetection(url=urlunsplit((parts.scheme, parts.netloc, parts.path, '', '')))
-    stage = bot.detect_actual_page_stage(page)
+    from core.stage_detector import detect_current_stage
+    detection = detect_current_stage(page, bot=bot)
+    stage = detection.legacy
     result.state = STAGE_MAP.get(stage, 'UNKNOWN')
-    result.confidence = .98 if result.state != 'UNKNOWN' else 0
-    result.reason = 'live_dom:' + stage
+    if stage == 'SESSION_EXPIRED':
+        result.state = 'SESSION_EXPIRED'
+    result.confidence = detection.confidence if result.state != 'UNKNOWN' else 0
+    result.reason = 'live_dom:' + detection.stage + ':' + (detection.reason or stage)
     if stage == 'DONE':
         from bot_select_bank import _extract_confirmed_submission
         if not _extract_confirmed_submission(bot, page):
@@ -87,6 +92,9 @@ def detect_current_workflow_state(page, bot):
         result.session_status, result.reason = 'closed', 'target_closed'
     elif stage in {'WAF_BLOCKED', 'FIREWALL_CHALLENGE'}:
         result.session_status, result.reason = 'blocked', 'security_or_rate_limit'
+    elif stage == 'SESSION_EXPIRED':
+        result.session_status = 'expired'
+        result.visible_errors = ['session_expired']
     if not page.is_closed() and stage not in {'OFFLINE_SNAPSHOT', 'BROWSER_CLOSED'}:
         try:
             error = page.locator('[role="alert"]:visible, [id$="labErrMsg"]:visible, [id$="lblError"]:visible')

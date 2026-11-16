@@ -89,7 +89,11 @@ class Step3BankPage:
             return True
 
     def ensure_city_selected(self, page, target_city: str) -> bool:
-        """Verify or select city dropdown and wait for postback."""
+        """
+        Verify or select city dropdown and wait for native change postback.
+        City is locality-only; does NOT refresh province bank quotas.
+        Avoids a second synthetic __doPostBack (CloseSession race).
+        """
         if not target_city:
             return True
         norm_city = PersianBankMatcher.normalize(target_city)
@@ -103,13 +107,11 @@ class Step3BankPage:
                     return 'already_selected';
                 }}
                 for (let i = 0; i < ddl.options.length; i++) {{
-                    if (ddl.options[i].text.includes(normCity) && ddl.options[i].value && ddl.options[i].value !== '0') {{
+                    const opt = ddl.options[i];
+                    if (opt.disabled) continue;
+                    if (opt.text.includes(normCity) && opt.value && opt.value !== '0') {{
                         ddl.selectedIndex = i;
-                        if (typeof window.__doPostBack === 'function') {{
-                            window.__doPostBack('{self.CITY_SELECTOR}'.replace('#ctl00_ContentPlaceHolder1_', 'ctl00$ContentPlaceHolder1$'), '');
-                        }} else {{
-                            ddl.dispatchEvent(new Event('change', {{ bubbles: true }}));
-                        }}
+                        ddl.dispatchEvent(new Event('change', {{ bubbles: true }}));
                         return 'selected';
                     }}
                 }}

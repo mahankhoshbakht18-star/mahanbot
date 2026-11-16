@@ -85,16 +85,22 @@ class TestBankPollingRadarAndReauth(unittest.TestCase):
         self.assertNotEqual(ctrl.state, State.SESSION_EXPIRED)
         mock_owner.page.context.clear_cookies.assert_not_called()
 
-    def test_trigger_bank_capacity_refresh_evaluates_postback(self):
-        """Verify trigger_bank_capacity_refresh invokes ASP.NET __doPostBack on ddlCity."""
+    def test_trigger_bank_capacity_refresh_uses_official_page3_reload(self):
+        """Province quotas refresh via official page.reload — ddlCity must not be used."""
         mock_bot = MagicMock()
+        mock_bot.settings = {"navigation_timeout_ms": 5000}
         mock_page = MagicMock()
-        mock_page.evaluate.return_value = True
+        mock_page.is_closed.return_value = False
+        mock_page.url = "https://ve.cbi.ir/SelectBnkShb.aspx"
+        mock_page.evaluate.return_value = ""
 
         res = trigger_bank_capacity_refresh(mock_bot, mock_page)
         self.assertTrue(res)
-        mock_page.evaluate.assert_called_once()
-        self.assertIn("ctl00$ContentPlaceHolder1$ddlCity", mock_page.evaluate.call_args[0][0])
+        mock_page.reload.assert_called()
+        # Ensure legacy ddlCity pulse is not used
+        for call in mock_page.evaluate.call_args_list:
+            src = str(call[0][0]) if call[0] else ""
+            self.assertNotIn("ddlCity", src)
 
     def test_radar_ingestion_and_telegram_dedup(self):
         """Verify CAPACITY_RADAR ingests observation and detects active bank."""
