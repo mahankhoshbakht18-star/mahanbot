@@ -161,7 +161,8 @@ class BrowserProfileRecoveryManager:
         if not p_dir.exists():
             return True, "Fresh profile, no cleanup needed."
 
-        # Verify not currently locked
+        # Orphan locks after manual close / crashed Chromium block the next launch
+        BrowserProfileHealthManager.clear_stale_locks(p_dir)
         is_locked, lock_reason = BrowserProfileHealthManager.check_lock_status(p_dir)
         if is_locked:
             return False, f"Profile is locked: {lock_reason}"

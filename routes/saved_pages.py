@@ -472,10 +472,13 @@ def reauthenticate_applicant(nid: str, _: bool = Depends(require_api_key)):
         raise HTTPException(status_code=404, detail="Applicant not found")
     if DBHandler.has_final_submission(nid) or DBHandler.get_checkpoint(nid).get("reserve_confirmed"):
         raise HTTPException(status_code=409, detail="درخواست یا رزرو قبلاً تأیید شده است")
-    cp = DBHandler.get_checkpoint(nid)
+    cp = DBHandler.get_checkpoint(nid) or {}
     final_status = cp.get("final_submit_status")
     if final_status:
-        raise HTTPException(status_code=409, detail="ابتدا نتیجه درخواست قبلی را بررسی کنید؛ ورود مجدد خودکار مجاز نیست")
+        if not cp.get("tracking_code"):
+            DBHandler.release_final_submission_claim(nid)
+        else:
+            raise HTTPException(status_code=409, detail="درخواست قبلاً ثبت نهایی شده است")
     owner = LIVE_SESSIONS.get(nid)
     if owner:
         if owner.current_state != BankPageState.SESSION_EXPIRED:

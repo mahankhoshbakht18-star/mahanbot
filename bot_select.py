@@ -6,8 +6,6 @@ import random
 import re
 import threading
 import hashlib
-import base64
-
 from browser_launcher import BrowserLaunchError, PlaywrightError, close_browser, safe_goto
 from bot_core import BotCore
 from bot_helpers import sleep_with_stop
@@ -130,7 +128,9 @@ class JobStateContext:
     def is_otp_valid(self) -> bool:
         if not self.cached_otp_code or not self.otp_received_at:
             return False
-        return (time.time() - self.otp_received_at) < self.otp_ttl_seconds
+        # Soft TTL: allow reuse a bit beyond nominal window for Page3 hot reentry.
+        soft = max(int(self.otp_ttl_seconds or 115), 115) + 60
+        return (time.time() - self.otp_received_at) < soft
 
     def invalidate_otp(self):
         self.cached_otp_code = None
@@ -182,12 +182,28 @@ class BankSelectionBot(BotCore):
         self.consume_recovery_flag('otp_expired')
         self.consume_recovery_flag('session_expired')
         self._nid_filled = False
-        if sleep_with_stop(stop_event, min(8.0, 0.5 * 2 ** (flow.recovery_count - 1)), step=.05):
+        reason_l = str(reason or "").lower()
+        force_step1 = ("otp_expired" in reason_l) or reason_l in {
+            "page3_requires_authentication",
+            "page3_reload_otp_expired",
+            "site_requires_new_challenge",
+        }
+        if force_step1:
+            self._page3_hot_reentry = False
+            if hasattr(self, "ctx") and self.ctx is not None:
+                try:
+                    self.ctx.invalidate_otp()
+                except Exception:
+                    pass
+        # Hot Page3/OTP regression: no multi-second backoff — resume immediately.
+        backoff = 0.05 if getattr(self, "_page3_hot_reentry", False) else min(2.0, 0.35 * 2 ** max(0, flow.recovery_count - 1))
+        if sleep_with_stop(stop_event, backoff, step=.05):
             return 'stopped'
         form = detect_otp_form(page, timeout_ms=1500)
         resend = form.resolve('resend')
-        self.mark_otp_entry_time()
-        if resend is not None:
+        if not force_step1:
+            self.mark_otp_entry_time()
+        if resend is not None and not force_step1:
             resend.click(timeout=3000)
         elif self.detect_actual_page_stage(page) != 'STEP_1_ENTRY_FORM':
             self.live_owner.bank_page_active = False
@@ -195,6 +211,20 @@ class BankSelectionBot(BotCore):
                                     force=True,
                                     timeout=int(self.settings.get('navigation_timeout_ms', 35000)),
                                     wait_until='domcontentloaded', log_callback=self.log)
+        if force_step1 or self.detect_actual_page_stage(page) == 'STEP_1_ENTRY_FORM':
+            self._nid_filled = False
+            try:
+                page.wait_for_selector(
+                    "#ctl00_ContentPlaceHolder1_tbIDNo, input[name$='tbIDNo']",
+                    state="visible",
+                    timeout=5000,
+                )
+            except Exception:
+                pass
+            if self._ensure_nid_after_reload(page):
+                self.log("✅ پس از بازگشت به مرحله ۱، کد ملی دوباره پر شد.", "success", page)
+            else:
+                self.log("⚠️ بازگشت به مرحله ۱؛ فیلد کد ملی هنوز آماده نیست — در حلقه اصلی پر می‌شود.", "warning", page)
         flow.redetect(page, 'official_authentication_recovery')
         return 'redetect'
 
@@ -290,6 +320,10 @@ class BankSelectionBot(BotCore):
         self._active_stop_event = stop_event
         self._run_started_at = time.time()
         self._run_perf_started = time.perf_counter()
+        try:
+            DBHandler.clear_captcha_attempts(self.nid)
+        except Exception:
+            pass
 
         # 0. Pre-flight check: prevent duplicate submission before even launching browser
         existing_tracking = DBHandler.has_final_submission(self.nid)
@@ -351,17 +385,22 @@ class BankSelectionBot(BotCore):
             try:
                 playwright, browser, context, page = self.setup_browser(stop_event)
                 self.live_owner.bind(context, page)
+                try:
+                    from captcha_engine import attach_captcha_listener
+                    attach_captcha_listener(page)
+                except Exception:
+                    pass
                 if stop_event.is_set():
                     return
 
                 otp_attempted = False
 
                 self.log(f"🚀 شروع عملیات ({adapter.kind} - دور {attempt})...", "info", page)
-                automation_mode = str(self.settings.get("automation_mode", "normal")).lower()
+                automation_mode = str(self.settings.get("automation_mode", "fast")).lower()
                 timing_profiles = {
-                    "fast": {"step1": 450, "otp": 200, "probe": 80, "retry": 0.1},
-                    "normal": {"step1": 750, "otp": 350, "probe": 150, "retry": 0.25},
-                    "safe": {"step1": 1200, "otp": 600, "probe": 300, "retry": 0.5},
+                    "fast": {"step1": 350, "otp": 150, "probe": 60, "retry": 0.08},
+                    "normal": {"step1": 550, "otp": 250, "probe": 100, "retry": 0.15},
+                    "safe": {"step1": 900, "otp": 450, "probe": 200, "retry": 0.35},
                 }
                 timing = timing_profiles.get(automation_mode, timing_profiles["normal"])
                 step1_timeout = timing["step1"]
@@ -633,6 +672,10 @@ class BankSelectionBot(BotCore):
                             set_state('ENTRY_FORM')
                             continue
                         elif result == 'entry_form':
+                            # Page3→Step1: do NOT sit on SMS cooldown — clear and re-solve immediately.
+                            self._sms_cooldown_until = 0.0
+                            self._skip_sms_cooldown = True
+                            self._page3_hot_reentry = True
                             self.recover_authentication(page, stop_event, adapter, 'page3_reload_regressed_to_entry')
                             set_state('ENTRY_FORM')
                             continue
@@ -642,12 +685,34 @@ class BankSelectionBot(BotCore):
                                 self.ctx.page3_retry_count += 1
                             # Soft OTP re-entry only while code still valid; otherwise restart full cycle
                             if hasattr(self, "ctx") and self.ctx is not None and self.ctx.is_otp_valid():
-                                self._last_retained_otp = self.ctx.cached_otp_code
-                                self.log(f"🔄 بازگشت از مرحله ۳ به تایید پیامک؛ استفاده مجدد از کد معتبر ({self.ctx.cached_otp_code})...", "info", page)
+                                reuse = self.ctx.cached_otp_code
+                                self._last_retained_otp = reuse
+                                self._page3_hot_reentry = True
+                                self._otp_force_captcha_refresh = True
+                                self._otp_prefilled_captcha = None
+                                self._sms_cooldown_until = 0.0
+                                self._captcha_retry = 0
+                                digest = hashlib.sha256(str(reuse).encode()).hexdigest()
+                                self._consumed_otp_digests = set(getattr(self, "_consumed_otp_digests", set()) or set()) - {digest}
+                                try:
+                                    old = DBHandler.get_otp_record(self.nid) or {}
+                                    DBHandler.set_otp(
+                                        self.nid,
+                                        reuse,
+                                        ts=old.get("ts") or self.ctx.otp_received_at or time.time(),
+                                        status="bank_ready",
+                                        request_id=getattr(self, "_otp_request_id", None) or old.get("request_id"),
+                                    )
+                                except Exception:
+                                    pass
+                                self.log(f"🔄 بازگشت از مرحله ۳ به تایید پیامک؛ استفاده مجدد از کد معتبر ({reuse})...", "info", page)
                                 set_state({'STEP_1_ENTRY_FORM': 'ENTRY_FORM', 'STEP_3_BANK_SELECT': 'BANK_SELECT',
                                            'STEP_2_OTP': 'OTP_FORM'}.get(actual, 'OTP_FORM'))
                             else:
                                 self.log("🔄 پس از ریلود صفحه ۳ کد پیامک منقضی است؛ شروع مجدد چرخه از مرحله ۱...", "warning", page)
+                                self._sms_cooldown_until = 0.0
+                                self._skip_sms_cooldown = True
+                                self._page3_hot_reentry = True
                                 self.recover_authentication(page, stop_event, adapter, 'page3_reload_otp_expired')
                                 set_state('ENTRY_FORM')
                             continue
@@ -699,27 +764,22 @@ class BankSelectionBot(BotCore):
                         continue
 
                     if self.consume_recovery_flag("captcha_invalid"):
-                        if self._captcha_retry <= self._captcha_retry_limit:
-                            retry_delay = max(0.0, float(self.settings.get("captcha_retry_delay", 0.25)))
-                            if sleep_with_stop(stop_event, retry_delay, step=0.05):
-                                break
-                            self._refresh_captcha_or_reload(page, input_sel="input[name*='tbCaptcha']", allow_reload=False, captcha_rejected=True)
-                            if self.detect_actual_page_stage(page) == "STEP_1_ENTRY_FORM":
-                                self._solve_primary_captcha_fast(page, stop_event)
-                        else:
-                            if bool(self.settings.get("pause_for_manual_captcha", False)):
-                                wait_for_manual_captcha_handoff(
-                                    self,
-                                    page,
-                                    "input[name*='tbCaptcha']",
-                                    "input[type='submit']",
-                                    stop_event,
-                                    source="dialog_captcha_invalid",
-                                )
-                            else:
-                                self.set_runtime_state("ERROR", "CAPTCHA_ERROR", browser_status="OPEN", last_error="captcha_retry_limit")
-                                self.log("حداکثر تلاش کپچا تمام شد؛ عملیات متوقف شد.", "error", page)
-                                return
+                        # No hard stop — keep retrying forever until Stage advances / user stops.
+                        self._captcha_retry = 0
+                        retry_delay = max(0.0, float(self.settings.get("captcha_retry_delay", 0.25)))
+                        if sleep_with_stop(stop_event, retry_delay, step=0.05):
+                            break
+                        stage_now = self.detect_actual_page_stage(page)
+                        if stage_now == "STEP_3_BANK_SELECT":
+                            continue
+                        self._refresh_captcha_or_reload(page, input_sel="input[name*='tbCaptcha']", allow_reload=False, captcha_rejected=True)
+                        if stage_now == "STEP_1_ENTRY_FORM":
+                            # Captcha refresh can wipe NID — never submit Step1 without national ID.
+                            self._nid_filled = False
+                            if not self._ensure_nid_after_reload(page):
+                                self.log("⚠️ کپچای مرحله ۱ رد شد ولی کد ملی خالی است؛ ابتدا NID پر می‌شود.", "warning", page)
+                                continue
+                            self._solve_primary_captcha_fast(page, stop_event)
                         continue
 
                     if self.consume_recovery_flag("generic_error"):
@@ -810,9 +870,26 @@ class BankSelectionBot(BotCore):
 
                     elif actual_stage == "STEP_2_OTP" or self._otp_input_visible(page):
                         set_state("OTP_FORM")
-                        if hasattr(self, "ctx") and self.ctx is not None and self.ctx.is_otp_valid():
-                            self._last_retained_otp = self.ctx.cached_otp_code
-                            self.log(f"🔄 استفاده مجدد از کد پیامک معتبر در نشست ({self.ctx.cached_otp_code})...", "info", page)
+                        # Only reuse cached OTP when returning from Page3 — otherwise wait for new SMS.
+                        if getattr(self, "_page3_hot_reentry", False) and hasattr(self, "ctx") and self.ctx is not None and self.ctx.is_otp_valid():
+                            reuse = self.ctx.cached_otp_code
+                            self._last_retained_otp = reuse
+                            digest = hashlib.sha256(str(reuse).encode()).hexdigest()
+                            self._consumed_otp_digests = set(getattr(self, "_consumed_otp_digests", set()) or set()) - {digest}
+                            self._otp_force_captcha_refresh = True
+                            self._otp_prefilled_captcha = None
+                            try:
+                                old = DBHandler.get_otp_record(self.nid) or {}
+                                DBHandler.set_otp(
+                                    self.nid,
+                                    reuse,
+                                    ts=old.get("ts") or self.ctx.otp_received_at or time.time(),
+                                    status="bank_ready",
+                                    request_id=getattr(self, "_otp_request_id", None) or old.get("request_id"),
+                                )
+                            except Exception:
+                                pass
+                            self.log(f"🔄 استفاده مجدد از کد پیامک معتبر در نشست ({reuse})...", "info", page)
                         if stop_event.is_set():
                             break
 
@@ -827,6 +904,16 @@ class BankSelectionBot(BotCore):
                             self.set_runtime_state("MONITORING", "BANK_SELECTION", browser_status="OPEN")
                         elif result == 'otp_expired':
                             otp_attempted = False
+                            self._page3_hot_reentry = False
+                            self._last_retained_otp = None
+                            self._sms_cooldown_until = 0.0
+                            self._skip_sms_cooldown = True
+                            if hasattr(self, "ctx") and self.ctx is not None:
+                                try:
+                                    self.ctx.invalidate_otp()
+                                except Exception:
+                                    pass
+                            self.log("🔄 کد پیامک منقضی شد؛ شروع مجدد چرخه از مرحله ۱...", "warning", page)
                             self.recover_authentication(page, stop_event, adapter, 'otp_expired')
                             set_state('ENTRY_FORM')
                             continue
@@ -911,6 +998,13 @@ class BankSelectionBot(BotCore):
                         if self._firewall_gate(page, stop_event):
                             continue
 
+                        # Re-verify NID immediately before captcha (refresh may have wiped it).
+                        if not self._ensure_nid_after_reload(page):
+                            self._nid_filled = False
+                            if sleep_with_stop(stop_event, 0.35):
+                                break
+                            continue
+
                         self._solve_primary_captcha_fast(page, stop_event)
 
                         try:
@@ -932,7 +1026,7 @@ class BankSelectionBot(BotCore):
                             otp_attempted = False
                         self._perform_login_standard(page, "model")
 
-                    if sleep_with_stop(stop_event, 0.2):
+                    if sleep_with_stop(stop_event, 0.08):
                         break
 
             except SiteRejectedError as exc:
@@ -1164,7 +1258,11 @@ class BankSelectionBot(BotCore):
         return refresh_captcha_or_reload(self, page, input_sel=input_sel, timeout=timeout, allow_reload=allow_reload, captcha_rejected=captcha_rejected, **kwargs)
 
     def _ensure_nid_after_reload(self, page):
+        """Guarantee Step1 national-id is present/correct before any captcha submit."""
         selectors = ["#ctl00_ContentPlaceHolder1_tbIDNo", "input[name$='tbIDNo']"]
+        want = str(self.nid or "").strip()
+        if not want:
+            return False
         for selector in selectors:
             try:
                 field = page.locator(selector)
@@ -1172,36 +1270,39 @@ class BankSelectionBot(BotCore):
                     continue
                 current = ""
                 try:
-                    current = field.first.input_value().strip()
+                    current = (field.first.input_value() or "").strip()
                 except Exception:
                     current = ""
-                if not current:
-                    try:
-                        BrowserActions.human_fill(field.first, self.nid, timeout=750)
-                    except Exception:
-                        BrowserActions.fast_fill(field.first, self.nid, timeout=750)
-                    self._nid_filled = True
+                if current != want:
+                    if not self._fill_input_with_verification(page, field.first, want, "National ID"):
+                        try:
+                            BrowserActions.fast_fill(field.first, want, timeout=750)
+                        except Exception:
+                            pass
+                        try:
+                            current = (field.first.input_value() or "").strip()
+                        except Exception:
+                            current = ""
+                        if current != want:
+                            self._nid_filled = False
+                            return False
+                self._nid_filled = True
                 return True
             except Exception:
                 continue
+        self._nid_filled = False
         return False
 
     def _capture_captcha_image(self, captcha_element, source):
-        if source not in {"primary", "step1_primary_assist", "otp"}:
-            return super()._capture_captcha_image(captcha_element, source)
+        del source
         try:
-            # Persisted Chromium zoom can crop locator screenshots; read the loaded image's own pixels.
-            encoded = captcha_element.evaluate("""img => {
-                const canvas = document.createElement('canvas');
-                canvas.width = img.naturalWidth;
-                canvas.height = img.naturalHeight;
-                canvas.getContext('2d').drawImage(img, 0, 0);
-                return canvas.toDataURL('image/png').split(',')[1];
-            }""")
-            return base64.b64decode(encoded, validate=True)
+            from bot_select_captcha import read_captcha_image_bytes
+            raw = read_captcha_image_bytes(getattr(captcha_element, "page", None), captcha_element)
+            if raw:
+                return raw
         except Exception as exc:
-            self.log(f"دریافت پیکسل اصلی کپچای انتخاب بانک ناموفق بود؛ استفاده از تصویر مرورگر: {type(exc).__name__}", "warning")
-            return super()._capture_captcha_image(captcha_element, source)
+            self.log(f"دریافت فایل کپچا ناموفق بود؛ استفاده از تصویر مرورگر: {type(exc).__name__}", "warning")
+        return super()._capture_captcha_image(captcha_element, "general")
 
     def _solve_primary_captcha_fast(self, page, stop_event) -> bool:
         """
@@ -1223,23 +1324,55 @@ class BankSelectionBot(BotCore):
             "input[name$='btnCheck'], "
             "input[type='submit']"
         )
-        max_attempts = max(1, int(self.settings.get("captcha_max_retries", 10)))
+        # Bounded automatic solves — leave the loop so the main FSM can re-check the page.
+        max_auto = 4
         attempts = 0
-
-        while not stop_event.is_set() and attempts < max_attempts:
+        nid_misses = 0
+        while not stop_event.is_set() and attempts < max_auto:
             attempts += 1
             if self._firewall_gate(page, stop_event):
                 return False
 
-            # Check CBI 2-minute SMS cooldown
-            sms_cooldown = float(getattr(self, "_sms_cooldown_until", 0.0) or 0.0)
-            if time.time() < sms_cooldown:
-                wait_rem = int(sms_cooldown - time.time()) + 2
-                self.log(f"⏳ محدودیت ۲ دقیقه‌ای ارسال پیامک بانک مرکزی ({wait_rem} ثانیه باقی‌مانده)؛ انتظار تا پایان مهلت...", "info", page)
-                if sleep_with_stop(stop_event, wait_rem, step=1.0):
-                    return False
+            # Already advanced past Step1 — don't keep hunting NID/captcha here.
+            if self._otp_input_visible(page) or self.detect_actual_page_stage(page) in {"STEP_2_OTP", "STEP_3_BANK_SELECT"}:
+                self._page3_hot_reentry = False
+                return True
 
-            captcha_img, _ = wait_for_captcha_image_ready(page, timeout_ms=4500, trigger_refresh_if_missing=True)
+            # SMS cooldown: never hard-block for 120s. Hot reentry / OTP→Step1 skips it.
+            if getattr(self, "_skip_sms_cooldown", False) or getattr(self, "_page3_hot_reentry", False):
+                self._sms_cooldown_until = 0.0
+                self._skip_sms_cooldown = False
+            else:
+                sms_cooldown = float(getattr(self, "_sms_cooldown_until", 0.0) or 0.0)
+                if time.time() < sms_cooldown:
+                    wait_rem = min(8, int(sms_cooldown - time.time()) + 1)
+                    self.log(f"⏳ محدودیت ارسال پیامک ({wait_rem}ث کوتاه)؛ سپس حل مجدد کپچا بدون توقف طولانی...", "info", page)
+                    if sleep_with_stop(stop_event, wait_rem, step=0.5):
+                        return False
+
+            # Fill NID BEFORE captcha wait/refresh — BotDetect reload can wipe the field.
+            if not self._ensure_nid_after_reload(page):
+                nid_misses += 1
+                stage_now = self.detect_actual_page_stage(page)
+                self.log(
+                    f"⚠️ قبل از کپچای مرحله ۱ کد ملی آماده نیست (stage={stage_now}, miss={nid_misses})...",
+                    "warning",
+                    page,
+                )
+                if nid_misses >= 3:
+                    self._nid_filled = False
+                    self.log("↩️ خروج از حلقه کپچا برای پر کردن مجدد کد ملی در حلقه اصلی.", "warning", page)
+                    return False
+                if sleep_with_stop(stop_event, 0.35):
+                    return False
+                continue
+            nid_misses = 0
+
+            captcha_img, _ = wait_for_captcha_image_ready(
+                page,
+                timeout_ms=1800 if getattr(self, "_page3_hot_reentry", False) else 3500,
+                trigger_refresh_if_missing=False,
+            )
             if captcha_img is None:
                 try:
                     captcha_img = page.locator("img.BDC_CaptchaImage, img[id*='CaptchaImage' i]").first
@@ -1251,32 +1384,69 @@ class BankSelectionBot(BotCore):
             # Clear any leftover invalid dialog flag before submitting a fresh prediction
             self.consume_recovery_flag("captcha_invalid")
 
+            # Captcha image wait/refresh may have cleared tbIDNo — refill before submit.
+            if not self._ensure_nid_after_reload(page):
+                nid_misses += 1
+                self.log("⚠️ بعد از آماده‌سازی تصویر کپچا کد ملی خالی شد؛ پر کردن مجدد...", "warning", page)
+                if nid_misses >= 3:
+                    self._nid_filled = False
+                    return False
+                if sleep_with_stop(stop_event, 0.25):
+                    return False
+                continue
+            nid_misses = 0
+
             try:
                 if hasattr(self, "_run_perf_started"):
                     self.record_metric("captcha_handoff_ms", self._run_perf_started)
-                if not self.solve_captcha_with_model(
-                    page, input_sel, btn_sel, stop_event=stop_event, source="primary", captcha_element=captcha_img
-                ):
-                    self._refresh_captcha_or_reload(page, input_sel=input_sel, allow_reload=False, force=True)
+                from captcha_engine import solve_and_fill_captcha
+                solved = solve_and_fill_captcha(
+                    page,
+                    input_selector=input_sel,
+                    button_selector=btn_sel,
+                    submit=True,
+                    max_retries=2,
+                    bot=self,
+                    stop_event=stop_event,
+                    step="STEP_1_ENTRY_FORM",
+                )
+                submitted = bool(solved.filled and solved.submitted)
+                if not submitted:
+                    if solved.filled:
+                        self.log("کپچا پر شد ولی دکمه ورود پست‌بک نساخت.", "warning", page)
+                    else:
+                        self.log(
+                            f"کپچای انتخاب بانک خوانا نبود (تلاش {attempts}/{max_auto})؛ تصویر تازه گرفته می‌شود.",
+                            "warning",
+                            page,
+                        )
+                    self._ensure_nid_after_reload(page)
+                    if sleep_with_stop(stop_event, 0.4):
+                        return False
                     continue
             except Exception as exc:
                 self.log(f"خطای حل کپچای انتخاب بانک: {type(exc).__name__}", "warning", page)
-                self._refresh_captcha_or_reload(page, input_sel=input_sel, allow_reload=False, force=True)
+                self._ensure_nid_after_reload(page)
                 continue
 
             # Wait for ASP.NET postback / AJAX update to complete
             if hasattr(self, "wait_for_aspnet_postback"):
                 self.wait_for_aspnet_postback(page, timeout_ms=3000)
 
-            # Poll for page transition to Step 2 (OTP) or Step 3 (Bank Selection)
+            # Stay on this submit until the server answers. A new solve during the postback clears the national id.
             transitioned = False
-            for _ in range(15):  # 15 * 200ms = 3.0s total grace period for server response
+            for _ in range(60):
                 if stop_event.is_set():
                     return False
                 if self._otp_input_visible(page) or self.detect_actual_page_stage(page) in {"STEP_2_OTP", "STEP_3_BANK_SELECT"}:
                     transitioned = True
+                    self._page3_hot_reentry = False
                     break
                 if self.consume_recovery_flag("captcha_invalid") or self._detect_captcha_failure(page):
+                    break
+                if self.consume_recovery_flag("sms_cooldown") or getattr(self, "_last_dialog_action", None) == "sms_cooldown":
+                    # Cooldown dialog after a good captcha: keep trying soon, do not abort loop for 120s
+                    self._last_dialog_action = None
                     break
                 try:
                     from bot_select_captcha import detect_form_validation_error
@@ -1289,17 +1459,18 @@ class BankSelectionBot(BotCore):
                     from database import DBHandler
                     DBHandler.update_status(self.nid, "خطای اطلاعات فرم", form_err)
                     return False
-                time.sleep(0.2)
+                time.sleep(0.1)
 
             if transitioned:
                 self.clear_otp_locks()
                 return True
 
-            # Server rejected or did not transition; auto-refresh image and clear input for next model attempt
-            self._refresh_captcha_or_reload(page, input_sel=input_sel, allow_reload=False, captcha_rejected=True)
+            # Server already replaced a wrong image. Read that image again; do not click reload.
             if sleep_with_stop(stop_event, 0.25):
                 return False
 
+        if not stop_event.is_set():
+            self.log("خروج از حل خودکار کپچای انتخاب بانک؛ صفحه دوباره سنجیده می‌شود.", "info", page)
         # Manual CAPTCHA handoff only if user explicitly enabled it
         pause_manual = str(self.settings.get("pause_for_manual_captcha", "false")).lower() in {"1", "true", "yes"}
         if not stop_event.is_set() and pause_manual:

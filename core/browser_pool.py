@@ -1,11 +1,14 @@
 """
-Shared Playwright Browser pool for MAHANBOT.
+Thread-local Playwright Browser helpers for MAHANBOT.
 
-- One Chromium Browser (non-persistent launches) reused across applicants.
-- Isolated BrowserContext per applicant.
-- Resource guards: abort font/media/images that are not CAPTCHA/ASP.NET essentials.
-- Persistent chrome_profiles/{nid} still use launch_persistent_context (cannot share Browser),
-  but attach the same resource guards.
+JobQueue runs every job on an isolated thread. Playwright's sync API is
+thread-affine, so a process-wide shared driver breaks the next job with
+"Failed to launch browser". Pool state is therefore thread-local:
+
+- One sync_playwright() driver per job thread
+- Optional shared Chromium Browser within that same thread (non-persistent)
+- Isolated BrowserContext per applicant/session
+- Resource guards: abort font/media/images that are not CAPTCHA/ASP.NET essentials
 """
 from __future__ import annotations
 
@@ -15,29 +18,62 @@ from typing import Any, Dict, Optional, Tuple
 
 logger = logging.getLogger("mahanbot.browser_pool")
 
-_POOL_LOCK = threading.RLock()
-_SHARED_PLAYWRIGHT = None
-_SHARED_BROWSER = None
-_SHARED_LAUNCH_KEY: Optional[str] = None
-_CONTEXT_REFCOUNT = 0
+_TLS = threading.local()
 
 # Block heavy assets; keep CAPTCHA / BotDetect / ASP.NET script+xhr+document.
 _BLOCKED_RESOURCE_TYPES = {"font", "media"}
-_CAPTCHA_URL_HINTS = ("captcha", "botdetect", "bdc_", "challenge", "getimage", "gdx")
+_CAPTCHA_URL_HINTS = (
+    "captcha",
+    "botdetect",
+    "botdetectcaptcha",
+    "bdc_",
+    "challenge",
+    "getimage",
+    "get=image",
+    "gdx",
+)
+
+
+def _tls_get(name: str, default=None):
+    return getattr(_TLS, name, default)
+
+
+def _tls_set(name: str, value) -> None:
+    setattr(_TLS, name, value)
+
+
+def invalidate_thread_browser(*, stop_playwright: bool = False) -> None:
+    """Drop dead/corrupt thread-local browser (and optionally Playwright)."""
+    browser = _tls_get("browser")
+    if browser is not None:
+        try:
+            browser.close()
+        except Exception:
+            pass
+    _tls_set("browser", None)
+    _tls_set("launch_key", None)
+    if stop_playwright:
+        pw = _tls_get("playwright")
+        if pw is not None:
+            try:
+                pw.stop()
+            except Exception:
+                pass
+        _tls_set("playwright", None)
 
 
 def get_shared_playwright():
-    """One process-wide sync_playwright() driver."""
-    global _SHARED_PLAYWRIGHT
-    with _POOL_LOCK:
-        if _SHARED_PLAYWRIGHT is not None:
-            return _SHARED_PLAYWRIGHT
-        try:
-            from playwright.sync_api import sync_playwright
-        except ImportError as exc:  # pragma: no cover
-            raise RuntimeError("playwright is not installed in this environment") from exc
-        _SHARED_PLAYWRIGHT = sync_playwright().start()
-        return _SHARED_PLAYWRIGHT
+    """One sync_playwright() driver for the current job thread only."""
+    existing = _tls_get("playwright")
+    if existing is not None:
+        return existing
+    try:
+        from playwright.sync_api import sync_playwright
+    except ImportError as exc:  # pragma: no cover
+        raise RuntimeError("playwright is not installed in this environment") from exc
+    pw = sync_playwright().start()
+    _tls_set("playwright", pw)
+    return pw
 
 
 def _launch_key(launch_options: Dict[str, Any]) -> str:
@@ -56,23 +92,20 @@ def _should_abort_request(request) -> bool:
         url = str(getattr(request, "url", "") or "").lower()
     except Exception:
         return False
+    # Never touch CAPTCHA / BotDetect / same-origin CBI assets.
     if any(h in url for h in _CAPTCHA_URL_HINTS):
         return False
-    # Keep stylesheets (ASP.NET UpdatePanel layout) and scripts
+    if "ve.cbi.ir" in url:
+        return False
     if rtype in _BLOCKED_RESOURCE_TYPES:
         return True
-    # Block large decorative images, but never captcha
     if rtype == "image":
-        if any(h in url for h in _CAPTCHA_URL_HINTS):
-            return False
-        # Allow tiny icons / data URIs used by the form
         if url.startswith("data:"):
             return False
-        # Block common static image CDNs / extensions that are not captcha
         if any(url.endswith(ext) for ext in (".woff", ".woff2", ".ttf", ".otf", ".mp4", ".webm", ".mp3")):
             return True
-        # Soft-block non-cbi decorative images
-        if "ve.cbi.ir" not in url and "localhost" not in url and "127.0.0.1" not in url:
+        # Soft-block only clearly off-site decorative images
+        if "localhost" not in url and "127.0.0.1" not in url:
             return True
     return False
 
@@ -107,38 +140,44 @@ def install_resource_guards(context: Any) -> None:
 
 def get_shared_browser(playwright: Any, browser_type: Any, launch_options: Dict[str, Any]) -> Any:
     """
-    Return a process-wide shared Chromium Browser for non-persistent contexts.
-    Marks browser with _mahan_shared=True so close_browser can spare it.
+    Return a thread-local Chromium Browser for non-persistent contexts.
+    Marks browser with _mahan_shared=True so callers can detect pool ownership.
     """
-    global _SHARED_PLAYWRIGHT, _SHARED_BROWSER, _SHARED_LAUNCH_KEY
     key = _launch_key(launch_options)
-    with _POOL_LOCK:
+    browser = _tls_get("browser")
+    alive = False
+    try:
+        alive = browser is not None and getattr(browser, "is_connected", lambda: True)()
+    except Exception:
         alive = False
-        try:
-            alive = _SHARED_BROWSER is not None and getattr(_SHARED_BROWSER, "is_connected", lambda: True)()
-        except Exception:
-            alive = False
-        if alive and _SHARED_LAUNCH_KEY == key:
-            return _SHARED_BROWSER
-
-        # Close previous shared browser if launch fingerprint changed
-        if _SHARED_BROWSER is not None:
-            try:
-                _SHARED_BROWSER.close()
-            except Exception:
-                pass
-            _SHARED_BROWSER = None
-
-        opts = dict(launch_options)
-        # Persistent-only keys must not reach browser.launch
-        opts.pop("user_data_dir", None)
-        browser = browser_type.launch(**opts)
-        setattr(browser, "_mahan_shared", True)
-        _SHARED_BROWSER = browser
-        _SHARED_PLAYWRIGHT = playwright
-        _SHARED_LAUNCH_KEY = key
-        logger.info("shared browser launched key=%s", key)
+    if alive and _tls_get("launch_key") == key:
         return browser
+
+    if browser is not None:
+        try:
+            browser.close()
+        except Exception:
+            pass
+        _tls_set("browser", None)
+
+    opts = dict(launch_options)
+    opts.pop("user_data_dir", None)
+    try:
+        browser = browser_type.launch(**opts)
+    except Exception:
+        # Driver may be stuck after a prior cross-thread / closed-browser fault.
+        invalidate_thread_browser(stop_playwright=True)
+        playwright = get_shared_playwright()
+        selected = getattr(browser_type, "name", None) or "chromium"
+        browser_type = getattr(playwright, selected if selected in {"chromium", "firefox", "webkit"} else "chromium")
+        browser = browser_type.launch(**opts)
+
+    setattr(browser, "_mahan_shared", True)
+    _tls_set("browser", browser)
+    _tls_set("playwright", playwright)
+    _tls_set("launch_key", key)
+    logger.info("thread-local browser launched key=%s thread=%s", key, threading.current_thread().name)
+    return browser
 
 
 def acquire_context(
@@ -152,7 +191,7 @@ def acquire_context(
     """
     Returns (browser_or_none, context).
     - persistent profile → (None, persistent_context)
-    - otherwise → (shared_browser, new_context)
+    - otherwise → (thread_local_browser, new_context)
     """
     viewport = viewport or {"width": 900, "height": 620}
     if user_data_dir:
@@ -173,13 +212,12 @@ def acquire_context(
 
 
 def release_context(context: Any, page: Any = None, *, close_shared_browser: bool = False) -> None:
-    """Close page/context; keep shared Browser unless explicitly requested."""
+    """Close page/context; optionally tear down the thread-local Browser."""
     try:
         if page is not None:
             page.close()
     except Exception:
         pass
-    shared = bool(getattr(context, "_mahan_shared_browser", False)) if context is not None else False
     try:
         if context is not None:
             context.close()
@@ -190,13 +228,10 @@ def release_context(context: Any, page: Any = None, *, close_shared_browser: boo
 
 
 def shutdown_shared_browser() -> None:
-    global _SHARED_BROWSER, _SHARED_PLAYWRIGHT, _SHARED_LAUNCH_KEY
-    with _POOL_LOCK:
-        if _SHARED_BROWSER is not None:
-            try:
-                _SHARED_BROWSER.close()
-            except Exception:
-                pass
-        _SHARED_BROWSER = None
-        _SHARED_LAUNCH_KEY = None
-        # Playwright lifecycle is owned by launch_browser/close_browser callers
+    """Close thread-local browser; keep Playwright driver for fast same-thread reopen."""
+    invalidate_thread_browser(stop_playwright=False)
+
+
+def shutdown_thread_pool() -> None:
+    """Full teardown for end of job thread."""
+    invalidate_thread_browser(stop_playwright=True)

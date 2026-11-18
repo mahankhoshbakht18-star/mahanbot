@@ -121,6 +121,19 @@ async def _startup():
 
         logger.warning("QueueManager startup crash recovery failed: %s", e)
 
+    # Telegram radar → channel worker (Page-3 bank digests + capacity change alerts)
+    try:
+        from core.telegram_notifier import TELEGRAM_NOTIFIER
+        TELEGRAM_NOTIFIER.ensure_defaults_in_config()
+        TELEGRAM_NOTIFIER.start_background_worker()
+        logger.info(
+            "Telegram radar ready: channel=%s admin=%s",
+            TELEGRAM_NOTIFIER.get_channel_id(),
+            TELEGRAM_NOTIFIER.get_admin_chat_id(),
+        )
+    except Exception as e:
+        logger.warning("Telegram notifier startup failed: %s", e)
+
 @asynccontextmanager
 
 async def _lifespan(application: FastAPI):

@@ -135,65 +135,31 @@ class StatusBot:
 
 
     def _solve_captcha_with_model(self, captcha_img, captcha_input, submit_button, source):
-
+        """Same shared CBI BotDetect path used by register / select / OTP."""
         if self._stop_event.is_set():
-
             return False
-
         try:
-
+            from captcha_engine import solve_and_fill_captcha
+            page = getattr(captcha_input, "page", None) or getattr(captcha_img, "page", None)
+            if page is None:
+                return False
             DBHandler.update_status(self.nid, "Processing", "Solving CAPTCHA locally")
-
-            code = str(self.captcha_service.solve_element(captcha_img) or "").strip().upper()
-
-            if not re.fullmatch(r"[0-9A-Z]{4,12}", code):
-
-                DBHandler.append_captcha_attempt(self.nid, code, "failed", source=source)
-
+            res = solve_and_fill_captcha(
+                page,
+                button_selector="",
+                submit=False,
+                max_retries=3,
+                bot=self,
+                stop_event=self._stop_event,
+                step="STATUS",
+            )
+            if not res.filled:
                 return False
-
-            try:
-
-                BrowserActions.human_fill(captcha_input, code, timeout=1500)
-
-            except Exception:
-
-                captcha_input.fill(code, timeout=1500)
-
-            try:
-
-                captcha_input.dispatch_event("change")
-
-            except Exception:
-
-                pass
-
-            if (captcha_input.input_value() or "").strip().upper() != code:
-
-                DBHandler.append_captcha_attempt(self.nid, code, "failed", source=source)
-
-                return False
-
-            try:
-
-                import random
-
-                time.sleep(random.uniform(0.15, 0.4))
-
-            except Exception:
-
-                pass
-
-            submit_button.click()
-
-            DBHandler.append_captcha_attempt(self.nid, code, "submitted", source=source)
-
+            if res.code:
+                DBHandler.append_captcha_attempt(self.nid, res.code, "submitted", source=source or "status")
             return True
-
         except Exception as exc:
-
             self.log_msg(f"خطا در حل محلی کپچا: {exc}", "warning")
-
             return False
 
 
@@ -530,6 +496,197 @@ class StatusBot:
 
 
 
+
+    def _stamp_field(self, locator):
+        locator.evaluate(
+            """(el) => {
+                el.dispatchEvent(new Event('input', { bubbles: true }));
+                el.dispatchEvent(new Event('change', { bubbles: true }));
+                el.dispatchEvent(new FocusEvent('blur', { bubbles: true }));
+            }"""
+        )
+
+    def _field_text(self, locator) -> str:
+        try:
+            return (locator.input_value(timeout=400) or "").strip()
+        except Exception:
+            return ""
+
+    def _commit_status_fields(self, nid_input, track_input, captcha_input, tracking_code) -> bool:
+        """Validators only see a value after input, change, and blur."""
+        nid = str(self.nid or "").strip()
+        if self._field_text(nid_input) != nid:
+            nid_input.fill(nid, timeout=500)
+        self._stamp_field(nid_input)
+        if self._field_text(nid_input) != nid:
+            self.log_msg("کد ملی قبل از ارسال خالی است؛ فرم ارسال نمی‌شود.", "warning")
+            return False
+        track = str(tracking_code or "").strip()
+        if track:
+            if self._field_text(track_input) != track:
+                track_input.fill(track, timeout=500)
+            self._stamp_field(track_input)
+            if self._field_text(track_input) != track:
+                self.log_msg("کد رهگیری قبل از ارسال خالی است؛ فرم ارسال نمی‌شود.", "warning")
+                return False
+        if not self._field_text(captcha_input):
+            self.log_msg("فیلد کپچا قبل از ارسال خالی است؛ فرم ارسال نمی‌شود.", "warning")
+            return False
+        self._stamp_field(captcha_input)
+        try:
+            captcha_input.press("Tab", timeout=300)
+        except Exception:
+            pass
+        return True
+
+    def _send_status_postback(self, page, captcha_input, btn_trace, captcha_img, src_before_click) -> str:
+        """Click once, then wait for a real postback. Never refresh the captcha on a timer."""
+        state = {"post": False, "response": False, "alert": ""}
+
+        def on_request(request):
+            try:
+                url = request.url or ""
+                if request.method == "POST" and "TasTrace.aspx" in url:
+                    state["post"] = True
+            except Exception:
+                pass
+
+        def on_response(response):
+            try:
+                url = response.url or ""
+                if response.request.method == "POST" and "TasTrace.aspx" in url:
+                    state["response"] = True
+            except Exception:
+                pass
+
+        def on_dialog(dialog):
+            try:
+                state["alert"] = dialog.message or ""
+            except Exception:
+                state["alert"] = ""
+            try:
+                dialog.accept()
+            except Exception:
+                try:
+                    dialog.dismiss()
+                except Exception:
+                    pass
+
+        page.on("request", on_request)
+        page.on("response", on_response)
+        page.on("dialog", on_dialog)
+        try:
+            try:
+                btn_trace.click(timeout=500, force=False)
+            except Exception:
+                pass
+            deadline = time.perf_counter() + 0.5
+            while time.perf_counter() < deadline and not state["post"]:
+                time.sleep(0.05)
+            if not state["post"]:
+                try:
+                    captcha_input.press("Enter", timeout=400)
+                except Exception:
+                    pass
+                time.sleep(0.35)
+            if not state["post"]:
+                try:
+                    page.evaluate(
+                        """() => {
+                            const btn = document.getElementById('ctl00_ContentPlaceHolder1_btnTrace');
+                            const target = btn && btn.name ? btn.name : 'ctl00$ContentPlaceHolder1$btnTrace';
+                            if (typeof window.__doPostBack === 'function') window.__doPostBack(target, '');
+                            else if (btn) btn.click();
+                        }"""
+                    )
+                except Exception:
+                    pass
+
+            if not state["post"]:
+                try:
+                    page._mahan_hold_captcha = True
+                except Exception:
+                    pass
+                self.log_msg("کلیک ارسال پست‌بک نساخت؛ همان کپچا بدون رفرش دوباره فرستاده می‌شود.", "warning")
+                return "retry_same"
+
+            outcome = self._watch_status_postback(page, captcha_img, src_before_click, state)
+            if outcome == "captcha_rejected":
+                self.log_msg("کپچا رفرش شد. تلاش مجدد...", "warning")
+                return "soft_retry"
+            if outcome == "success":
+                return "submitted"
+            if outcome == "message":
+                return "submitted"
+            self._awaiting_postback_until = time.time() + 4
+            self.log_msg("پاسخ پست‌بک هنوز قطعی نیست؛ کپچا رفرش نمی‌شود.", "info")
+            return "waiting"
+        finally:
+            for event, handler in (("request", on_request), ("response", on_response), ("dialog", on_dialog)):
+                try:
+                    page.remove_listener(event, handler)
+                except Exception:
+                    pass
+
+    def _watch_status_postback(self, page, captcha_img, src_before_click, state) -> str:
+        success_markers = (
+            "استعلام آخرین وضعیت ثبت درخواست",
+            "جایگاه در صف انتظار",
+            "تاریخ ثبت درخواست",
+            "شعبه پیشنهادی شما",
+            "صف ذخیره",
+            "در انتظار دریافت کد رهگیری",
+        )
+        deadline = time.time() + 15
+        src_changed_at = 0.0
+        while time.time() < deadline and not self._stop_event.is_set():
+            alert = state.get("alert") or ""
+            if alert:
+                return "captcha_rejected" if self._is_captcha_error(alert) else "message"
+            if self.safe_visible(page.locator("#ctl00_ContentPlaceHolder1_GridView1")):
+                return "success"
+            body = ""
+            try:
+                body = page.inner_text("body", timeout=400) or ""
+            except Exception:
+                body = ""
+            if any(marker in body for marker in success_markers):
+                return "success"
+            msg = self.get_site_message(page)
+            if msg:
+                return "captcha_rejected" if self._is_captcha_error(msg) else "message"
+            if state.get("response"):
+                new_src = ""
+                try:
+                    new_src = captcha_img.get_attribute("src") or ""
+                except Exception:
+                    new_src = ""
+                time.sleep(0.35)
+                if self.safe_visible(page.locator("#ctl00_ContentPlaceHolder1_GridView1")):
+                    return "success"
+                try:
+                    body = page.inner_text("body", timeout=400) or ""
+                except Exception:
+                    body = ""
+                if any(marker in body for marker in success_markers):
+                    return "success"
+                msg = self.get_site_message(page)
+                if msg:
+                    return "captcha_rejected" if self._is_captcha_error(msg) else "message"
+                if src_before_click and new_src and new_src != src_before_click and not src_changed_at:
+                    src_changed_at = time.time()
+            if src_changed_at and time.time() - src_changed_at >= 3:
+                return "captcha_rejected"
+            time.sleep(0.12)
+        return "captcha_rejected" if src_changed_at else ""
+
+    @staticmethod
+    def _is_captcha_error(text: str) -> bool:
+        raw = str(text or "")
+        has_captcha = any(word in raw for word in ("کد امنیتی", "کپچا", "عبارت امنیتی"))
+        has_reject = any(word in raw for word in ("نامعتبر", "نادرست", "اشتباه", "صحیح"))
+        return has_captcha and has_reject
+
     def submit_form_with_captcha(self, page, tracking_code):
 
         try:
@@ -634,107 +791,16 @@ class StatusBot:
 
 
 
-            previous_url = page.url or ""
-
-            previous_captcha_src = None
-
-            try:
-
-                previous_captcha_src = captcha_img.get_attribute("src")
-
-            except Exception:
-
-                previous_captcha_src = None
-
-
-
             if not self._solve_captcha_with_model(captcha_img, captcha_input, btn_trace, "status"):
-
                 return "idle"
-
-
-
+            if not self._commit_status_fields(nid_input, track_input, captcha_input, tracking_code):
+                return "idle"
+            src_before_click = ""
             try:
-
-                page.wait_for_function(
-
-                    """
-
-                    (prevUrl, captchaSelector, prevSrc, tableSelector) => {
-
-                        const sameUrl = window.location.href === prevUrl;
-
-                        const captchaImg = document.querySelector(captchaSelector);
-
-                        const currentSrc = captchaImg ? captchaImg.getAttribute('src') : null;
-
-                        const table = document.querySelector(tableSelector);
-
-                        const tableVisible = table && table.offsetParent !== null;
-
-                        return !sameUrl || tableVisible || (prevSrc && currentSrc && prevSrc !== currentSrc);
-
-                    }
-
-                    """,
-
-                    arg=[
-
-                        previous_url,
-
-                        "#c_tastrace_ctl00_contentplaceholder1_captcha1_CaptchaImage",
-
-                        previous_captcha_src,
-
-                        "#ctl00_ContentPlaceHolder1_GridView1",
-
-                    ],
-
-                    timeout=5000,
-
-                )
-
+                src_before_click = captcha_img.get_attribute("src") or ""
             except Exception:
-
                 pass
-
-
-
-            try:
-
-                page.wait_for_load_state("networkidle", timeout=3000)
-
-            except Exception:
-
-                pass
-
-
-
-            current_url = page.url or ""
-
-            new_captcha_src = None
-
-            try:
-
-                new_captcha_src = captcha_img.get_attribute("src")
-
-            except Exception:
-
-                new_captcha_src = None
-
-
-
-            if current_url == previous_url and previous_captcha_src and new_captcha_src:
-
-                if previous_captcha_src != new_captcha_src:
-
-                    self.log_msg("کپچا رفرش شد. تلاش مجدد...", "warning")
-
-                    return "soft_retry"
-
-
-
-            return "submitted"
+            return self._send_status_postback(page, captcha_input, btn_trace, captcha_img, src_before_click)
 
 
 
@@ -783,7 +849,14 @@ class StatusBot:
 
 
             def open_target_browser():
-
+                self.log_msg("🌐 در حال باز کردن مرورگر...", "info")
+                try:
+                    from core.browser_profile_health import BrowserProfileHealthManager
+                    udd = (self.browser_profile or {}).get("user_data_dir") or getattr(self, "user_dir", None)
+                    if udd:
+                        BrowserProfileHealthManager.clear_stale_locks(udd)
+                except Exception:
+                    pass
                 new_playwright, new_browser, new_context, new_page = launch_browser(self.browser_profile)
 
                 self._wrap_page_navigation(new_page)
@@ -969,11 +1042,13 @@ class StatusBot:
                         self.log_msg(f"✅ موفقیت! {extracted_info}", "success")
 
                         self.log_msg("🎉 رسید ذخیره شد و عملیات پایان یافت.", "success")
-
-                        while not stop_event.is_set():
-
-                            time.sleep(1)
-
+                        DBHandler.update_status(self.nid, "success", "استعلام وضعیت با موفقیت ذخیره شد")
+                        DBHandler.update_runtime(
+                            self.nid,
+                            status="SUCCESS",
+                            current_step="DONE",
+                            browser_status="CLOSED",
+                        )
                         break
 
 
@@ -1030,13 +1105,17 @@ class StatusBot:
 
 
 
-                    submission_status = self.submit_form_with_captcha(page, tracking_code)
-
-                    if submission_status == "soft_retry":
-
+                    if time.time() < float(getattr(self, "_awaiting_postback_until", 0) or 0):
+                        if sleep_with_stop(stop_event, 0.3, step=0.05):
+                            break
                         continue
 
-                    if submission_status == "submitted":
+                    submission_status = self.submit_form_with_captcha(page, tracking_code)
+
+                    if submission_status == "waiting":
+                        continue
+
+                    if submission_status in {"soft_retry", "retry_same", "submitted"}:
 
                         continue
 

@@ -219,7 +219,7 @@ class TestFSMAndCaptchaUnification(unittest.TestCase):
         self.assertTrue(res.success)
         self.assertEqual(res.code, "K98MZ")
         self.assertEqual(res.attempts_used, 2)
-        self.assertTrue(el_reload.clicked)  # Reload icon was clicked on failure
+        self.assertFalse(el_reload.clicked)
 
     def test_05_job_state_context_initialization_and_validity(self):
         """JobStateContext tracks applicant, states, and OTP TTL."""

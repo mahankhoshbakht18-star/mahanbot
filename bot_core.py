@@ -314,6 +314,7 @@ class BotCore:
     def setup_browser(self, stop_event=None):
         self._closing_intentionally = False
         launch_started = time.perf_counter()
+        self.log("🌐 در حال باز کردن مرورگر...", "info")
         profile = dict(self.browser_profile)
         if "user_data_dir" in profile and profile["user_data_dir"]:
             # Per-applicant profile ownership; never reuse a dashboard or shared Chrome profile.
@@ -337,6 +338,14 @@ class BotCore:
             profile["focus_view_enabled"] = bool(self.settings.get("focus_view_enabled", True))
         if not bool(self.settings.get("clear_cookies", False)) and not profile.get("user_data_dir"):
             profile["user_data_dir"] = self.user_dir
+        # Clear orphaned Chromium locks first so the window can open immediately
+        try:
+            from core.browser_profile_health import BrowserProfileHealthManager
+            if profile.get("user_data_dir"):
+                BrowserProfileHealthManager.clear_stale_locks(profile["user_data_dir"])
+            BrowserProfileHealthManager.clear_stale_locks(self.user_dir)
+        except Exception:
+            pass
         # Intelligent session hygiene: purge stale CBI session cookies before Step 1, preserve for Step 3
         try:
             from core.browser_profile_recovery import BrowserProfileRecoveryManager
@@ -351,7 +360,13 @@ class BotCore:
         try:
             playwright, browser, context, page = launch_browser(profile)
         except BrowserLaunchError as exc:
-            self.log(f"❌ خطا در راه‌اندازی مرورگر: {exc.message}", "error")
+            detail = ""
+            try:
+                detail = (exc.details or {}).get("error") or ""
+            except Exception:
+                detail = ""
+            msg = exc.message if not detail or detail in str(exc.message) else f"{exc.message} ({detail})"
+            self.log(f"❌ خطا در راه‌اندازی مرورگر: {msg}", "error")
             raise
 
         # Only clear cookies if explicitly requested by configuration
@@ -481,157 +496,38 @@ class BotCore:
         captcha_element=None,
         captcha_image_selector=".BDC_CaptchaImage",
     ):
-        """Solve the visible CAPTCHA locally, fill its input, and submit."""
+        """Single entry into captcha_engine for register, status, and select."""
+        del captcha_element, captcha_image_selector
         if stop_event is not None and stop_event.is_set():
             return False
-
-        captcha_input = (
-            BrowserActions.find_captcha_input(page, input_selector)
-            if isinstance(input_selector, str)
-            else input_selector
-        )
-        if captcha_input is None:
-            if isinstance(input_selector, str):
-                from otp_form_detector import live_scopes
-                for scope in live_scopes(page):
-                    captcha_input = BrowserActions.find_captcha_input(scope, input_selector)
-                    if captcha_input is not None:
-                        break
-            if captcha_input is None:
-                return False
-
         try:
-            from bot_select_captcha import wait_for_captcha_image_ready
+            from captcha_engine import solve_and_fill_captcha
         except ImportError:
-            wait_for_captcha_image_ready = None
-        if captcha_element is None:
-            captcha_element, _ = wait_for_captcha_image_ready(page, timeout_ms=4000, trigger_refresh_if_missing=True) if callable(wait_for_captcha_image_ready) else (None, None)
-            if captcha_element is None:
-                try:
-                    captcha_element = page.locator(captcha_image_selector).first
-                    if captcha_element.count() == 0 or not captcha_element.is_visible():
-                        self.log("⏳ تصویر کپچا هنوز در صفحه ظاهر نشده است؛ در حال انتظار...", "warning", page)
-                        return False
-                except Exception:
-                    return False
-        else:
-            # Ensure passed element has finished rendering (naturalWidth > 0) before screenshotting
-            try:
-                handle = captcha_element.element_handle()
-                if handle and hasattr(page, "evaluate"):
-                    page.wait_for_function(
-                        "(img) => !img || (typeof img.complete === 'undefined') || (img.complete && (img.naturalWidth === undefined || img.naturalWidth > 0))",
-                        arg=handle,
-                        timeout=3000,
-                    )
-            except Exception:
-                pass
-
-        try:
-            # Manual text belongs to the user; OCR must never overwrite it if user is actively typing.
-            is_user_actively_typing = False
-            try:
-                if captcha_input.input_value().strip() and hasattr(captcha_input, "evaluate"):
-                    is_user_actively_typing = bool(captcha_input.evaluate("el => el === document.activeElement"))
-            except Exception:
-                pass
-            if is_user_actively_typing or captcha_input.input_value().strip():
-                return False
-
-            # Clear any stale text before capturing image so clean automated solving proceeds
-            try:
-                if captcha_input.input_value().strip():
-                    captcha_input.fill("")
-            except Exception:
-                pass
-
-            initial_src = captcha_element.evaluate("el => el.getAttribute('src') || ''") if hasattr(captcha_element, 'evaluate') else None
-            source_bytes = self._capture_captcha_image(captcha_element, source)
-            if source_bytes and len(source_bytes) < 600:
-                # Sub-600 byte images are icons, not real captcha challenges
-                source_bytes = None
-        except Exception:
-            initial_src = None
-            source_bytes = None
-
+            return False
         try:
             self.set_runtime_state("PROCESSING", "SOLVE_CAPTCHA_LOCAL", browser_status="OPEN")
-            code = str((self.captcha_service.solve(source_bytes) if source_bytes else self.captcha_service.solve_element(captcha_element)) or "").strip().upper()
-            min_length = max(1, int(self.settings.get("captcha_min_length", 4)))
-            max_length = max(min_length, int(self.settings.get("captcha_max_length", 12)))
-
-            if not re.fullmatch(rf"[0-9A-Z]{{{min_length},{max_length}}}", code):
-                DBHandler.append_captcha_attempt(self.nid, code, "failed", source=source)
-                solver_err = getattr(getattr(self.captcha_service, "solver", None), "last_error", None)
-                if solver_err:
-                    self.log(f"⚠️ خطای مدل کپچا: {solver_err}", "error", page)
-                else:
-                    self.log("مدل محلی کپچا پاسخ معتبری تولید نکرد؛ تلاش مجدد روی تصویر تازه...", "warning", page)
-                return False
-
-            from bot_select_captcha import validate_captcha_prediction
-            if not validate_captcha_prediction(code, min_length, max_length):
-                DBHandler.append_captcha_attempt(self.nid, code, "failed", source=source)
-                self.log("پیش‌بینی کپچا اعتبارسنجی را رد کرد.", "warning", page)
-                return False
-
-            if is_user_actively_typing or captcha_input.input_value().strip():
-                return False
-            if initial_src and hasattr(captcha_element, 'evaluate'):
-                try:
-                    cur_src = captcha_element.evaluate("el => el.getAttribute('src') || ''")
-                    if cur_src and cur_src != initial_src:
-                        self.log("⚠️ تصویر کپچا قبل از ارسال تغییر کرد؛ تلاش مجدد روی تصویر تازه...", "warning", page)
-                        return False
-                except Exception:
-                    pass
-            try:
-                BrowserActions.human_fill(captcha_input, code)
-            except Exception:
-                try:
-                    captcha_input.fill(code, timeout=1500)
-                except Exception:
-                    pass
-            try:
-                captcha_input.dispatch_event("change")
-            except Exception:
-                pass
-            if (captcha_input.input_value() or "").strip().upper() != code:
-                DBHandler.append_captcha_attempt(self.nid, code, "failed", source=source)
-                return False
-
-            if stop_event is not None and stop_event.is_set():
-                return False
-            submit_button = None
-            try:
-                button_scope = captcha_input.element_handle().owner_frame() or page
-            except Exception:
-                button_scope = page
-            if isinstance(button_selector, str):
-                for candidate in [c.strip() for c in button_selector.split(",")]:
-                    try:
-                        loc = button_scope.locator(candidate)
-                        if loc.count() > 0 and loc.first.is_visible():
-                            submit_button = loc.first
-                            break
-                    except Exception:
-                        continue
-                if submit_button is None:
-                    submit_button = button_scope.locator(button_selector).first
-            else:
-                submit_button = button_selector
-
-            submit_button.click()
-            try:
-                DBHandler.append_captcha_attempt(self.nid, code, "submitted", source=source)
-                self.mark_progress("captcha_model_submit")
-                self.set_runtime_state("PROCESSING", "CHECK_RESPONSE", browser_status="OPEN")
-            except Exception:
-                pass  # A bookkeeping error cannot make an already-sent request safe to repeat.
-            return True
-        except Exception as exc:
-            self.log(f"خطا در حل محلی کپچا: {exc}", "warning", page)
+        except Exception:
+            pass
+        res = solve_and_fill_captcha(
+            page,
+            input_selector=input_selector if isinstance(input_selector, str) else "",
+            button_selector=button_selector if isinstance(button_selector, str) else "",
+            submit=True,
+            max_retries=3,
+            bot=self,
+            stop_event=stop_event,
+            step=source or "captcha",
+        )
+        if not res.filled:
             return False
+        try:
+            if res.code:
+                DBHandler.append_captcha_attempt(self.nid, res.code, "submitted", source=source or "captcha")
+            self.mark_progress("captcha_model_submit")
+            self.set_runtime_state("PROCESSING", "CHECK_RESPONSE", browser_status="OPEN")
+        except Exception:
+            pass
+        return True
 
     def wait_for_nid_input_priority(self, page, timeout_ms: int = 3000):
         selectors = ["#ctl00_ContentPlaceHolder1_tbIDNo", "input[name$='tbIDNo']"]
@@ -916,20 +812,34 @@ class BotCore:
                         page=page,
                     )
                 elif action == "sms_cooldown":
-                    self._sms_cooldown_until = time.time() + 120.0
-                    DBHandler.update_status(self.nid, "انتظار سهمیه پیامک", "محدودیت ۲ دقیقه‌ای ارسال پیامک بانک مرکزی؛ در حال شکیبایی...")
-                    self.log("⏳ سامانه اعلام کرد امکان ارسال مجدد پیامک تا ۲ دقیقه وجود ندارد؛ بات برای حفظ سهمیه شکیبایی می‌کند...", "warning", page)
+                    # Soft cooldown only — never hard-block Step1→Page3 reentry for the full 120s.
+                    self._sms_cooldown_until = time.time() + 15.0
+                    DBHandler.update_status(self.nid, "انتظار سهمیه پیامک", "محدودیت ارسال پیامک؛ تلاش سریع مجدد بدون توقف طولانی...")
+                    self.log("⏳ سامانه محدودیت ارسال پیامک اعلام کرد؛ بدون انتظار ۱۲۰ثانیه، کپچا و ادامه به‌سرعت تکرار می‌شود...", "warning", page)
                 elif action == "captcha_invalid":
-                    self._captcha_retry += 1
-                    self._set_recovery_flag("captcha_invalid")
-                    DBHandler.update_runtime(
-                        self.nid,
-                        status="RETRYING",
-                        current_step="CAPTCHA_ERROR",
-                        retry_count=self._captcha_retry,
-                        last_error="captcha_invalid",
-                    )
-                    self.log("CAPTCHA نامعتبر بود؛ فقط state کپچا بازنشانی می‌شود.", "warning", page)
+                    # CAPTCHA solve belongs to Step1/Step2 only — never to Page3 bank monitoring.
+                    on_bank_page = False
+                    try:
+                        if page and page.locator("#ctl00_ContentPlaceHolder1_ddlBankName, select[name$='ddlBankName']").count() > 0:
+                            bank_loc = page.locator("#ctl00_ContentPlaceHolder1_ddlBankName, select[name$='ddlBankName']").first
+                            on_bank_page = bool(bank_loc.is_visible())
+                    except Exception:
+                        on_bank_page = False
+                    if on_bank_page or bool(getattr(getattr(self, "live_owner", None), "bank_page_active", False)):
+                        self._captcha_retry = 0
+                        self.log("CAPTCHA alert روی صفحه بانک نادیده گرفته شد (پایش بانک کپچا حل نمی‌کند).", "info", page)
+                    else:
+                        # Soft counter only for diagnostics — never a hard stop.
+                        self._captcha_retry = 0
+                        self._set_recovery_flag("captcha_invalid")
+                        DBHandler.update_runtime(
+                            self.nid,
+                            status="RETRYING",
+                            current_step="CAPTCHA_ERROR",
+                            retry_count=0,
+                            last_error="captcha_invalid",
+                        )
+                        self.log("CAPTCHA نامعتبر بود؛ فقط state کپچا بازنشانی می‌شود.", "warning", page)
                 elif action == "session_expired":
                     if getattr(self, "live_owner", None):
                         self.live_owner.bank_page_active = False
@@ -1240,33 +1150,64 @@ class BotCore:
                 )
                 return True
 
-            # Phase-1: NEVER page.reload() on UNKNOWN / active / transient missing inputs.
-            # Only dismiss modals (already done) and wait for ASP.NET postback idle.
+            # chrome-error / blank / dead document: hard recover by GET re-entry (not page.reload).
+            cur_url = ""
             try:
-                self.wait_for_aspnet_postback(page, timeout_ms=3500)
+                cur_url = str(getattr(page, "url", "") or "")
+            except Exception:
+                cur_url = ""
+            url_l = cur_url.lower()
+            is_chrome_error = (
+                "chrome-error://" in url_l
+                or "chromewebdata" in url_l
+                or url_l in {"", "about:blank", "chrome://newtab/"}
+            )
+            if is_chrome_error:
+                target = getattr(self, "_workflow_entry_path", None)
+                if target and str(target).startswith("/"):
+                    target = "https://ve.cbi.ir" + str(target)
+                if not target or "cbi.ir" not in str(target):
+                    target = "https://ve.cbi.ir/SelectBnkShb.aspx"
+                self.log(f"🛠️ بازیابی chrome-error: باز کردن مجدد {target}", "warning", page)
+                try:
+                    self._safe_goto_guarded(
+                        page,
+                        target,
+                        force=True,
+                        timeout=int(self.settings.get("navigation_timeout_ms", 35000)),
+                        wait_until="domcontentloaded",
+                        log_callback=self.log,
+                    )
+                    self._last_progress_time = time.time()
+                    self.emit_event(
+                        "RECOVERY_COMPLETED",
+                        step=actual_stage,
+                        reason="chrome_error_goto_select",
+                        result="navigated",
+                        message="صفحه خطای کروم با باز کردن مجدد SelectBnkShb بازیابی شد.",
+                        level="success",
+                        page=page,
+                    )
+                    self.suspend_watchdog(8)
+                    return True
+                except Exception as nav_exc:
+                    self.log(f"بازیابی chrome-error ناموفق: {nav_exc}", "error", page)
+
+            # Non-error UNKNOWN: wait for ASP.NET postback; do not page.reload().
+            try:
+                self.wait_for_aspnet_postback(page, timeout_ms=2500)
             except Exception:
                 pass
-            if not self.register_repeatable_error("watchdog_no_reload", max_repeats=5):
-                self.set_runtime_state(
-                    "WAITING_USER_INPUT",
-                    "PAUSED_UNRECOVERABLE",
-                    browser_status="OPEN",
-                    last_error="repeated_watchdog_timeout_no_reload",
-                )
-                DBHandler.update_status(self.nid, "نیازمند بررسی کاربر", "تکرار خطای بارگذاری؛ ریلود ممنوع — منتظر اقدام کاربر")
-                self.log("⏸️ تکرار خطای عدم پاسخگویی صفحه؛ ریلود کامل ممنوع است و منتظر اقدام کاربر می‌مانیم.", "error", page)
-                self.suspend_watchdog(300)
-                return True
             self.emit_event(
                 "RECOVERY_COMPLETED",
                 step=actual_stage,
-                reason="reload_forbidden",
-                result="wait_postback_or_manual",
-                message=f"وضعیت {actual_stage}: ریلود کامل ممنوع؛ فقط انتظار postback/DOM.",
+                reason="wait_postback",
+                result="wait_dom",
+                message=f"وضعیت {actual_stage}: انتظار کوتاه postback/DOM (بدون ریلود کامل).",
                 level="warning",
                 page=page,
             )
-            self.suspend_watchdog(20)
+            self.suspend_watchdog(12)
             return True
         finally:
             self._recovery_in_progress = False

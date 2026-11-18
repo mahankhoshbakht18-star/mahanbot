@@ -707,15 +707,17 @@ class UnifiedBankEngine:
         return detect_current_stage(page, bot=None).stage == PAGE_3_BANK_STAGE
 
     def _solve_captcha_element(self, page, img_selector: str) -> Optional[str]:
-        """Capture screenshot of the captcha image element and solve with pure CRNN."""
+        """Read the captcha through captcha_engine and return a 4–5 character code."""
         try:
+            from captcha_engine import CaptchaModel, attach_captcha_listener, capture_captcha_bytes
             loc = page.locator(img_selector)
             if loc.count() == 0 or not loc.first.is_visible():
                 return None
-            img_bytes = loc.first.screenshot()
-            if not img_bytes:
+            attach_captcha_listener(page)
+            image_bytes = capture_captcha_bytes(page, loc.first)
+            if not image_bytes:
                 return None
-            return self.solver.solve(img_bytes)
+            return CaptchaModel.shared().predict(image_bytes) or None
         except Exception as e:
             logger.debug(f"Error solving captcha element {img_selector}: {e}")
             return None

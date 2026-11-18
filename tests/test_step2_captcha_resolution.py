@@ -193,44 +193,16 @@ class TestStep2CaptchaResolution(unittest.TestCase):
         self.assertIn(page, scopes)
         self.assertNotIn(tspd_frame, scopes)
 
-    def test_03_prefill_otp_captcha_full_lifecycle_events(self):
-        """Prefill solves CAPTCHA, emits all 6 required events, fills field, and DOES NOT submit."""
+    def test_03_prefill_only_warms_image_without_ocr_fill(self):
+        """Prefill must NOT OCR/fill early — only ensure image exists and clear stale field."""
         page, el_otp, el_cap, el_btn, el_img, _ = self._build_mock_page()
+        el_cap.fill("STALE")
         res = ensure_otp_captcha_prefilled(self.bot, page)
         self.assertTrue(res)
-        self.assertEqual(el_cap.input_value(), "7A93B")
-        self.assertEqual(getattr(el_btn, "clicked", False), False)  # Must NOT submit prematurely!
-
-        event_codes = [e[0] for e in self.bot.events]
-        expected_sequence = [
-            "CAPTCHA_ELEMENT_SEARCH",
-            "CAPTCHA_IMAGE_FOUND",
-            "CAPTCHA_INPUT_FOUND",
-            "CAPTCHA_RECOGNITION_STARTED",
-            "CAPTCHA_RECOGNITION_RESULT",
-            "CAPTCHA_FILLED",
-        ]
-        for expected in expected_sequence:
-            self.assertIn(expected, event_codes, f"Missing event: {expected}")
-
-    def test_otp_image_and_model_failures_are_distinct(self):
-        for expected in ("IMAGE_NOT_READY", "MODEL_OUTPUT_EMPTY", "MODEL_PROCESSING_ERROR"):
-            with self.subTest(expected=expected):
-                self.bot.events.clear()
-                page, *_ = self._build_mock_page()
-                solve = self.bot.captcha_service.solve
-                solve.reset_mock()
-                solve.return_value = ""
-                solve.side_effect = None
-                if expected == "IMAGE_NOT_READY":
-                    page.wait_for_function.side_effect = TimeoutError
-                elif expected == "MODEL_PROCESSING_ERROR":
-                    solve.side_effect = ValueError
-                self.assertFalse(ensure_otp_captcha_prefilled(self.bot, page))
-                names = [name for name, _ in self.bot.events]
-                self.assertIn(expected, names)
-                self.assertNotIn("CAPTCHA_FILLED", names)
-                self.assertEqual(solve.call_count, int(expected != "IMAGE_NOT_READY"))
+        self.assertEqual(el_cap.input_value(), "")
+        self.assertEqual(getattr(el_btn, "clicked", False), False)
+        self.assertIsNone(self.bot._otp_prefilled_captcha)
+        self.bot.captcha_service.solve.assert_not_called()
 
     def test_04_manual_captcha_setting_emits_event_and_pauses(self):
         """When pause_for_manual_captcha is enabled, CAPTCHA_MANUAL_REQUIRED is emitted."""
@@ -255,8 +227,28 @@ class TestStep2CaptchaResolution(unittest.TestCase):
             mock_wait.return_value = (mock_img, page)
 
             _refresh_captcha_image(self.bot, page, captcha_rejected=True)
-            self.assertTrue(getattr(el_reload, "clicked", False))
+            self.assertFalse(getattr(el_reload, "clicked", False))
             page.reload.assert_not_called()  # Never do full page reload!
+
+    def test_06_submit_clears_stale_and_ocr_once_without_forced_refresh(self):
+        """Submit clears stale field and OCRs once; force_refresh only after rejection."""
+        page, el_otp, el_cap, el_btn, el_img, el_reload = self._build_mock_page()
+        el_otp.fill("123456")
+        el_cap.fill("STALE")
+        self.bot._otp_prefilled_captcha = "STALE"
+        self.bot.captcha_service.solve.return_value = "AB12"
+
+        with patch("bot_select_captcha.solve_step_captcha") as mock_solve:
+            from bot_select_captcha import CaptchaResult
+            mock_solve.return_value = CaptchaResult(success=True, code="AB12", attempts_used=1)
+            ok = _solve_otp_captcha_fast(self.bot, page)
+            self.assertTrue(ok)
+            self.assertTrue(mock_solve.called)
+            kwargs = mock_solve.call_args.kwargs
+            self.assertFalse(kwargs.get("force_refresh"))
+            self.assertEqual(el_cap.input_value(), "")
+            self.assertTrue(getattr(el_btn, "clicked", False))
+            self.assertEqual(self.bot._otp_prefilled_captcha, "AB12")
 
 
 if __name__ == "__main__":

@@ -89,7 +89,8 @@ class TestSmartCapacityRadarAndTelegram(unittest.TestCase):
         admin_chat_id = TELEGRAM_NOTIFIER.get_admin_chat_id()
 
         self.assertEqual(token, "8988974593:AAHnlt1ZVf5WAMFm59fbLtenxppF9aHM_Fc")
-        self.assertEqual(channel_id, "-1003720759140")
+        self.assertEqual(channel_id, "@Mahanvpn3")
+        self.assertTrue(str(admin_chat_id))
 
         # Test capacity change formatting
         msg = TELEGRAM_NOTIFIER.format_capacity_change(

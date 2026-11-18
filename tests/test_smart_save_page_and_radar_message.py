@@ -95,7 +95,8 @@ class TestSmartSavePageAndRadarMessage(unittest.TestCase):
                 provincial_only=True,
             )
         self.assertTrue(ok1)
-        self.assertEqual(detail1, "sent")
+        self.assertTrue(str(detail1).startswith("sent:"))
+        self.assertIn("-1003720759140", str(detail1))
         self.assertFalse(ok2)
         self.assertEqual(detail2, "duplicate_digest")
         self.assertGreaterEqual(mock_send.call_count, 1)

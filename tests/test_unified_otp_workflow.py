@@ -139,7 +139,7 @@ class UnifiedOTPWorkflowTests(RepairTestCase):
         self.page.locator('button').click()
         self.assertEqual(self.deliver_and_run(), 'bank_ready')
         self.assertEqual(self.bot.detect_actual_page_stage(self.page), 'STEP_3_BANK_SELECT')
-        self.assertEqual(DBHandler.get_otp_record(self.nid)['status'], 'consumed')
+        self.assertEqual(DBHandler.get_otp_record(self.nid)['status'], 'bank_ready')
         self.assertEqual(self.posts, ['/request', '/continue'])
 
     def test_native_reload_stays_on_bank_without_authentication(self):
@@ -481,4 +481,4 @@ class UnifiedOTPWorkflowTests(RepairTestCase):
         self.assertEqual(launch.call_count, 1)
         self.assertEqual(observed, [(True, True), (True, True)])
         self.assertEqual(self.posts.count('/continue'), 2)
-        self.assertEqual(DBHandler.get_otp_record(self.nid)['status'], 'consumed')
+        self.assertEqual(DBHandler.get_otp_record(self.nid)['status'], 'bank_ready')

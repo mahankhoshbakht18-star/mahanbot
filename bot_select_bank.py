@@ -398,26 +398,29 @@ def _broadcast_page3_banks_to_telegram(bot, page, available: List[Tuple[str, str
         )
         city = city_name or getattr(bot, "city_name", "") or (getattr(bot, "user_data", {}) or {}).get("city") or ""
 
+        TELEGRAM_NOTIFIER.ensure_defaults_in_config()
+        TELEGRAM_NOTIFIER.start_background_worker()
+        channel = TELEGRAM_NOTIFIER.get_channel_id()
         ok, detail = TELEGRAM_NOTIFIER.broadcast_page3_banks_to_channel(
             province_name=prov,
             city_name=city,
             active_banks=active_banks,
             reserve_banks=reserve_banks,
             applicant_nid=str(getattr(bot, "nid", "") or ""),
-            action_status="استخراج زنده صفحه ۳",
+            action_status="رادار زنده صفحه ۳",
             provincial_only=True,
         )
         if hasattr(bot, "log"):
             if ok:
                 bot.log(
-                    f"📢 لیست بانک‌های صفحه ۳ به کانال تلگرام ارسال شد ({len(active_banks)} ظرفیت / {len(reserve_banks)} رزرو).",
+                    f"📢 رادار → کانال {channel}: {len(active_banks)} ظرفیت / {len(reserve_banks)} رزرو ({detail})",
                     "success",
                     page,
                 )
             elif detail == "duplicate_digest":
-                bot.log("📢 لیست بانک‌ها تکراری بود؛ ارسال تلگرام رد شد.", "info", page)
+                bot.log(f"📢 لیست بانک‌ها برای کانال {channel} تکراری بود؛ ارسال رد شد.", "info", page)
             else:
-                bot.log(f"⚠️ ارسال لیست بانک‌ها به تلگرام: {detail}", "warning", page)
+                bot.log(f"⚠️ ارسال رادار به کانال {channel} ناموفق: {detail}", "warning", page)
         return bool(ok)
     except Exception as exc:
         if hasattr(bot, "log"):
@@ -1332,31 +1335,24 @@ def process_bank_selection_v2(bot, page, stop_event, *, capacity_sniping=False):
         except Exception:
             pass
 
-        # Direct channel broadcast of the extracted Page-3 bank list (deduped by signature)
-        _broadcast_page3_banks_to_telegram(bot, page, available, province_name=obs_prov, city_name=obs_city)
-
-        # Ingest observed banks into Smart Capacity Radar (per-bank change alerts still apply)
+        # Radar ingest + direct channel digest (same path that used to publish live bank lists)
         try:
-            from core.capacity_radar import CAPACITY_RADAR, CapacityStatus
+            from core.capacity_radar import CAPACITY_RADAR
             obs_prov_val = obs_prov or getattr(bot, "state_name", "") or getattr(bot, "province_name", "") or (getattr(bot, "user_data", {}) or {}).get("state") or "سراسری"
             obs_city_val = obs_city or getattr(bot, "city_name", "") or (getattr(bot, "user_data", {}) or {}).get("city") or "کل استان"
             loan_type_val = getattr(bot, "loan_type", "marriage") or "marriage"
-
-            for t_item, v_item, _ in available:
-                is_res = _is_reserve_option(t_item)
-                stat = CapacityStatus.RESERVE if is_res else CapacityStatus.AVAILABLE_OBSERVED
-                CAPACITY_RADAR.ingest_observation(
-                    province_name=obs_prov_val,
-                    city_name=obs_city_val,
-                    bank_name=t_item,
-                    status=stat,
-                    loan_type=loan_type_val,
-                    visit_method="all",
-                    data_source="live_session",
-                )
+            CAPACITY_RADAR.ingest_from_page_options(
+                province_name=obs_prov_val,
+                city_name=obs_city_val,
+                available_options=[(t, v) for t, v, _ in available],
+                loan_type=loan_type_val,
+                data_source="live_session",
+            )
         except Exception as e:
             if hasattr(bot, "log"):
                 bot.log(f"⚠️ خطا در ثبت رادار ظرفیت: {e}", "warning", page)
+
+        _broadcast_page3_banks_to_telegram(bot, page, available, province_name=obs_prov, city_name=obs_city)
 
         # 4. Clean expired bank cooldowns and build candidate queue in applicant's priority order
         now = time.time()
@@ -1470,13 +1466,26 @@ def process_bank_selection_v2(bot, page, stop_event, *, capacity_sniping=False):
             current_bank_sig = f"{bank_name}:{target_value}"
             if getattr(bot, "_last_found_bank_sig", None) != current_bank_sig:
                 bot._last_found_bank_sig = current_bank_sig
+                try:
+                    import winsound
+                    # Loud repeating beep so operator notices preferred bank opened.
+                    for _ in range(3):
+                        winsound.Beep(1400, 280)
+                        winsound.Beep(1800, 220)
+                except Exception:
+                    try:
+                        print("\a\a\a", flush=True)
+                    except Exception:
+                        pass
+                if hasattr(bot, "log"):
+                    bot.log(f"🔔🔊 بانک اولویت‌دار پیدا شد: {bank_name} — آلارم صوتی پخش شد.", "success", page)
                 bot.emit_event(
                     "BANK_OPTION_FOUND",
                     step="STEP_3_BANK_SELECT",
                     reason=f"bank={bank_name} value={target_value}",
                     result=target_text or bank_name,
                     message=f"بانک اولویت‌دار «{bank_name}» در فهرست پیدا شد: {target_text}",
-                    level="info",
+                    level="success",
                     page=page,
                 )
 

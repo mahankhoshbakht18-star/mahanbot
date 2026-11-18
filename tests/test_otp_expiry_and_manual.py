@@ -97,7 +97,7 @@ class OtpExpiryAndManualTests(unittest.TestCase):
             self.assertIsNotNone(rec)
             self.assertEqual(rec["otp"], "654321")
 
-    def test_05_otp_expired_alert_triggers_restart_and_returns_to_step1(self):
+    def test_05_expired_otp_restarts_from_step1(self):
         locator = Mock()
         locator.input_value.return_value = ""
         page = Mock()
@@ -112,10 +112,63 @@ class OtpExpiryAndManualTests(unittest.TestCase):
              patch("bot_select_otp.get_otp_from_db_fresh", return_value=("112233", "test")), \
              patch("bot_select_otp._solve_otp_captcha_fast", return_value=True), \
              patch("bot_select_otp._detect_failure_type", return_value="otp_expired"), \
-             patch.object(self.bot, "_firewall_gate", return_value=False):
+             patch.object(self.bot, "_firewall_gate", return_value=False), \
+             patch.object(self.bot, "emit_event") as emit_event:
             res = fast_otp_sync_and_inject(self.bot, page, stop, lambda *_: False)
             self.assertEqual(res, "otp_expired")
-            self.assertTrue(self.bot._recovery_flags.get("otp_expired"))
+            self.assertEqual(DBHandler.get_runtime(self.nid).get("otp_state"), "OTP_EXPIRED")
+            emit_event.assert_any_call(
+                "OTP_EXPIRED",
+                step="STEP_2_OTP",
+                reason="otp_expired_restart_step1",
+                result="reauth_required",
+                message="کد پیامک منقضی شد؛ بازگشت خودکار به مرحله ۱ برای صدور کد جدید.",
+                level="warning",
+                page=page,
+            )
+
+    def test_06_stale_otp_record_does_not_leave_active_otp_page(self):
+        otp_locator = Mock()
+        form = Mock(fields={"otp": {}}, reason="live_form_evidence")
+        form.resolve.side_effect = lambda role: otp_locator if role == "otp" else None
+        self.bot._otp_request_id = "request-1"
+        self.bot._last_dialog_action = "otp_expired"
+        self.bot._set_recovery_flag("otp_expired")
+        page = Mock()
+        stop = Mock()
+
+        with patch("otp_form_detector.detect_otp_form", return_value=form), \
+             patch("bot_select_otp.DBHandler.get_checkpoint", return_value={}), \
+             patch("bot_select_otp.DBHandler.get_otp_record", return_value={
+                 "status": "expired",
+                 "request_id": "request-1",
+             }), \
+             patch("bot_select_otp._run_otp_step", return_value="manual_required") as run_step:
+            result = fast_otp_sync_and_inject(self.bot, page, stop, lambda *_: False)
+
+        self.assertEqual(result, "manual_required")
+        run_step.assert_called_once()
+        self.assertFalse(self.bot._recovery_flags.get("otp_expired"))
+        self.assertIsNone(self.bot._last_dialog_action)
+
+    def test_07_expired_session_still_requests_reauthentication(self):
+        otp_locator = Mock()
+        form = Mock(fields={}, reason="live_form_evidence")
+        flow = Mock(http_status=401)
+        flow.pump_commands.return_value = False
+        page = Mock()
+        stop = Mock()
+        stop.is_set.return_value = False
+
+        with patch("core.loan_workflow.workflow_for", return_value=flow), \
+             patch("otp_form_detector.detect_otp_form", return_value=form), \
+             patch("bot_select_otp._locate_otp_input", return_value=(otp_locator, page)), \
+             patch("bot_select_otp._bank_select_visible_now", return_value=False), \
+             patch("bot_select_otp._entry_form_visible_now", return_value=False):
+            result = fast_otp_sync_and_inject(self.bot, page, stop, lambda *_: False)
+
+        self.assertEqual(result, "otp_expired")
+        flow.transition.assert_any_call("OTP_REAUTH_REQUIRED", "site_or_code_expiry")
 
 
 if __name__ == "__main__":

@@ -86,6 +86,12 @@ DEFAULT_CONFIG = {
     "proxy_health_check_timeout": 4.0,
     "max_concurrency": 4,
     "anti_detection_enabled": True,
+    "telegram_bot_token": "",
+    "telegram_channel_id": "@Mahanvpn3",
+    "telegram_admin_chat_id": "156475654",
+    "telegram_notifications_enabled": True,
+    "telegram_proxy": "",
+    "telegram_api_base_url": "",
 }
 
 
@@ -1537,6 +1543,37 @@ class DBHandler:
                 conn.commit()
         except Exception:
             pass
+
+    @staticmethod
+    def clear_captcha_attempts(nid: Optional[str] = None) -> int:
+        """Drop stored captcha guesses so a new run does not inherit a previous session's misses."""
+        cleared = 0
+        try:
+            with DBHandler._connect() as conn:
+                if nid:
+                    rows = conn.execute(
+                        "SELECT national_id, data FROM applicants WHERE national_id=?",
+                        (nid,),
+                    ).fetchall()
+                else:
+                    rows = conn.execute("SELECT national_id, data FROM applicants").fetchall()
+                for national_id, raw_data in rows:
+                    try:
+                        payload = json.loads(raw_data or "{}")
+                    except Exception:
+                        continue
+                    if not isinstance(payload, dict) or not payload.get("captcha_attempts"):
+                        continue
+                    payload["captcha_attempts"] = []
+                    conn.execute(
+                        "UPDATE applicants SET data=? WHERE national_id=?",
+                        (json.dumps(payload, ensure_ascii=False), national_id),
+                    )
+                    cleared += 1
+                conn.commit()
+        except Exception:
+            return cleared
+        return cleared
 
     @staticmethod
     def add_stopped_bank(nid: str, bank_name: str) -> bool:

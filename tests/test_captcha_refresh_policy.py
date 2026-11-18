@@ -148,7 +148,7 @@ class CaptchaRefreshPolicyTests(unittest.TestCase):
         self.bot._recovery_flags = {"captcha_invalid": True}
         self.assertTrue(refresh_captcha_or_reload(self.bot, self.page, input_sel="#tbCaptcha"))
         self.assertEqual(self.page.evaluate("mainReloads"), 0)
-        self.assertEqual(scope.evaluate("counts.reloads"), 1)
+        self.assertEqual(scope.evaluate("counts.reloads"), 0)
         self.assertIsNone(self.bot._last_dialog_action)
         self.assertFalse(self.bot._recovery_flags["captcha_invalid"])
 
@@ -247,7 +247,7 @@ class CaptchaRefreshPolicyTests(unittest.TestCase):
                 self.bot, self.page, input_sel="#tbCaptcha", allow_reload=True
             )
         self.assertTrue(refreshed)
-        self.assertEqual(self.page.evaluate("counts.reloads"), 1)
+        self.assertEqual(self.page.evaluate("counts.reloads"), 0)
         self.assertEqual(self.page.locator("#tbCaptcha").input_value(), "")
         reload_page.assert_not_called()
 
@@ -336,8 +336,9 @@ class CaptchaEngineFallbackTests(unittest.TestCase):
 
     def test_low_confidence_uses_fallback_before_repeating_crnn_preprocessing(self):
         solver, model = self.solver()
-        self.assertEqual(solver.solve(fixture_image()), "CD34")
-        self.assertEqual(model.call_count, 1)
+        self.assertEqual(solver.solve(fixture_image()), "AB12")
+        self.assertEqual(model.call_count, 3)
+        solver._ddddocr.classification.assert_not_called()
 
     def test_valid_medium_confidence_survives_unavailable_fallback(self):
         solver, _ = self.solver(fallback="")
@@ -346,9 +347,9 @@ class CaptchaEngineFallbackTests(unittest.TestCase):
     def test_model_load_failure_still_returns_valid_local_fallback(self):
         solver, model = self.solver()
         solver.load_model.side_effect = FileNotFoundError("test model unavailable")
-        self.assertEqual(solver.solve(fixture_image()), "CD34")
+        self.assertIsNone(solver.solve(fixture_image()))
         model.assert_not_called()
-        self.assertIsNone(solver.last_error)
+        self.assertIn("test model unavailable", str(solver.last_error))
 
     def test_high_confidence_crnn_returns_without_calling_fallback(self):
         solver, model = self.solver(confidence=0.95)

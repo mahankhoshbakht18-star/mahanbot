@@ -47,7 +47,10 @@ def fresh_record(bot, record, now=None):
         return None
     issued = float(getattr(bot, "_otp_entry_time", 0) or 0)
     ttl = float(bot.settings.get("otp_validity_seconds", 120))
-    if record.get("status") in {"consumed", "expired", "rejected", "submitted"}:
+    # bank_ready/submitted only reusable during Page3→OTP hot reentry.
+    if record.get("status") in {"consumed", "expired", "rejected"}:
+        return None
+    if record.get("status") in {"submitted", "bank_ready"} and not getattr(bot, "_page3_hot_reentry", False):
         return None
     operation = getattr(bot, "OTP_TYPE", "REGISTRATION_OTP")
     if record.get('otp_type') and record['otp_type'] != operation:
@@ -62,11 +65,15 @@ def fresh_record(bot, record, now=None):
     if not ts:
         return None
     if is_manual:
-        # User manually entered the OTP: accept immediately if within validity window without strict clock-skew rejection
-        if (not record.get("request_id") and issued and ts < issued) or now - ts > ttl or now - ts < -10:
+        # Manual UI paste: accept immediately inside a soft window (clock skew tolerant).
+        if now - ts > ttl + 30 or now - ts < -30:
             return None
         return code
-    if ts < issued or not -2 <= now - ts <= ttl or (issued and now - issued >= ttl):
+    # Automated SMS: allow small forwarder/clock skew so a just-sent code is not dropped.
+    skew_ok = -15 <= (now - ts) <= ttl + 5
+    issued_ok = (not issued) or (ts + 15 >= issued)
+    still_in_challenge = (not issued) or (now - issued < ttl + 5)
+    if not (skew_ok and issued_ok and still_in_challenge):
         return None
     return code
 

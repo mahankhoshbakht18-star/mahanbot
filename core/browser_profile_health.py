@@ -112,6 +112,37 @@ class BrowserProfileHealthManager:
         return False, None
 
     @classmethod
+    def clear_stale_locks(cls, profile_dir: Path | str) -> Tuple[bool, str]:
+        """
+        Remove orphaned Chromium singleton lock files left after a crashed or
+        manually closed browser so the next launch can open immediately.
+        Does not kill live processes; only deletes lock files when present.
+        """
+        p_dir = Path(profile_dir) if profile_dir else None
+        if p_dir is None or not p_dir.exists():
+            return True, "no profile"
+
+        removed = []
+        for lock_name in ("SingletonLock", "SingletonCookie", "SingletonSocket", "lockfile"):
+            lk = p_dir / lock_name
+            if not lk.exists() and not lk.is_symlink():
+                continue
+            try:
+                lk.unlink(missing_ok=True)
+                removed.append(lock_name)
+            except Exception:
+                # Windows junction/symlink for SingletonLock
+                try:
+                    if lk.is_symlink() or lk.is_file():
+                        os.remove(str(lk))
+                        removed.append(lock_name)
+                except Exception:
+                    pass
+        if removed:
+            return True, f"cleared stale locks: {', '.join(removed)}"
+        return True, "no stale locks"
+
+    @classmethod
     def check_storage_integrity(cls, profile_dir: Path) -> Tuple[bool, str]:
         """
         Check integrity of SQLite databases within the profile (e.g. Cookies, Web Data).

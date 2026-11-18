@@ -86,15 +86,16 @@ def mask_sensitive_value(value: Any, visible: int = 2) -> str:
 
 
 def sanitize_log_text(text: str) -> str:
-    """Mask 10-digit national IDs / postal codes and 11-digit mobile numbers in public log text."""
+    """Mask only standalone national IDs, tracking codes, and mobile numbers.
+
+    Captcha codes (4–5 letters) and timings such as (19ms) stay readable.
+    """
     if not text:
         return ""
     out = str(text)
     out = re.sub(r"(?i)((?:otp|کد\s*(?:تایید|تأیید|پیامک|ورود))\s*[:=]?\s*)[0-9۰-۹٠-٩]{4,8}\b", r"\1[redacted]", out)
-    # Mask 11-digit mobile numbers (09xxxxxxxxx)
-    out = re.sub(r"\b(09\d)(\d{6})(\d{2})\b", r"\1******\3", out)
-    # Mask 10-digit numeric strings (National IDs / Postal Codes)
-    out = re.sub(r"\b(\d{2})(\d{6})(\d{2})\b", r"\1******\3", out)
+    out = re.sub(r"(?<!\d)(09\d{2})\d{5}(\d{2})(?!\d)", r"\1*****\2", out)
+    out = re.sub(r"(?<!\d)(\d{2})\d{6,}(\d{2})(?!\d)", r"\1******\2", out)
     return out
 
 

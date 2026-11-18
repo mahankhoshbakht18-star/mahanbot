@@ -61,8 +61,29 @@ class TelegramNotifierService:
         self._min_send_interval = 0.04  # ~25 messages/sec max rate limit
 
     DEFAULT_BOT_TOKEN = "8988974593:AAHnlt1ZVf5WAMFm59fbLtenxppF9aHM_Fc"
-    DEFAULT_CHANNEL_ID = "-1003720759140"
+    # Prefer public @username — numeric IDs go stale when channel is recreated.
+    DEFAULT_CHANNEL_ID = "@Mahanvpn3"
     DEFAULT_ADMIN_CHAT_ID = "156475654"
+
+    @classmethod
+    def ensure_defaults_in_config(cls) -> None:
+        """Seed empty telegram fields so radar/page3 posts always have a live channel target."""
+        try:
+            cfg = DBHandler.get_config()
+            updates = {}
+            if not str(cfg.get("telegram_bot_token") or "").strip():
+                updates["telegram_bot_token"] = cls.DEFAULT_BOT_TOKEN
+            if not str(cfg.get("telegram_channel_id") or "").strip():
+                updates["telegram_channel_id"] = cls.DEFAULT_CHANNEL_ID
+            if not str(cfg.get("telegram_admin_chat_id") or "").strip():
+                updates["telegram_admin_chat_id"] = cls.DEFAULT_ADMIN_CHAT_ID
+            if "telegram_notifications_enabled" not in cfg:
+                updates["telegram_notifications_enabled"] = True
+            if updates:
+                cfg.update(updates)
+                DBHandler.update_config(cfg)
+        except Exception as exc:
+            logger.warning("telegram defaults seed failed: %s", exc)
 
     @classmethod
     def get_token(cls) -> str:
@@ -97,16 +118,26 @@ class TelegramNotifierService:
         except Exception:
             return False
 
-    @staticmethod
-    def get_admin_chat_id() -> str:
+    @classmethod
+    def get_admin_chat_id(cls) -> str:
         cfg = DBHandler.get_config()
-        return str(cfg.get("telegram_admin_chat_id", "")).strip()
+        return str(cfg.get("telegram_admin_chat_id", "") or cls.DEFAULT_ADMIN_CHAT_ID).strip()
 
     @classmethod
     def get_channel_id(cls) -> str:
         cfg = DBHandler.get_config()
-        cid = str(cfg.get("telegram_channel_id", "") or cfg.get("telegram_admin_chat_id", "")).strip()
-        return (cid or cls.DEFAULT_CHANNEL_ID).strip()
+        cid = str(cfg.get("telegram_channel_id", "") or "").strip()
+        if not cid:
+            cid = str(cfg.get("telegram_admin_chat_id", "") or "").strip()
+        # Legacy numeric default may not be @Mahanvpn3 anymore — prefer username.
+        if not cid or cid == "-1003720759140":
+            cid = cls.DEFAULT_CHANNEL_ID
+        return cid.strip()
+
+    @staticmethod
+    def notifications_enabled() -> bool:
+        cfg = DBHandler.get_config()
+        return bool(cfg.get("telegram_notifications_enabled", True))
 
     @staticmethod
     def _detect_effective_proxy() -> Optional[str]:
@@ -136,6 +167,24 @@ class TelegramNotifierService:
                 pass
         return None
 
+    @staticmethod
+    def _telegram_ok_detail(data: Dict[str, Any], prefix: str = "OK") -> Tuple[bool, str]:
+        """Only treat as success when Telegram returns ok + message_id (no false positives)."""
+        if not isinstance(data, dict) or not data.get("ok"):
+            return False, str((data or {}).get("description") or "Telegram API Error")
+        result = data.get("result") or {}
+        msg_id = result.get("message_id") if isinstance(result, dict) else None
+        if not msg_id:
+            return False, "telegram_ok_without_message_id"
+        chat = result.get("chat") if isinstance(result, dict) else {}
+        chat_ref = ""
+        if isinstance(chat, dict):
+            chat_ref = str(chat.get("username") or chat.get("id") or "")
+        detail = f"{prefix} msg_id={msg_id}"
+        if chat_ref:
+            detail = f"{detail} chat={chat_ref}"
+        return True, detail
+
     def send_raw_telegram(
         self,
         chat_id: str,
@@ -144,7 +193,8 @@ class TelegramNotifierService:
         reply_markup: Optional[Dict[str, Any]] = None,
     ) -> Tuple[bool, str]:
         """Send message directly via Telegram Bot API with proxy support and rate limiting."""
-        if os.environ.get("MAHANBOT_TEST_MODE") == "1" or ("unittest" in sys.modules and not os.environ.get("MAHANBOT_ENABLE_LIVE_TELEGRAM")):
+        # Never fake-success just because unittest was imported elsewhere in-process.
+        if os.environ.get("MAHANBOT_TEST_MODE") == "1" and not os.environ.get("MAHANBOT_ENABLE_LIVE_TELEGRAM"):
             return True, "OK (test mode)"
         token = self.get_token()
         if not token:
@@ -153,6 +203,10 @@ class TelegramNotifierService:
         clean_cid = str(chat_id).strip()
         if not clean_cid:
             return False, "شناسه چت (chat_id) نامعتبر است."
+
+        # Telegram rejects oversized HTML posts; keep under hard limit.
+        if len(text or "") > 4000:
+            text = (text or "")[:3900] + "\n…\n<i>(ادامه لیست کوتاه شد)</i>"
 
         cfg = DBHandler.get_config()
         base_url = (cfg.get("telegram_api_base_url") or os.environ.get("TELEGRAM_API_BASE_URL") or "https://api.telegram.org").rstrip("/")
@@ -175,6 +229,7 @@ class TelegramNotifierService:
             self._last_send_ts = time.time()
 
         proxy = self._detect_effective_proxy()
+        last_err = "unknown"
 
         # Try with requests first (better proxy and error handling)
         try:
@@ -185,65 +240,57 @@ class TelegramNotifierService:
                 data = resp.json()
             except Exception:
                 data = {}
-            if resp.status_code == 200 and data.get("ok"):
-                return True, "OK"
-            desc = data.get("description", f"HTTP {resp.status_code}")
-            return False, desc
+            if resp.status_code == 200:
+                ok, detail = self._telegram_ok_detail(data, "OK")
+                if ok:
+                    return True, detail
+                last_err = detail
+            else:
+                last_err = data.get("description", f"HTTP {resp.status_code}")
         except Exception as req_err:
-            # Fallback to urllib if requests failed
-            try:
-                req_data = json.dumps(payload).encode("utf-8")
-                req = urllib.request.Request(
-                    url,
-                    data=req_data,
-                    headers={"Content-Type": "application/json; charset=utf-8"},
-                    method="POST",
-                )
-                if proxy:
-                    proxy_handler = urllib.request.ProxyHandler({"http": proxy, "https": proxy})
-                    opener = urllib.request.build_opener(proxy_handler)
-                else:
-                    opener = urllib.request.build_opener()
+            last_err = str(req_err)
 
-                with opener.open(req, timeout=12) as response:
-                    resp_bytes = response.read()
-                    resp_json = json.loads(resp_bytes.decode("utf-8"))
-                    if resp_json.get("ok"):
-                        return True, "OK"
-                    else:
-                        return False, resp_json.get("description", "Telegram API Error")
-            except Exception as e:
-                # 3. Smart Bridge fallback (enables sending from Iran without VPN)
-                try:
-                    import urllib.parse
-                    params = {
-                        "chat_id": clean_cid,
-                        "text": text,
-                        "parse_mode": parse_mode,
-                    }
-                    if reply_markup:
-                        params["reply_markup"] = json.dumps(reply_markup)
+        # Fallback to urllib if requests failed / incomplete
+        try:
+            req_data = json.dumps(payload).encode("utf-8")
+            req = urllib.request.Request(
+                url,
+                data=req_data,
+                headers={"Content-Type": "application/json; charset=utf-8"},
+                method="POST",
+            )
+            if proxy:
+                proxy_handler = urllib.request.ProxyHandler({"http": proxy, "https": proxy})
+                opener = urllib.request.build_opener(proxy_handler)
+            else:
+                opener = urllib.request.build_opener()
 
-                    qs = urllib.parse.urlencode(params)
-                    tg_url = f"https://api.telegram.org/bot{token}/sendMessage?{qs}"
-                    bridge_url = f"https://api.allorigins.win/raw?url={urllib.parse.quote(tg_url)}"
+            with opener.open(req, timeout=12) as response:
+                resp_bytes = response.read()
+                resp_json = json.loads(resp_bytes.decode("utf-8"))
+                ok, detail = self._telegram_ok_detail(resp_json, "OK")
+                if ok:
+                    return True, detail
+                last_err = detail
+        except Exception as e:
+            last_err = str(e)
 
-                    b_req = urllib.request.Request(bridge_url, headers={"User-Agent": "Mozilla/5.0"})
-                    last_bridge_err = None
-                    for _ in range(2):
-                        try:
-                            with urllib.request.urlopen(b_req, timeout=25) as b_resp:
-                                b_data = json.loads(b_resp.read().decode("utf-8"))
-                                if b_data.get("ok"):
-                                    return True, "OK (via Smart Bridge)"
-                                return False, b_data.get("description", "Bridge Error")
-                        except Exception as b_err:
-                            last_bridge_err = b_err
-                            time.sleep(1.5)
-                    if last_bridge_err:
-                        raise last_bridge_err
-                except Exception as bridge_err:
-                    return False, f"Connection error: {req_err} (Bridge: {bridge_err})"
+        # Last resort: plain text without parse_mode (HTML entity issues won't silently "succeed")
+        try:
+            import requests
+            plain_payload = dict(payload)
+            plain_payload.pop("parse_mode", None)
+            proxies_dict = {"http": proxy, "https": proxy} if proxy else None
+            resp = requests.post(url, json=plain_payload, proxies=proxies_dict, timeout=12)
+            data = resp.json() if resp.content else {}
+            ok, detail = self._telegram_ok_detail(data, "OK(plain)")
+            if ok:
+                return True, detail
+            last_err = detail if detail else last_err
+        except Exception as plain_err:
+            last_err = f"{last_err} | plain:{plain_err}"
+
+        return False, last_err
 
     # ── MESSAGE BUILDERS (Persian Formatting / Phase 6) ───────────────
     @staticmethod
@@ -488,7 +535,10 @@ class TelegramNotifierService:
         reserve_banks = reserve_banks or []
         if not active_banks and not reserve_banks:
             return False, "empty_bank_list"
+        if not self.notifications_enabled():
+            return False, "notifications_disabled"
 
+        self.ensure_defaults_in_config()
         key = dedupe_key or hashlib_key(province_name, city_name, active_banks, reserve_banks)
         with self._lock:
             last = getattr(self, "_last_page3_digest_keys", {}) or {}
@@ -515,19 +565,20 @@ class TelegramNotifierService:
 
         # Attach channel/shop buttons for channel posts
         _, reply_markup = self.format_channel_post(
-            title="📡 استخراج زنده بانک‌های صفحه ۳",
+            title="📡 رادار ظرفیت بانک‌ها",
             body_text=f"استان {province_name or 'سراسری'} — {len(active_banks)} ظرفیت قطعی / {len(reserve_banks)} رزرو",
         )
+        self.start_background_worker()
         ok, detail = self.send_raw_telegram(channel_cid, body, reply_markup=reply_markup)
         if ok:
             # Also mirror to admin if different from channel
             admin_cid = self.get_admin_chat_id()
-            if admin_cid and str(admin_cid) != str(channel_cid):
+            if admin_cid and str(admin_cid).lower() != str(channel_cid).lower():
                 try:
                     self.send_raw_telegram(admin_cid, body)
                 except Exception:
                     pass
-            return True, "sent"
+            return True, f"sent:{channel_cid}:{detail}"
         # Fallback to durable queue if direct send failed
         try:
             DBHandler.enqueue_telegram_message(
@@ -538,9 +589,9 @@ class TelegramNotifierService:
                 scheduled_at=int(time.time()),
             )
             self.start_background_worker()
-            return False, f"queued:{detail}"
+            return False, f"queued:{channel_cid}:{detail}"
         except Exception as exc:
-            return False, f"send_failed:{detail}:{exc}"
+            return False, f"send_failed:{channel_cid}:{detail}:{exc}"
 
     # ── NOTIFICATION DISPATCHING & QUEUE (Phase 6 & 10) ───────────────
     def dispatch_capacity_event(

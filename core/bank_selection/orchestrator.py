@@ -154,14 +154,20 @@ class BankSelectionOrchestrator:
             ]
 
             from core.telegram_notifier import TELEGRAM_NOTIFIER
-            TELEGRAM_NOTIFIER.broadcast_page3_banks_to_channel(
+            TELEGRAM_NOTIFIER.ensure_defaults_in_config()
+            TELEGRAM_NOTIFIER.start_background_worker()
+            ok, detail = TELEGRAM_NOTIFIER.broadcast_page3_banks_to_channel(
                 province_name=prov,
                 city_name=city,
                 active_banks=active_banks,
                 reserve_banks=reserve_banks,
                 applicant_nid=str(self.bot.nid),
-                action_status="پایش فعال ظرفیت",
+                action_status="رادار پایش ظرفیت",
                 provincial_only=True,
             )
+            if hasattr(self.bot, "log"):
+                channel = TELEGRAM_NOTIFIER.get_channel_id()
+                level = "success" if ok else ("info" if detail == "duplicate_digest" else "warning")
+                self.bot.log(f"📢 رادار → {channel}: {detail}", level, self.page)
         except Exception as e:
-            logger.debug(f"Radar broadcast ignored error: {e}")
+            logger.warning(f"Radar channel broadcast failed: {e}")

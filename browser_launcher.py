@@ -606,7 +606,7 @@ def safe_goto(page, url: str, *, allowed_domains: Optional[Iterable[str]] = None
         raise
 
 
-def launch_browser(profile: Dict[str, Any]) -> Tuple[Any, Any, Any, Any]:
+def launch_browser(profile: Dict[str, Any], *, _allow_retry: bool = True) -> Tuple[Any, Any, Any, Any]:
     normalized = normalize_browser_profile(profile)
     geom = compute_window_geometry(normalized)
     playwright = None
@@ -617,7 +617,7 @@ def launch_browser(profile: Dict[str, Any]) -> Tuple[Any, Any, Any, Any]:
         if sync_playwright is None:
             raise RuntimeError("playwright is not installed in this environment")
         from core.browser_pool import get_shared_playwright
-        # One process-wide Playwright driver; never start/stop per applicant.
+        # Thread-local Playwright driver (JobQueue isolates each job on its own thread).
         playwright = get_shared_playwright()
         setattr(playwright, "_mahan_shared", True)
         selected_browser = normalized["browser"]
@@ -693,6 +693,11 @@ def launch_browser(profile: Dict[str, Any]) -> Tuple[Any, Any, Any, Any]:
 
         from core.browser_pool import acquire_context, install_resource_guards
         if normalized["user_data_dir"]:
+            try:
+                from core.browser_profile_health import BrowserProfileHealthManager
+                BrowserProfileHealthManager.clear_stale_locks(normalized["user_data_dir"])
+            except Exception:
+                pass
             if not normalized.get("start_maximized", False):
                 _sanitize_chromium_preferences_window_placement(normalized["user_data_dir"], geom)
             browser, context = acquire_context(
@@ -712,6 +717,11 @@ def launch_browser(profile: Dict[str, Any]) -> Tuple[Any, Any, Any, Any]:
             )
         # Defense in depth if acquire path skipped guards
         install_resource_guards(context)
+        if normalized["user_data_dir"]:
+            try:
+                setattr(context, "_mahan_user_data_dir", normalized["user_data_dir"])
+            except Exception:
+                pass
 
         zoom_level = normalized.get("page_zoom", 1.0)
         if zoom_level and zoom_level != 1.0:
@@ -821,8 +831,42 @@ def launch_browser(profile: Dict[str, Any]) -> Tuple[Any, Any, Any, Any]:
     except BrowserLaunchError:
         raise
     except Exception as exc:
-        close_browser(playwright, browser, context, page)
-        raise BrowserLaunchError("launch_failed", "Failed to launch browser", {"error": str(exc)})
+        err_text = str(exc)
+        try:
+            from core.browser_pool import invalidate_thread_browser
+            invalidate_thread_browser(stop_playwright=True)
+        except Exception:
+            pass
+        try:
+            if page:
+                page.close()
+        except Exception:
+            pass
+        try:
+            if context:
+                context.close()
+        except Exception:
+            pass
+        try:
+            if browser:
+                browser.close()
+        except Exception:
+            pass
+        # One recovery pass: dead thread driver / SingletonLock after prior job or manual close
+        if _allow_retry:
+            try:
+                if normalized.get("user_data_dir"):
+                    from core.browser_profile_health import BrowserProfileHealthManager
+                    BrowserProfileHealthManager.clear_stale_locks(normalized["user_data_dir"])
+            except Exception:
+                pass
+            try:
+                return launch_browser(profile, _allow_retry=False)
+            except BrowserLaunchError:
+                raise
+            except Exception as retry_exc:
+                err_text = f"{err_text} | retry: {retry_exc}"
+        raise BrowserLaunchError("launch_failed", f"Failed to launch browser: {err_text}", {"error": err_text})
 
 
 def close_browser(playwright, browser, context, page, reason: Optional[str] = None, nid: Optional[str] = None) -> None:
@@ -855,9 +899,6 @@ def close_browser(playwright, browser, context, page, reason: Optional[str] = No
         _remember_window_bounds_before_close(page, context)
     except Exception:
         pass
-    shared_browser = bool(getattr(browser, "_mahan_shared", False)) if browser is not None else False
-    shared_ctx = bool(getattr(context, "_mahan_shared_browser", False)) if context is not None else False
-    shared_pw = bool(getattr(playwright, "_mahan_shared", False)) if playwright is not None else False
     try:
         if page:
             page.close()
@@ -868,14 +909,32 @@ def close_browser(playwright, browser, context, page, reason: Optional[str] = No
             context.close()
     except Exception:
         pass
-    # Shared pool Browser/Playwright must survive applicant teardown.
+    # JobQueue isolates each job on its own thread. Always release Chromium +
+    # Playwright for this thread so the next job (new thread) can launch cleanly.
     try:
-        if browser and not (shared_browser or shared_ctx):
+        if browser:
             browser.close()
     except Exception:
         pass
     try:
-        if playwright and not shared_pw:
+        if playwright:
             playwright.stop()
+    except Exception:
+        pass
+    try:
+        from core.browser_pool import shutdown_thread_pool
+        shutdown_thread_pool()
+    except Exception:
+        pass
+    # Persistent profiles can leave SingletonLock after manual window close.
+    try:
+        udd = None
+        if context is not None:
+            udd = getattr(context, "_mahan_user_data_dir", None)
+        if not udd and page is not None:
+            udd = getattr(page, "_mahan_user_data_dir", None)
+        if udd:
+            from core.browser_profile_health import BrowserProfileHealthManager
+            BrowserProfileHealthManager.clear_stale_locks(udd)
     except Exception:
         pass

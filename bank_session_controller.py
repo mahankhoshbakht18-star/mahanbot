@@ -527,8 +527,10 @@ class BankSelectionSessionController:
                     configured = float(bot.settings.get("bank_list_refresh_seconds", bot.settings.get("bank_refresh_interval", QUOTA_POLL_INTERVAL_SEC)))
                     poll_interval = QUOTA_POLL_INTERVAL_SEC if configured in (0, 5, 5.0) or configured < QUOTA_POLL_INTERVAL_SEC else configured
                     now = self._monotonic()
-                    self._next_bank_poll = now + poll_interval
-                    if not getattr(self, "_bank_not_found_since", 0):
+                    # First miss: reload ASAP; subsequent polls keep the quota interval.
+                    first_miss = not getattr(self, "_bank_not_found_since", 0)
+                    self._next_bank_poll = now + (0.8 if first_miss else poll_interval)
+                    if first_miss:
                         self._bank_not_found_since = now
                     self._prepared = True  # Keep prepared=True so tick() waits for _next_bank_poll!
                     DBHandler.update_runtime(
@@ -662,7 +664,8 @@ class BankSelectionSessionController:
                     workflow_for(self.bot).diagnostic(self.owner.page, type(exc).__name__)
                     self.transition(State.MANUAL_ACTION_REQUIRED, type(exc).__name__)
                 try:
-                    self.owner.page.wait_for_timeout(200)
+                    # Faster Page3 monitor loop so missing-bank reload → OTP → reenter is tight.
+                    self.owner.page.wait_for_timeout(80)
                 except Exception:
                     return "stopped"
             return "stopped"

@@ -563,8 +563,9 @@ function escapeHtml(value) {
 }
 
 function maskSensitive(value) {
-    const text = String(value || '');
-    return text.length > 4 ? `${text.slice(0, 2)}${'*'.repeat(text.length - 4)}${text.slice(-2)}` : '*'.repeat(text.length);
+    const text = String(value || '').trim();
+    if (!/^\d{10,16}$/.test(text)) return text;
+    return `${text.slice(0, 2)}${'*'.repeat(Math.max(1, text.length - 4))}${text.slice(-2)}`;
 }
 
 function runtimeTime(value) {
