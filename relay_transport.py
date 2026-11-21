@@ -7,6 +7,7 @@ import time
 from email.utils import parsedate_to_datetime
 
 import requests
+from core.persian_normalizer import to_ascii_digits
 
 
 def _transport_error(bot, code):
@@ -55,7 +56,7 @@ def config():
 
 
 def phone_hash(value):
-    phone = str(value or "").translate(str.maketrans("۰۱۲۳۴۵۶۷۸۹٠١٢٣٤٥٦٧٨٩", "01234567890123456789"))
+    phone = to_ascii_digits(value)
     phone = phone.replace(" ", "").lstrip("+")
     if phone.startswith("0098"):
         phone = "0" + phone[4:]

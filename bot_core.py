@@ -484,7 +484,9 @@ class BotCore:
         return False
 
     def _capture_captcha_image(self, captcha_element, source):
-        return captcha_element.screenshot()
+        from captcha_engine import capture_captcha_bytes
+        raw = capture_captcha_bytes(getattr(captcha_element, "page", None), captcha_element)
+        return raw
 
     def solve_captcha_with_model(
         self,
@@ -812,8 +814,25 @@ class BotCore:
                         page=page,
                     )
                 elif action == "sms_cooldown":
-                    # Soft cooldown only — never hard-block Step1→Page3 reentry for the full 120s.
-                    self._sms_cooldown_until = time.time() + 15.0
+                    # Server-announced SMS throttle. Re-submitting Step1 before it lifts only burns
+                    # captchas and keeps the throttle armed (the endless "stuck on captcha" loop after
+                    # Page3 re-entry). Stored separately so hot-reentry paths cannot zero it.
+                    try:
+                        cooldown_s = max(15.0, float(self.settings.get("sms_cooldown_seconds", 120)))
+                    except (TypeError, ValueError):
+                        cooldown_s = 120.0
+                    now_cd = time.time()
+                    streak = int(getattr(self, "_sms_cooldown_streak", 0) or 0) + 1
+                    self._sms_cooldown_streak = streak
+                    # Prefer the precise moment the last SMS was issued; escalate on repeated dialogs.
+                    entry = float(getattr(self, "_otp_entry_time", 0) or 0)
+                    until = now_cd + 15.0
+                    if entry and entry + cooldown_s + 2.0 > until:
+                        until = entry + cooldown_s + 2.0
+                    if streak >= 2:
+                        until = max(until, now_cd + min(cooldown_s, 15.0 * 2 ** (streak - 1)))
+                    self._server_sms_cooldown_until = max(float(getattr(self, "_server_sms_cooldown_until", 0.0) or 0.0), until)
+                    self._sms_cooldown_until = self._server_sms_cooldown_until
                     DBHandler.update_status(self.nid, "انتظار سهمیه پیامک", "محدودیت ارسال پیامک؛ تلاش سریع مجدد بدون توقف طولانی...")
                     self.log("⏳ سامانه محدودیت ارسال پیامک اعلام کرد؛ بدون انتظار ۱۲۰ثانیه، کپچا و ادامه به‌سرعت تکرار می‌شود...", "warning", page)
                 elif action == "captcha_invalid":
@@ -976,32 +995,9 @@ class BotCore:
         return detect_current_stage(page, bot=self).legacy
 
     def wait_for_aspnet_postback(self, page, timeout_ms: int = 8000) -> bool:
-        """Wait for ASP.NET PageRequestManager / waitDiv / UpdatePanel postback to finish."""
-        if not page:
-            return False
-        deadline = time.time() + (timeout_ms / 1000.0)
-        try:
-            page.wait_for_function(
-                """() => {
-                    try {
-                        if (window.Sys && Sys.WebForms && Sys.WebForms.PageRequestManager) {
-                            const prm = Sys.WebForms.PageRequestManager.getInstance();
-                            if (prm && prm.get_isInAsyncPostBack()) return false;
-                        }
-                        const up = document.getElementById('ctl00_ContentPlaceHolder1_updateProgress');
-                        if (up && up.style && up.style.display !== 'none' && up.offsetParent !== null) return false;
-                        const wd = document.getElementById('waitDiv');
-                        if (wd && wd.style && wd.style.visibility === 'visible') return false;
-                        return document.readyState === 'complete' || document.readyState === 'interactive';
-                    } catch (e) {
-                        return true;
-                    }
-                }""",
-                timeout=timeout_ms,
-            )
-            return True
-        except Exception:
-            return time.time() < deadline
+        """Wait for the ASP.NET postback a click/select just triggered (core.aspnet_postback)."""
+        from core.aspnet_postback import wait_for_postback
+        return wait_for_postback(page, self.settings, timeout_ms=timeout_ms)
 
     def _dump_state(self, page, selectors=None, reason="state_dump"):
         if not bool(self.settings.get("diagnostic_logging_enabled", True)):

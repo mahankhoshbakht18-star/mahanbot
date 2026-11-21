@@ -131,7 +131,9 @@ class TestFastCaptcha(unittest.TestCase):
         with patch.object(service, "solve", return_value="12345") as mock_solve:
             code = api_solver.solve_element(mock_locator)
             self.assertEqual(code, "12345")
-            mock_locator.screenshot.assert_called_once_with(type="png")
+            # Natural pixels are tried first; the mock has none, so the screenshot fallback is used.
+            mock_locator.screenshot.assert_called_once()
+            self.assertEqual(mock_locator.screenshot.call_args.kwargs.get("type"), "png")
             mock_solve.assert_called_once_with(b"\x89PNG\r\n\x1a\nfakeimagebytes")
 
 

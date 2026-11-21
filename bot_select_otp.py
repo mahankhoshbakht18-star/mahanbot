@@ -325,10 +325,6 @@ def _solve_otp_captcha_fast(bot, page):
         pass
     bot._otp_prefilled_captcha = None
 
-    min_length, max_length = _otp_captcha_length_bounds(bot, captcha)
-    bot._otp_captcha_min_length = min_length
-    bot._otp_captcha_max_length = max_length
-
     from captcha_engine import solve_and_fill_captcha
     res = solve_and_fill_captcha(
         page,
@@ -343,36 +339,29 @@ def _solve_otp_captcha_fast(bot, page):
     bot._otp_force_captcha_refresh = False
     if res.filled:
         code = str(res.code or "").strip().upper()
-        if not (min_length <= len(code) <= max_length) or len(code) > 5:
-            _log_fa(
-                bot,
-                f"طول کپچا ({len(code)}:{code}) خارج از بازه ۴–۵؛ ارسال نمی‌شود تا TTL نسوزد.",
-                "warning",
-                page,
-            )
-            return False
         bot._otp_prefilled_captcha = code
         if not _restore_otp_field(bot, page):
             _log_fa(bot, "فیلد پیامک بعد از کپچا خالی بود و کد ذخیره‌شده برنگشت؛ ارسال نمی‌شود.", "warning", page)
             return False
         if button is not None:
+            from core.timings import timing
+            settle_ms = timing(bot.settings, "otp_submit_settle_ms")
+            if settle_ms:
+                page.wait_for_timeout(settle_ms)
             try:
-                button.click(timeout=1200, no_wait_after=True)
+                button.click(timeout=2000)
                 return True
-            except TypeError:
-                try:
-                    button.click(timeout=1200)
+            except Exception as exc:
+                err = str(exc).lower()
+                if "navig" in err or "context" in err or "closed" in err:
                     return True
-                except Exception:
-                    pass
-            except Exception:
-                pass
             try:
-                if captcha is not None:
-                    captcha.press("Enter", timeout=400)
+                button.click(timeout=2000, force=True)
+                return True
+            except Exception as exc:
+                err = str(exc).lower()
+                if "navig" in err or "context" in err or "closed" in err:
                     return True
-            except Exception:
-                pass
             return False
         return False
     return False
@@ -391,9 +380,13 @@ def get_otp_from_db_fresh(bot):
             if valid:
                 return valid, "local_db"
 
-        # 2) Remote poll: keep short so SMS is accepted as soon as the server has it.
-        poll_every = float(bot.settings.get("otp_remote_poll_interval_sec", 0.5) or 0.5)
-        poll_every = max(0.25, min(poll_every, 2.0))
+        # 2) Remote sources: the background RemoteOtpFetcher owns them during the OTP step,
+        #    so this caller never blocks on the network.
+        from otp_transport import remote_fetcher_running
+        if remote_fetcher_running(bot):
+            return None, None
+        from core.timings import timing
+        poll_every = timing(bot.settings, "otp_remote_poll_interval_sec")
         last_poll = float(getattr(bot, "_last_remote_otp_poll_ts", 0.0) or 0.0)
         if now - last_poll >= poll_every:
             bot._last_remote_otp_poll_ts = now
@@ -420,7 +413,7 @@ def _inject_otp_code(bot, page, otp_locator, code: str):
     form = detect_otp_form(page)
     if form.fields:
         started = time.perf_counter()
-        ok = fill_otp_form(page, code)
+        ok = fill_otp_form(page, code, form=form)
         DBHandler.update_runtime(bot.nid, otp_form_detection_ms=form.elapsed_ms,
                                   otp_form_fill_ms=round((time.perf_counter() - started) * 1000, 3))
         if ok:
@@ -601,6 +594,32 @@ def _post_submit_watch(
 
 
 def _run_otp_step(bot, page, stop_event, sleep_with_stop_fn):
+    """Run the OTP step with remote SMS sources polled off the main loop."""
+    from otp_transport import RemoteOtpFetcher
+    fetcher = RemoteOtpFetcher(bot, stop_event).start()
+    try:
+        return _run_otp_step_loop(bot, page, stop_event, sleep_with_stop_fn)
+    finally:
+        fetcher.stop()
+
+
+def _wait_for_sms(bot, stop_event, sleep_with_stop_fn) -> bool:
+    """Idle until an OTP is written for this applicant or the page-check interval passes.
+    Returns True when stop was requested."""
+    from core.timings import seconds
+    from otp_signal import wait as wait_for_otp_signal
+    interval = seconds(bot.settings, "otp_idle_check_ms")
+    if stop_event.is_set():
+        return True
+    try:
+        wait_for_otp_signal(bot.nid, interval)
+    except Exception:
+        return bool(sleep_with_stop_fn(stop_event, interval))
+    # Zero-length call keeps the caller's sleeper contract (stop check / injected hooks).
+    return bool(sleep_with_stop_fn(stop_event, 0))
+
+
+def _run_otp_step_loop(bot, page, stop_event, sleep_with_stop_fn):
     """
     Step 2: OTP Confirmation State Handler.
     - Activates OTP_REQUIRED state and records issuance time.
@@ -860,8 +879,8 @@ def _run_otp_step(bot, page, stop_event, sleep_with_stop_fn):
             DBHandler.update_runtime(bot.nid, otp_state="MANUAL_OTP_REQUIRED")
             manual_required = True
         if not code:
-            # Stay hot for inbound SMS / manual paste — poll often, don't sleep away TTL.
-            if sleep_with_stop_fn(stop_event, 0.12):
+            # Wakes the instant an SMS is saved (otp_signal); otherwise re-checks the page.
+            if _wait_for_sms(bot, stop_event, sleep_with_stop_fn):
                 break
             continue
 
@@ -918,7 +937,8 @@ def _run_otp_step(bot, page, stop_event, sleep_with_stop_fn):
             if not submission_pending and not _solve_otp_captcha_fast(bot, page):
                 captcha_failures += 1
                 # The page keeps the current image. The local model reads it again.
-                retry_pause = 0.05
+                from core.timings import seconds
+                retry_pause = seconds(bot.settings, "otp_captcha_retry_ms")
                 if sleep_with_stop_fn(stop_event, retry_pause):
                     break
                 continue

@@ -13,6 +13,7 @@ from bot_select_bank import (
 )
 from network_diagnostics import check_rejection
 from core.loan_workflow import workflow_for
+from core.persian_normalizer import to_ascii_digits
 
 logger = logging.getLogger('mahanbot.bank_session')
 
@@ -26,7 +27,8 @@ class BankSelectionSessionController:
         self._next_check = 0.0
         self._next_submit = 0.0
         self._monotonic = time.monotonic
-        self._submit_response_timeout = 10.0
+        from core.timings import timing
+        self._submit_response_timeout = timing(getattr(bot, 'settings', None), 'final_submit_response_timeout_seconds')
         self._quota_deadline_restored = False
         self._submitting = False
         self._requests = set()
@@ -52,12 +54,9 @@ class BankSelectionSessionController:
         owner.page.on("requestfinished", self._on_request_finished)
         bot.consume_recovery_flag("session_expired")  # Discard pre-Page-3 recovery history.
         try:
-            cfg = normalize_config(DBHandler.get_config())
-            interval = float(cfg.get("bank_refresh_interval") or cfg.get("bank_capacity_check_interval") or 5.0)
-            if interval <= 0 or interval > 60:
-                interval = 5.0
+            interval = timing(normalize_config(DBHandler.get_config()), "bank_list_refresh_seconds")
         except Exception:
-            interval = 5.0
+            interval = timing(None, "bank_list_refresh_seconds")
         from capacity_monitor import CapacityMonitor
         self.capacity_monitor = CapacityMonitor(bot, owner, interval_seconds=interval)
         try:
@@ -197,7 +196,7 @@ class BankSelectionSessionController:
             data["selected_branch"] = DBHandler.get_runtime(bot.nid).get("selected_branch", "")
         self._last_observation = data
         self._observation_issue = ""
-        observed_nid = str(data.get("applicant_nid") or "").translate(str.maketrans("۰۱۲۳۴۵۶۷۸۹٠١٢٣٤٥٦٧٨٩", "01234567890123456789")).strip()
+        observed_nid = to_ascii_digits(data.get("applicant_nid")).strip()
         if stage == "OFFLINE_SNAPSHOT" or (observed_nid and observed_nid != str(bot.nid)):
             self._observation_issue = "offline_snapshot" if stage == "OFFLINE_SNAPSHOT" else "applicant_identity_mismatch"
             self.owner.bank_page_active = False
@@ -523,13 +522,12 @@ class BankSelectionSessionController:
                     return 'confirmed'
 
                 if result == 'no_match':
-                    from core.aspnet_postback import QUOTA_POLL_INTERVAL_SEC
-                    configured = float(bot.settings.get("bank_list_refresh_seconds", bot.settings.get("bank_refresh_interval", QUOTA_POLL_INTERVAL_SEC)))
-                    poll_interval = QUOTA_POLL_INTERVAL_SEC if configured in (0, 5, 5.0) or configured < QUOTA_POLL_INTERVAL_SEC else configured
+                    from core.timings import timing
+                    poll_interval = timing(bot.settings, "bank_list_refresh_seconds")
                     now = self._monotonic()
                     # First miss: reload ASAP; subsequent polls keep the quota interval.
                     first_miss = not getattr(self, "_bank_not_found_since", 0)
-                    self._next_bank_poll = now + (0.8 if first_miss else poll_interval)
+                    self._next_bank_poll = now + (timing(bot.settings, "bank_first_miss_reload_seconds") if first_miss else poll_interval)
                     if first_miss:
                         self._bank_not_found_since = now
                     self._prepared = True  # Keep prepared=True so tick() waits for _next_bank_poll!
@@ -569,9 +567,9 @@ class BankSelectionSessionController:
             return 'waiting'
         flow = workflow_for(bot)
         flow.bind(owner.page)
-        from core.aspnet_postback import QUOTA_POLL_INTERVAL_SEC, refresh_page3_banks_via_official_reload
-        configured = float(bot.settings.get('bank_list_refresh_seconds', bot.settings.get('bank_refresh_interval', QUOTA_POLL_INTERVAL_SEC)))
-        interval = QUOTA_POLL_INTERVAL_SEC if configured <= 0 or configured in (5.0, 5) else max(QUOTA_POLL_INTERVAL_SEC, configured)
+        from core.aspnet_postback import refresh_page3_banks_via_official_reload
+        from core.timings import timing
+        interval = timing(bot.settings, 'bank_list_refresh_seconds')
         if self._monotonic() < self._next_bank_poll:
             return 'waiting'
         self._next_bank_poll = self._monotonic() + interval
@@ -664,8 +662,8 @@ class BankSelectionSessionController:
                     workflow_for(self.bot).diagnostic(self.owner.page, type(exc).__name__)
                     self.transition(State.MANUAL_ACTION_REQUIRED, type(exc).__name__)
                 try:
-                    # Faster Page3 monitor loop so missing-bank reload → OTP → reenter is tight.
-                    self.owner.page.wait_for_timeout(80)
+                    from core.timings import timing
+                    self.owner.page.wait_for_timeout(timing(self.bot.settings, "page3_loop_ms"))
                 except Exception:
                     return "stopped"
             return "stopped"

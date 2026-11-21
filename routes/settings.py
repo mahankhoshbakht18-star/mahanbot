@@ -49,6 +49,26 @@ def get_settings():
     return DBHandler.get_config()
 
 
+@router.get("/settings/timings")
+def get_timing_settings():
+    """Every speed/timing knob with its bounds, grouped for the dashboard form."""
+    from core.timings import schema
+    return {"groups": schema(DBHandler.get_config())}
+
+
+@router.post("/settings/timings")
+def update_timing_settings(payload: Dict[str, Any], _: bool = Depends(require_api_key)):
+    from core.timings import schema, validate
+    try:
+        clean = validate(payload or {})
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+    current = DBHandler.get_config()
+    current.update(clean)
+    updated = DBHandler.update_config(current)
+    return {"status": "ok", "groups": schema(updated)}
+
+
 @router.post("/settings")
 def update_settings(req: SettingsRequest, _: bool = Depends(require_api_key)):
     payload = req.dict(exclude_unset=True) if hasattr(req, "dict") else req.model_dump(exclude_unset=True)
@@ -70,11 +90,6 @@ def update_settings(req: SettingsRequest, _: bool = Depends(require_api_key)):
     if "automation_mode" in payload and payload["automation_mode"] not in {"safe", "normal", "fast"}:
         raise HTTPException(status_code=422, detail="Invalid automation mode")
     for key, low, high in (
-        ("captcha_poll_interval", 0.05, 2.0),
-        ("captcha_retry_delay", 0.0, 10.0),
-        ("bank_refresh_interval", 1.0, 300.0),
-        ("bank_list_refresh_seconds", 1.0, 300.0),
-        ("bank_capacity_recheck_seconds", 1.0, 600.0),
         ("retry_delay", 0.0, 30.0),
         ("proxy_health_check_timeout", 1.0, 30.0),
         ("browser_page_zoom", 0.25, 3.0),
@@ -96,10 +111,11 @@ def update_settings(req: SettingsRequest, _: bool = Depends(require_api_key)):
         if key in payload and payload[key] is not None and not low <= int(payload[key]) <= high:
             raise HTTPException(status_code=422, detail=f"{key} out of range")
 
-    if "bank_list_refresh_seconds" in payload and payload["bank_list_refresh_seconds"] is not None:
-        payload["bank_refresh_interval"] = float(payload["bank_list_refresh_seconds"])
-    elif "bank_refresh_interval" in payload and payload["bank_refresh_interval"] is not None:
-        payload["bank_list_refresh_seconds"] = float(payload["bank_refresh_interval"])
+    from core.timings import validate as validate_timings
+    try:
+        payload.update(validate_timings(payload))
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
 
     if "auto_final_submit" in payload and payload["auto_final_submit"] is not None:
         payload["final_submit"] = bool(payload["auto_final_submit"])

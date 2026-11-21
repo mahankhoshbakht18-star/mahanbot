@@ -16,7 +16,6 @@ import unittest
 from unittest.mock import MagicMock, patch
 
 
-from core.pure_crnn_solver import PureCRNNSolver
 from core.test_database_manager import TestDatabaseManager
 from core.unified_bank_engine import EngineState, UnifiedBankEngine, normalize_persian
 

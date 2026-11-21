@@ -24,7 +24,9 @@ logger = logging.getLogger("mahanbot.captcha")
 IMAGE_WIDTH = 160
 IMAGE_HEIGHT = 60
 CHARS = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ"
-CODE_RE = re.compile(r"^[0-9A-Z]{4,5}$")
+CODE_RE = re.compile(r"^[0-9A-Z]{4,6}$")
+VISION_MODEL = "huihui_ai/qwen2.5-vl-abliterated:7b"
+_VISION_OFF_UNTIL = 0.0
 BLANK_LABEL = 0
 IDX2CHAR = {index + 1: char for index, char in enumerate(CHARS)}
 MODEL_PATH = Path(__file__).resolve().parent / "my_captcha_model.pth"
@@ -143,29 +145,11 @@ class CaptchaModel:
         return model
 
     def predict(self, image_bytes: bytes) -> str:
-        """One training-matched read. Empty when the two decodes disagree or the length is not 4–5."""
+        """Same read as the old bot: grayscale, plain 160x60 resize, one local forward."""
         self.last_raw = ""
-        model = self.load()
-        image = _prepare(image_bytes)
-        reads = []
-        for mode in ("raw", "contrast"):
-            with torch.inference_mode():
-                logits = model(_tensor(image, mode))
-            text, confidence = _decode(logits)
-            text = "".join(ch for ch in text.upper() if ch in CHARS)
-            reads.append((text, confidence))
-        raw_text, raw_conf = reads[0]
-        contrast_text, contrast_conf = reads[1]
-        self.last_raw = f"raw={raw_text or '-'}:{raw_conf:.2f}|contrast={contrast_text or '-'}:{contrast_conf:.2f}"
-        if raw_text and raw_text == contrast_text and CODE_RE.fullmatch(raw_text):
-            return raw_text
-        # Contrast can wipe a character. A lone raw read is accepted only when it is already 4–5
-        # and the second pass did not produce a different code.
-        if CODE_RE.fullmatch(raw_text) and raw_conf >= 0.55 and contrast_text in ("", raw_text):
-            return raw_text
-        if CODE_RE.fullmatch(contrast_text) and contrast_conf >= 0.55 and raw_text in ("", contrast_text):
-            return contrast_text
-        return ""
+        text = _read_trained(self.load(), image_bytes)
+        self.last_raw = f"local={text or '-'}"
+        return text
 
 
 class ModelCaptchaSolver(CaptchaModel):
@@ -235,7 +219,7 @@ def solve_and_fill_captcha(
                 except Exception:
                     pass
             if (not captured or (seen and digest == seen)) and not hold_same:
-                refreshed = refresh_captcha(page, image, reload) or refreshed
+                refreshed = refresh_captcha(page, image, reload, getattr(bot, 'settings', None)) or refreshed
                 image, field, reload = _find_controls(page, input_selector)
                 if image is None or field is None:
                     continue
@@ -254,20 +238,23 @@ def solve_and_fill_captcha(
             model = CaptchaModel.shared()
             code = model.predict(captured)
             latency = int((time.perf_counter() - t0) * 1000)
-            accepted = bool(CODE_RE.fullmatch(code or ""))
+            accepted = len(code or "") >= 4 and all(ch in CHARS for ch in code)
             _log(
                 bot, step, "predicted", code, attempt_started, accepted,
                 latency_ms=latency, attempt=attempts, detail=model.last_raw,
             )
             if not accepted:
-                refreshed = refresh_captcha(page, image, reload) or refreshed
+                refreshed = refresh_captcha(page, image, reload, getattr(bot, 'settings', None)) or refreshed
                 continue
             if not _fill(field, code):
                 _log(bot, step, "fill_failed", code, attempt_started, False, attempt=attempts)
                 continue
             submitted = False
             if submit and button_selector:
-                submitted = _click_submit(page, button_selector, field)
+                try:
+                    submitted = _click_submit(page, button_selector, field)
+                except Exception:
+                    submitted = False
             result = CaptchaSolveResult(
                 success=True,
                 code=code,
@@ -292,21 +279,49 @@ def attach_captcha_listener(page) -> None:
 
 
 def capture_captcha_bytes(page, image) -> bytes:
-    """Pixels of the image already painted in the page. Never requests the captcha URL."""
+    """Captcha pixels independent of browser zoom.
+
+    An element screenshot is taken at CSS size x devicePixelRatio, so when the
+    user lowers Chrome zoom (Ctrl -) the model receives a shrunken, blurred
+    image and misreads it. The decoded <img> pixels at naturalWidth/Height are
+    identical at every zoom level, so they are always preferred. The screenshot
+    is only a fallback and is resampled back to the natural size.
+    """
     del page
-    deadline = time.perf_counter() + 0.45
-    while True:
-        painted = _canvas_bytes(image)
-        if _usable(painted):
-            return painted
-        if time.perf_counter() >= deadline:
-            break
-        time.sleep(0.04)
+    raw = _canvas_bytes(image)
+    if raw and _usable(raw):
+        return raw
     try:
-        shot = image.screenshot(type="png", timeout=300)
+        shot = image.screenshot(type="png", timeout=800) or b""
     except Exception:
-        shot = b""
-    return shot if _usable(shot) else b""
+        return b""
+    return _rescale_to_natural(image, shot)
+
+
+def _rescale_to_natural(image, shot: bytes) -> bytes:
+    if not shot:
+        return b""
+    try:
+        size = image.evaluate(
+            """(img) => {
+                const node = img && img.tagName && img.tagName.toLowerCase() === 'img' ? img : (img.querySelector ? img.querySelector('img') : null);
+                return node && node.naturalWidth ? [node.naturalWidth, node.naturalHeight] : null;
+            }"""
+        )
+        if not size:
+            return shot
+        width, height = int(size[0]), int(size[1])
+        with Image.open(io.BytesIO(shot)) as picture:
+            picture.load()
+            if picture.size == (width, height) or width < 40 or height < 15:
+                return shot
+            resampling = getattr(Image, "Resampling", Image)
+            resized = picture.convert("RGB").resize((width, height), resampling.LANCZOS)
+            out = io.BytesIO()
+            resized.save(out, format="PNG")
+            return out.getvalue()
+    except Exception:
+        return shot
 
 
 def _digest(raw: bytes) -> str:
@@ -315,9 +330,10 @@ def _digest(raw: bytes) -> str:
     return hashlib.sha256(raw).hexdigest()
 
 
-def refresh_captcha(page, image, reload) -> bool:
+def refresh_captcha(page, image, reload, settings=None) -> bool:
     """Click the on-page reload and wait until the painted pixels actually change."""
     del page
+    from core.timings import seconds
     before = _digest(_canvas_bytes(image))
     clicked = False
     for target in (reload, image):
@@ -331,7 +347,7 @@ def refresh_captcha(page, image, reload) -> bool:
             continue
     if not clicked:
         return False
-    deadline = time.perf_counter() + 1.2
+    deadline = time.perf_counter() + seconds(settings, 'captcha_refresh_timeout_ms')
     while time.perf_counter() < deadline:
         painted = _canvas_bytes(image)
         digest = _digest(painted)
@@ -471,6 +487,134 @@ def _tensor(image: Image.Image, mode: str):
     return pixels.reshape(1, 1, IMAGE_HEIGHT, IMAGE_WIDTH).div_(255.0)
 
 
+def _local_votes(model, image: Image.Image):
+    votes = []
+    for mode in ("raw", "contrast", "binarize"):
+        with torch.inference_mode():
+            logits = model(_tensor(image, mode))
+        text, confidence = _decode(logits)
+        text = "".join(ch for ch in text.upper() if ch in CHARS)
+        votes.append((text, confidence))
+    return votes
+
+
+def _majority(local):
+    buckets = {}
+    for text, conf in local:
+        text = "".join(ch for ch in (text or "").upper() if ch in CHARS)
+        if text:
+            buckets.setdefault(text, []).append(conf)
+    if not buckets:
+        return "", 0, 0.0
+    text, scores = max(buckets.items(), key=lambda item: (len(item[1]), sum(item[1]) / len(item[1])))
+    return text, len(scores), sum(scores) / len(scores)
+
+
+def _vision_read(image_bytes: bytes) -> str:
+    """Ask the local vision model. Skip it once a read exceeds the SMS window budget."""
+    global _VISION_OFF_UNTIL
+    if not image_bytes or time.time() < _VISION_OFF_UNTIL:
+        return ""
+    import json
+    import urllib.request
+    payload = json.dumps({
+        "model": VISION_MODEL,
+        "stream": False,
+        "keep_alive": "10m",
+        "messages": [{
+            "role": "user",
+            "content": "Read this captcha. Reply with only 4 to 6 uppercase letters and digits.",
+            "images": [base64.b64encode(image_bytes).decode("ascii")],
+        }],
+        "options": {"temperature": 0, "num_predict": 8},
+    }).encode("utf-8")
+    started = time.perf_counter()
+    try:
+        request = urllib.request.Request(
+            "http://127.0.0.1:11434/api/chat",
+            data=payload,
+            headers={"Content-Type": "application/json"},
+        )
+        with urllib.request.urlopen(request, timeout=4) as response:
+            data = json.loads(response.read().decode("utf-8"))
+        text = str((data.get("message") or {}).get("content") or "")
+        text = "".join(ch for ch in text.upper() if ch in CHARS)
+        if not CODE_RE.fullmatch(text):
+            return ""
+        return text
+    except Exception as exc:
+        if time.perf_counter() - started >= 3.5 or "timed out" in str(exc).lower():
+            _VISION_OFF_UNTIL = time.time() + 600
+            logger.warning("vision model is slower than the SMS window; paused for 10 minutes")
+        return ""
+
+
+def _ddddocr_votes(image: Image.Image):
+    engine = _ocr_engine()
+    if engine is None:
+        return []
+    votes = []
+    variants = [image, ImageOps.autocontrast(image.convert("L"), cutoff=1).filter(ImageFilter.SHARPEN)]
+    for variant in variants:
+        try:
+            text = engine.classification(_png_bytes(variant))
+        except Exception:
+            continue
+        text = "".join(ch for ch in str(text or "").upper() if ch in CHARS)
+        if CODE_RE.fullmatch(text) and text not in votes:
+            votes.append(text)
+    return votes
+
+
+_OCR = None
+_OCR_FAILED = False
+
+
+def _ocr_engine():
+    global _OCR, _OCR_FAILED
+    if _OCR is not None or _OCR_FAILED:
+        return _OCR
+    try:
+        import ddddocr
+        _OCR = ddddocr.DdddOcr(show_ad=False)
+    except Exception as exc:
+        _OCR_FAILED = True
+        logger.warning("ddddocr unavailable: %s", exc)
+        _OCR = None
+    return _OCR
+
+
+def _png_bytes(image: Image.Image) -> bytes:
+    buffer = io.BytesIO()
+    image.convert("RGB").save(buffer, format="PNG")
+    return buffer.getvalue()
+
+
+def _read_trained(model, image_bytes: bytes) -> str:
+    """Grayscale and a plain resize. Extra contrast or threshold changes the CTC text."""
+    import cv2
+    import numpy as np
+    image = cv2.imdecode(np.frombuffer(image_bytes, np.uint8), cv2.IMREAD_GRAYSCALE)
+    if image is None:
+        return ""
+    image = cv2.resize(image, (IMAGE_WIDTH, IMAGE_HEIGHT))
+    tensor = torch.from_numpy(image.astype("float32") / 255.0).unsqueeze(0).unsqueeze(0)
+    with torch.inference_mode():
+        output = model(tensor)
+    output = output.permute(1, 0, 2)
+    indices = torch.argmax(output, dim=2)
+    chars = []
+    previous = -1
+    for raw_index in indices[0]:
+        index = int(raw_index.item())
+        if index != BLANK_LABEL and index != previous:
+            char = IDX2CHAR.get(index)
+            if char:
+                chars.append(char)
+        previous = index
+    return "".join(chars).strip().upper()
+
+
 def _decode(logits):
     import torch.nn.functional as F
     probs = F.softmax(logits, dim=2)
@@ -494,21 +638,19 @@ def _decode(logits):
 
 
 def _fill(field, code: str) -> bool:
-    """Set the value in one call. Character-by-character typing was the multi-second delay."""
+    """Short per-character typing, then one click on the continue button by the caller."""
+    import random
     try:
-        field.evaluate(
-            """(element, value) => {
-                const prototype = Object.getPrototypeOf(element);
-                const descriptor = Object.getOwnPropertyDescriptor(prototype, 'value');
-                if (descriptor && descriptor.set) descriptor.set.call(element, value);
-                else element.value = value;
-                element.dispatchEvent(new Event('input', {bubbles: true}));
-                element.dispatchEvent(new Event('change', {bubbles: true}));
-                element.dispatchEvent(new FocusEvent('blur', {bubbles: true}));
-            }""",
-            code,
-        )
-        return (field.input_value(timeout=200) or "").strip().upper() == code
+        field.scroll_into_view_if_needed(timeout=500)
+        field.click(timeout=800)
+        field.press("Control+A", timeout=500)
+        field.press("Backspace", timeout=500)
+        for char in code:
+            field.type(char, delay=random.randint(4, 9), timeout=500)
+    except Exception:
+        return False
+    try:
+        return (field.input_value(timeout=300) or "").strip().upper() == code
     except Exception:
         return False
 
@@ -519,7 +661,9 @@ def _click_submit(page, button_selector, field) -> bool:
 
     def on_request(request):
         try:
-            if (getattr(request, "method", "") or "").upper() == "POST":
+            url = str(getattr(request, "url", "") or "").lower()
+            method = (getattr(request, "method", "") or "").upper()
+            if method == "POST" and (".aspx" in url or not url):
                 posted["ok"] = True
         except Exception:
             pass
@@ -532,30 +676,35 @@ def _click_submit(page, button_selector, field) -> bool:
     def wait_post(seconds: float) -> bool:
         deadline = time.perf_counter() + seconds
         while time.perf_counter() < deadline and not posted["ok"]:
-            time.sleep(0.05)
+            time.sleep(0.02)
         return posted["ok"]
 
     try:
-        clicked = _dispatch_click(page, button_selector, field)
-        if wait_post(0.5):
-            return True
-        try:
-            field.press("Enter", timeout=400)
-            clicked = True
-        except Exception:
-            pass
-        if wait_post(0.45):
-            return True
-        if _js_postback(page, button_selector, field):
-            clicked = True
-        if wait_post(0.6):
-            return True
-        return clicked
+        return _dispatch_click(page, button_selector, field) or posted["ok"]
     finally:
         try:
             page.remove_listener("request", on_request)
         except Exception:
             pass
+
+
+def _mouse_click(target) -> bool:
+    """One real mouse press on the continue button. No second postback behind it."""
+    try:
+        box = target.bounding_box(timeout=300)
+    except Exception:
+        box = None
+    page = getattr(target, "page", None)
+    if not box or page is None or box.get("width", 0) < 2 or box.get("height", 0) < 2:
+        return False
+    x = box["x"] + box["width"] * 0.5
+    y = box["y"] + box["height"] * 0.55
+    page.mouse.move(x, y, steps=5)
+    time.sleep(0.03)
+    page.mouse.down()
+    time.sleep(0.04)
+    page.mouse.up()
+    return True
 
 
 def _dispatch_click(page, button_selector, field) -> bool:
@@ -565,22 +714,26 @@ def _dispatch_click(page, button_selector, field) -> bool:
     else:
         scope = page
         try:
-            handle = field.element_handle()
+            handle = field.element_handle() if field is not None else None
             if handle is not None:
                 scope = handle.owner_frame() or page
         except Exception:
             scope = page
-        for selector in [part.strip() for part in str(button_selector or "").split(",") if part.strip()]:
-            try:
-                loc = scope.locator(selector)
-                if loc.count() > 0 and loc.first.is_visible():
-                    targets.append(loc.first)
-                    break
-            except Exception:
-                continue
+        candidates = [part.strip() for part in str(button_selector or "").split(",") if part.strip()]
+        for s in (scope, page):
+            for selector in candidates:
+                try:
+                    loc = s.locator(selector)
+                    if loc.count() > 0 and loc.first.is_visible():
+                        targets.append(loc.first)
+                        break
+                except Exception:
+                    continue
+            if targets:
+                break
     for target in targets:
         try:
-            target.click(timeout=1200, no_wait_after=True)
+            target.click(timeout=2000)
             return True
         except TypeError:
             try:
@@ -588,7 +741,10 @@ def _dispatch_click(page, button_selector, field) -> bool:
                 return True
             except Exception:
                 continue
-        except Exception:
+        except Exception as exc:
+            err = str(exc).lower()
+            if "navig" in err or "context" in err or "closed" in err:
+                return True
             continue
     return False
 
@@ -600,7 +756,7 @@ def _js_postback(page, button_selector, field) -> bool:
     try:
         scope = page
         try:
-            handle = field.element_handle()
+            handle = field.element_handle() if field is not None else None
             if handle is not None:
                 scope = handle.owner_frame() or page
         except Exception:

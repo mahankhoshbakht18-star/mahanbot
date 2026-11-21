@@ -17,6 +17,7 @@ from typing import Optional, Dict, Any, List, Tuple
 
 from database import DBHandler
 from event_logger import EVENT_BROADCASTER, build_event
+from core.persian_normalizer import to_ascii_digits
 
 logger = logging.getLogger("mahanbot.otp_queue")
 
@@ -31,7 +32,7 @@ def normalize_phone(phone: Optional[str]) -> str:
     """Normalize Iranian phone number to standard 11-digit 09xxxxxxxxx format."""
     if not phone:
         return ""
-    p = str(phone).translate(str.maketrans("۰۱۲۳۴۵۶۷۸۹٠١٢٣٤٥٦٧٨٩", "01234567890123456789")).strip()
+    p = to_ascii_digits(phone).strip()
     p = re.sub(r"[^0-9]", "", p)
     if p.startswith("0098"):
         p = "0" + p[4:]
@@ -162,7 +163,7 @@ class OTPQueueManager:
         2. No reuse of consumed code.
         3. Expiry verification.
         """
-        clean_code = str(code).translate(str.maketrans("۰۱۲۳۴۵۶۷۸۹٠١٢٣٤٥٦٧٨٩", "01234567890123456789")).strip()
+        clean_code = to_ascii_digits(code).strip()
         if not re.fullmatch(r"[0-9]{4,8}", clean_code):
             return False, {"error": "invalid_code_format", "message": "کد پیامک نامعتبر است."}
 

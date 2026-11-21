@@ -37,6 +37,11 @@ _DIGIT_MAP = {
 
 _FULL_TRANS = {**_CHAR_MAP, **_DIGIT_MAP}
 
+
+def to_ascii_digits(text: Any) -> str:
+    """Persian/Arabic digits -> ASCII. The one digit converter used across the bot."""
+    return str(text or "").translate(_DIGIT_MAP)
+
 # Arabic diacritics (harakat)
 _HARAKAT_RE = re.compile(r"[\u064B-\u0652\u0670]")
 

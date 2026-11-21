@@ -17,7 +17,6 @@ import time
 from enum import Enum
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
-from core.pure_crnn_solver import PureCRNNSolver
 from core.test_database_manager import TestDatabaseManager, TEST_DB_PATH
 
 logger = logging.getLogger("mahanbot.unified_engine")
@@ -73,7 +72,7 @@ class UnifiedBankEngine:
         headless: bool = True,
     ):
         self.db = TestDatabaseManager(db_path)
-        self.solver = PureCRNNSolver.get_instance(model_path)
+        del model_path  # captcha_engine.CaptchaModel.shared() is the only model instance
         self.mock_server_url = mock_server_url
         self.headless = headless
 

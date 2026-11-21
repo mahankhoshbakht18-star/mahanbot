@@ -6,6 +6,7 @@ active vs. reserve quota classification, and known CBI static codes.
 import re
 from dataclasses import dataclass
 from typing import Dict, List, Optional, Tuple
+from core.persian_normalizer import to_ascii_digits
 
 
 # Complete 30 official CBI bank codes (static values in ddlBankName)
@@ -128,10 +129,7 @@ class PersianBankMatcher:
         s = s.replace("ي", "ی").replace("ئ", "ی").replace("ى", "ی")
         s = s.replace("ك", "ک").replace("ة", "ه")
         # Persian and Arabic digits to English
-        persian_digits = "۰۱۲۳۴۵۶۷۸۹"
-        arabic_digits = "٠١٢٣٤٥٦٧٨٩"
-        for i in range(10):
-            s = s.replace(persian_digits[i], str(i)).replace(arabic_digits[i], str(i))
+        s = to_ascii_digits(s)
         # Remove tatweel and diacritics
         s = re.sub(r"[\u064B-\u065F\u0670\u0640]", "", s)
         # Normalize zero-width space and multiple spaces

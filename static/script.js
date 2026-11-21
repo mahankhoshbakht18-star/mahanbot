@@ -506,10 +506,10 @@ function switchView(viewId, navEl) {
         loadCapacityStatus();
     }
 
-    if(viewId === 'saved-pages') {
-        loadSavedPages();
-        startCapacityCountdown();
-    }
+    if(viewId === 'saved-pages') {
+        loadSavedPages();
+        startCapacityCountdown();
+    }
     if(viewId === 'browser-health') {
         loadBrowserHealthData();
     } else {
@@ -525,6 +525,8 @@ function switchView(viewId, navEl) {
     if(viewId === 'settings') {
 
         loadSettings();
+
+        loadTimingSettings();
 
         loadBrowserProfile();
 
@@ -2052,17 +2054,12 @@ async function loadSettings() {
 
         //  
 
-        if (document.getElementById('set_captcha')) document.getElementById('set_captcha').value = s.captcha_delay || 0.1;
         if (document.getElementById('set_retry')) document.getElementById('set_retry').value = s.retry_count || 5;
         if (document.getElementById('set_automation_mode')) document.getElementById('set_automation_mode').value = s.automation_mode || 'normal';
         if (document.getElementById('set_default_timeout')) document.getElementById('set_default_timeout').value = s.default_timeout_ms ?? 5000;
         if (document.getElementById('set_navigation_timeout')) document.getElementById('set_navigation_timeout').value = s.navigation_timeout_ms ?? 15000;
         if (document.getElementById('set_retry_delay')) document.getElementById('set_retry_delay').value = s.retry_delay ?? 0.25;
-        if (document.getElementById('set_captcha_poll')) document.getElementById('set_captcha_poll').value = s.captcha_poll_interval ?? 0.1;
-        if (document.getElementById('set_captcha_retry_delay')) document.getElementById('set_captcha_retry_delay').value = s.captcha_retry_delay ?? 0.25;
         if (document.getElementById('set_captcha_max')) document.getElementById('set_captcha_max').value = s.captcha_max_retries ?? 3;
-        if (document.getElementById('set_bank_refresh')) document.getElementById('set_bank_refresh').value = s.bank_list_refresh_seconds ?? s.bank_refresh_interval ?? 5;
-        if (document.getElementById('set_bank_capacity_recheck')) document.getElementById('set_bank_capacity_recheck').value = s.bank_capacity_recheck_seconds ?? 20;
         if (document.getElementById('set_otp_validity')) document.getElementById('set_otp_validity').value = s.otp_validity_seconds ?? 120;
         if (document.getElementById('set_resume_checkpoint')) document.getElementById('set_resume_checkpoint').checked = s.resume_from_checkpoint !== false;
         if (document.getElementById('set_repair_page')) document.getElementById('set_repair_page').checked = s.repair_page_enabled !== false;
@@ -2305,19 +2302,13 @@ async function saveSettings() {
 
     const payload = {
 
-        captcha_delay: document.getElementById('set_captcha')?.value || 0.1,
 
         retry_count: Number(document.getElementById('set_retry')?.value || 5),
         automation_mode: document.getElementById('set_automation_mode')?.value || 'normal',
         default_timeout_ms: Number(document.getElementById('set_default_timeout')?.value || 5000),
         navigation_timeout_ms: Number(document.getElementById('set_navigation_timeout')?.value || 15000),
         retry_delay: Number(document.getElementById('set_retry_delay')?.value || 0.25),
-        captcha_poll_interval: Number(document.getElementById('set_captcha_poll')?.value || 0.1),
-        captcha_retry_delay: Number(document.getElementById('set_captcha_retry_delay')?.value || 0.25),
         captcha_max_retries: Number(document.getElementById('set_captcha_max')?.value || 3),
-        bank_refresh_interval: Number(document.getElementById('set_bank_refresh')?.value || 5),
-        bank_list_refresh_seconds: Number(document.getElementById('set_bank_refresh')?.value || 5),
-        bank_capacity_recheck_seconds: Number(document.getElementById('set_bank_capacity_recheck')?.value || 20),
         otp_validity_seconds: Number(document.getElementById('set_otp_validity')?.value || 120),
         resume_from_checkpoint: document.getElementById('set_resume_checkpoint') ? document.getElementById('set_resume_checkpoint').checked : true,
         repair_page_enabled: document.getElementById('set_repair_page') ? document.getElementById('set_repair_page').checked : true,
@@ -2917,6 +2908,73 @@ async function stopBank(nid, bankName) {
 
     }
 
+}
+
+// ── Timing settings (single source: core/timings.py) ─────────────────
+let timingSchema = [];
+
+function renderTimingSettings(groups) {
+    timingSchema = groups || [];
+    const box = document.getElementById('timingSettings');
+    if (!box) return;
+    box.textContent = '';
+    box.className = '';
+    for (const group of timingSchema) {
+        const title = document.createElement('h6');
+        title.className = 'fw-bold mt-3 mb-2';
+        title.textContent = group.title;
+        box.appendChild(title);
+        const grid = document.createElement('div');
+        grid.className = 'form-grid compact';
+        for (const item of group.items) {
+            const label = document.createElement('label');
+            const unit = item.unit === 'ms' ? 'میلی‌ثانیه' : 'ثانیه';
+            label.append(`${item.label} (${unit})`);
+            const input = document.createElement('input');
+            Object.assign(input, {type: 'number', className: 'form-control', min: item.min, max: item.max,
+                                  step: item.unit === 'ms' ? 10 : 0.1, value: item.value});
+            input.dataset.timingKey = item.key;
+            input.dataset.default = item.default;
+            input.title = `${item.help} پیش‌فرض: ${item.default}`;
+            const hint = document.createElement('small');
+            hint.className = 'text-muted d-block';
+            hint.textContent = `${item.help} (پیش‌فرض ${item.default}، بازه ${item.min} تا ${item.max})`;
+            label.append(input, hint);
+            grid.appendChild(label);
+        }
+        box.appendChild(grid);
+    }
+}
+
+async function loadTimingSettings() {
+    try {
+        renderTimingSettings((await apiCall('/settings/timings', 'GET')).groups);
+    } catch (e) {
+        const box = document.getElementById('timingSettings');
+        if (box) box.textContent = `بارگذاری زمان‌بندی ناموفق بود: ${e.message}`;
+    }
+}
+
+async function saveTimingSettings() {
+    const payload = {};
+    document.querySelectorAll('#timingSettings [data-timing-key]').forEach(input => {
+        if (input.value !== '') payload[input.dataset.timingKey] = Number(input.value);
+    });
+    const result = document.getElementById('timingSettingsResult');
+    try {
+        renderTimingSettings((await apiCall('/settings/timings', 'POST', payload)).groups);
+        if (result) result.textContent = 'زمان‌بندی ذخیره شد؛ بات‌های در حال اجرا از چرخه بعد استفاده می‌کنند.';
+    } catch (e) {
+        if (result) result.textContent = `ذخیره نشد: ${e.message}`;
+    }
+}
+
+function resetTimingSettings() {
+    document.querySelectorAll('#timingSettings [data-timing-key]').forEach(input => {
+        input.value = input.dataset.default;
+    });
+    const result = document.getElementById('timingSettingsResult');
+    if (result) result.textContent = 'مقادیر پیش‌فرض گذاشته شد؛ برای اعمال «ذخیره زمان‌بندی» را بزنید.';
 }
 
 async function apiCall(u, m, b) {
@@ -5222,7 +5280,7 @@ async function loadRadarData() {
 
         const tg = res.telegram_status || {};
         if (elChan) {
-            elChan.textContent = tg.admin_chat_id ? tg.admin_chat_id : '@Mahanvpn3';
+            elChan.textContent = tg.channel_id || '@Mahanvpn3';
         }
 
         // 18:00 Batch Indicator
@@ -5275,8 +5333,12 @@ async function loadRadarData() {
         if (tokenInput && !tokenInput.value && tg.has_token) {
             tokenInput.value = '8988974593:AAHnlt1ZVf5WAMFm59fbLtenxppF9aHM_Fc';
         }
-        if (chatInput && !chatInput.value) {
-            chatInput.value = tg.admin_chat_id || '-1003720759140';
+        if (chatInput && (!chatInput.value || chatInput.value === '-1003720759140')) {
+            chatInput.value = tg.channel_id || '@Mahanvpn3';
+        }
+        const proxyInput = document.getElementById('telegramProxyInput');
+        if (proxyInput && !proxyInput.value && tg.proxy) {
+            proxyInput.value = tg.proxy;
         }
         if (toggle && tg.notifications_enabled !== undefined) {
             toggle.checked = tg.notifications_enabled;
@@ -5369,9 +5431,9 @@ async function saveTelegramSettings() {
     try {
         const payload = {
             bot_token: token || undefined,
-            admin_chat_id: chatId || undefined,
-            channel_id: chatId || undefined,
+            channel_id: (!chatId || chatId === '-1003720759140') ? '@Mahanvpn3' : chatId,
             notifications_enabled: notifyEnabled,
+            proxy: document.getElementById('telegramProxyInput')?.value?.trim() || '',
         };
         const res = await apiCall('/api/radar/telegram/config', 'POST', payload);
         if (res && res.status === 'ok') {
@@ -5385,7 +5447,7 @@ async function saveTelegramSettings() {
 }
 
 async function sendTelegramTestFromUI() {
-    const chatId = document.getElementById('telegramChatIdInput')?.value?.trim() || '-1003720759140';
+    const chatId = document.getElementById('telegramChatIdInput')?.value?.trim() || '@Mahanvpn3';
     try {
         showMahanToast('ارسال تست', 'در حال ارسال پیام تست به کانال @Mahanvpn3...', 'info');
         const res = await apiCall('/api/radar/telegram/test', 'POST', { chat_id: chatId });
@@ -5409,7 +5471,7 @@ async function publishChannelPostFromUI() {
     }
 
     try {
-        const chatId = document.getElementById('telegramChatIdInput')?.value?.trim() || '-1003720759140';
+        const chatId = document.getElementById('telegramChatIdInput')?.value?.trim() || '@Mahanvpn3';
         const testPayload = {
             chat_id: chatId,
             message: `<b>${title}</b>\n\n${content}\n\n📢 @Mahanvpn3 | 🤖 @MahanVPN_Shop_Bot`
@@ -5424,7 +5486,7 @@ async function publishChannelPostFromUI() {
 }
 
 function sendTelegramAlertForBank(province, bank, status) {
-    const chatId = document.getElementById('telegramChatIdInput')?.value?.trim() || '-1003720759140';
+    const chatId = document.getElementById('telegramChatIdInput')?.value?.trim() || '@Mahanvpn3';
     const stLabel = status === 'RESERVE' ? 'در انتظار ظرفیت جدید (صف ذخیره)' : 'دارای ظرفیت ثبت‌نام';
     const msg = `🔔 <b>اعلان فوری ظرفیت بانک | رادار MAHANBOT</b>\n\n📍 استان: <b>${province}</b>\n🏦 بانک: <b>${bank}</b>\n📊 وضعیت: <b>${stLabel}</b>\n🕒 زمان: ${new Date().toLocaleTimeString('fa-IR')}\n\n📢 کانال رسمی: @Mahanvpn3\n🤖 ربات فروش: @MahanVPN_Shop_Bot`;
     

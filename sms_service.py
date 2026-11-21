@@ -10,6 +10,7 @@ from typing import Dict, Any, Optional, Tuple, List
 
 from database import DBHandler
 from core.helpers import _normalize_nid
+from core.persian_normalizer import to_ascii_digits
 
 logger = logging.getLogger("mahanbot.sms")
 
@@ -32,14 +33,7 @@ def normalize_digits(text: str) -> str:
     """Normalize Persian and Arabic digits to English ASCII digits."""
     if not text:
         return ""
-    persian_digits = "۰۱۲۳۴۵۶۷۸۹"
-    arabic_digits = "٠١٢٣٤٥٦٧٨٩"
-    cleaned = str(text)
-    for i, d in enumerate(persian_digits):
-        cleaned = cleaned.replace(d, str(i))
-    for i, d in enumerate(arabic_digits):
-        cleaned = cleaned.replace(d, str(i))
-    return cleaned
+    return to_ascii_digits(text)
 
 
 def extract_otp_code(text: str) -> Optional[str]:
@@ -96,13 +90,7 @@ def parse_sms_text(text: str) -> Dict[str, Optional[str]]:
     raw = str(text)
 
     # Normalize Persian / Arabic digits to English digits
-    persian_digits = "۰۱۲۳۴۵۶۷۸۹"
-    arabic_digits = "٠١٢٣٤٥٦٧٨٩"
-    cleaned = raw
-    for i, d in enumerate(persian_digits):
-        cleaned = cleaned.replace(d, str(i))
-    for i, d in enumerate(arabic_digits):
-        cleaned = cleaned.replace(d, str(i))
+    cleaned = to_ascii_digits(raw)
 
     # 1. Extract 6-digit OTP code
     # ve.cbi.ir SMS codes are strictly 6 digits

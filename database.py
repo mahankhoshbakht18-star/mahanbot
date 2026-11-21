@@ -30,7 +30,6 @@ DEFAULT_CONFIG = {
     "browser_display_mode": "external",
     "clear_cookies": False,
     "captcha_mode": "model",
-    "captcha_poll_interval": 0.1,
     "captcha_retry_delay": 0.25,
     "captcha_max_retries": 10,
     "otp_captcha_max_retries": 10,
@@ -43,7 +42,7 @@ DEFAULT_CONFIG = {
     "bank_monitor_enabled": True,
     "capacity_check_enabled": True,
     "bank_refresh_interval": 5.0,
-    "bank_list_refresh_seconds": 5.0,
+    "bank_list_refresh_seconds": 3.5,
     "bank_capacity_recheck_seconds": 20.0,
     "capacity_check_interval_seconds": 20.0,
     "allow_reserve_bank": True,
@@ -113,33 +112,17 @@ def normalize_config(stored: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         merged["automation_mode"] = "normal"
     merged["retry_count"] = _bounded(merged.get("retry_count"), 5, 1, 20, int)
     merged["retry_delay"] = _bounded(merged.get("retry_delay"), 0.25, 0.0, 30.0)
-    merged["captcha_poll_interval"] = _bounded(
-        merged.get("captcha_poll_interval"), 0.1, 0.05, 2.0
-    )
-    merged["captcha_retry_delay"] = _bounded(
-        merged.get("captcha_retry_delay"), 0.25, 0.0, 10.0
-    )
+    merged.pop("captcha_poll_interval", None)
+    merged.pop("captcha_delay", None)
     merged["captcha_max_retries"] = _bounded(
         merged.get("captcha_max_retries"), 3, 1, 10, int
     )
     merged["captcha_manual_timeout"] = _bounded(
         merged.get("captcha_manual_timeout"), 300, 10, 3600, int
     )
-    # Synchronize bank_list_refresh_seconds, bank_list_check_interval, and bank_refresh_interval
-    raw_list_refresh = merged.get("bank_list_refresh_seconds")
-    if raw_list_refresh is None:
-        raw_list_refresh = merged.get("bank_list_check_interval", merged.get("bank_refresh_interval", 5.0))
-    list_refresh = _bounded(raw_list_refresh, 5.0, 1.0, 300.0)
-    merged["bank_list_refresh_seconds"] = list_refresh
-    merged["bank_list_check_interval"] = list_refresh
-    merged["bank_refresh_interval"] = _bounded(
-        merged.get("bank_refresh_interval", list_refresh), list_refresh, 1.0, 300.0
-    )
-    capacity_keys = ('bank_capacity_check_interval', 'capacity_check_interval_seconds', 'bank_capacity_recheck_seconds')
-    raw_capacity = next((stored[key] for key in capacity_keys if stored and stored.get(key) is not None), 20.0)
-    capacity_interval = _bounded(raw_capacity, 20.0, 1.0, 600.0)
-    for key in capacity_keys:
-        merged[key] = capacity_interval
+    # Every speed/timing knob (and its legacy aliases) is bounded in one place.
+    from core.timings import normalize as normalize_timings
+    normalize_timings(merged)
     merged["otp_validity_seconds"] = _bounded(
         merged.get("otp_validity_seconds"), 120, 30, 600, int
     )
@@ -1193,9 +1176,12 @@ class DBHandler:
                         (json.dumps(data, ensure_ascii=False), nid),
                     )
                     conn.commit()
-                    return True
             except Exception:
                 return False
+        # Wake the bot thread waiting on this applicant now, not on its next poll.
+        from otp_signal import notify
+        notify(nid)
+        return True
 
     @staticmethod
     def get_otp_record(nid: str) -> Optional[Dict[str, Any]]:

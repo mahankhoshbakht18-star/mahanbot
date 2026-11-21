@@ -589,8 +589,7 @@ def _select_dropdown_with_postback(
     Never fires a second synthetic __doPostBack (CloseSession race).
     City selection is for local UI/branch only — it does NOT refresh province bank quotas.
     """
-    from core.aspnet_postback import read_viewstate, wait_for_aspnet_idle, wait_for_viewstate_change
-    from core.bank_selection.postback_sync import PostbackSynchronizer
+    from core.aspnet_postback import read_viewstate, wait_for_postback
 
     resolved = _resolve_dropdown_option(page, selector, target_value=target_value, target_text=target_text)
     val_str = str((resolved or {}).get("value") or target_value)
@@ -626,17 +625,9 @@ def _select_dropdown_with_postback(
         bot._bank_selection_issue = "select_failed"
         return False
 
-    # Deterministic ASP.NET idle wait (no fixed 250ms-only race)
-    synced = PostbackSynchronizer.wait_for_postback_complete(page, timeout_ms=8000)
-    if hasattr(bot, "wait_for_aspnet_postback"):
-        bot.wait_for_aspnet_postback(page, timeout_ms=8000)
-    else:
-        wait_for_aspnet_idle(page, bot=bot, timeout_ms=8000)
-    wait_for_viewstate_change(page, previous_vs, timeout_ms=2500)
-
-    if not synced and hasattr(bot, "wait_for_aspnet_postback"):
-        # Soft: some dropdowns finish without PageRequestManager flag; verify selection instead
-        pass
+    # One wait: returns when the postback this select started has finished.
+    # The selection is verified from the live DOM right after.
+    wait_for_postback(page, getattr(bot, "settings", None), previous_viewstate=previous_vs)
 
     verified, _, _ = _verify_dropdown_selection(page, selector, val_str, expected_bank_name=target_text or "")
     if not verified and target_text:
@@ -917,9 +908,9 @@ def _select_bank_mode(bot, page, desired_mode: str, bank_name: str) -> Tuple[str
         start_t = time.time()
         while time.time() - start_t < 1.5:
             try:
-                page.wait_for_timeout(200)
+                page.wait_for_timeout(50)
             except Exception:
-                time.sleep(0.2)
+                time.sleep(0.05)
             mode_controls = _inspect_mode_controls(page)
             if mode_controls:
                 break
@@ -956,10 +947,6 @@ def _select_bank_mode(bot, page, desired_mode: str, bank_name: str) -> Tuple[str
                 target_ctrl_id = ctrl_id
                 if not ctrl.get("checked") and ctrl_id:
                     page.locator(f"#{ctrl_id}").click()
-                    try:
-                        page.wait_for_timeout(120)
-                    except Exception:
-                        pass
                     if hasattr(bot, "wait_for_aspnet_postback"):
                         bot.wait_for_aspnet_postback(page, timeout_ms=8000)
                 selected = True
@@ -1046,10 +1033,6 @@ def _select_bank_mode(bot, page, desired_mode: str, bank_name: str) -> Tuple[str
                 target_ctrl_id = ctrl_id
                 if not ctrl.get("checked") and ctrl_id:
                     page.locator(f"#{ctrl_id}").click()
-                    try:
-                        page.wait_for_timeout(120)
-                    except Exception:
-                        pass
                     if hasattr(bot, "wait_for_aspnet_postback"):
                         bot.wait_for_aspnet_postback(page, timeout_ms=8000)
                 selected = True
@@ -1290,7 +1273,8 @@ def process_bank_selection_v2(bot, page, stop_event, *, capacity_sniping=False):
         previous = DBHandler.get_runtime(bot.nid).get("banks_available") or []
         previous_set, current_set = set(previous), set(bank_names)
         now = time.time()
-        refresh_sec = max(1.0, float(bot.settings.get("bank_list_refresh_seconds", bot.settings.get("bank_refresh_interval", 5.0))))
+        from core.timings import timing
+        refresh_sec = timing(bot.settings, "bank_list_refresh_seconds")
         DBHandler.update_runtime(
             bot.nid,
             status="MONITORING",
@@ -1808,10 +1792,6 @@ def process_bank_selection_v2(bot, page, stop_event, *, capacity_sniping=False):
         except Exception:
             pass
 
-        try:
-            page.wait_for_timeout(120)
-        except Exception:
-            pass
         if hasattr(bot, "wait_for_aspnet_postback"):
             bot.wait_for_aspnet_postback(page, timeout_ms=10000)
 
@@ -2093,22 +2073,8 @@ def wait_for_branch_fully_loaded(page, branch_ddl: Optional[str] = None, timeout
     max_wait_sec = max(2.0, timeout_ms / 1000.0)
 
     while time.time() - start_t < max_wait_sec:
-        try:
-            is_postback = page.evaluate("""() => {
-                if (window.Sys && Sys.WebForms && Sys.WebForms.PageRequestManager) {
-                    const prm = Sys.WebForms.PageRequestManager.getInstance();
-                    if (prm && prm.get_isInAsyncPostBack()) return true;
-                }
-                return false;
-            }""")
-            if is_postback:
-                try:
-                    page.wait_for_timeout(150)
-                except Exception:
-                    time.sleep(0.15)
-                continue
-        except Exception:
-            pass
+        from core.aspnet_postback import wait_for_aspnet_idle
+        wait_for_aspnet_idle(page, timeout_ms=int(max(0.0, max_wait_sec - (time.time() - start_t)) * 1000))
 
         info = detect_branch_controls(page)
         if info.get("control_type") in {"select", "listbox", "searchable", "table_list"}:
@@ -2118,9 +2084,9 @@ def wait_for_branch_fully_loaded(page, branch_ddl: Optional[str] = None, timeout
             return info
 
         try:
-            page.wait_for_timeout(200)
+            page.wait_for_timeout(50)
         except Exception:
-            time.sleep(0.2)
+            time.sleep(0.05)
 
     return detect_branch_controls(page)
 
@@ -2270,10 +2236,6 @@ def select_branch_robust(
             is_checked = page.evaluate("() => { const el = document.querySelector('#ctl00_ContentPlaceHolder1_rbtnHozori'); return el ? el.checked : false; }")
             if not is_checked:
                 hozori_loc.first.click()
-                try:
-                    page.wait_for_timeout(200)
-                except Exception:
-                    pass
                 if hasattr(bot, "wait_for_aspnet_postback"):
                     bot.wait_for_aspnet_postback(page, timeout_ms=5000)
     except Exception:
@@ -2285,10 +2247,6 @@ def select_branch_robust(
     # Extract all available branch options
     branches = get_available_branches(page)
     if not branches:
-        try:
-            page.wait_for_timeout(500)
-        except Exception:
-            time.sleep(0.5)
         ctrl_info = wait_for_branch_fully_loaded(page, timeout_ms=4000)
         branches = get_available_branches(page)
 
@@ -2437,10 +2395,6 @@ def select_branch_robust(
     except Exception:
         pass
 
-    try:
-        page.wait_for_timeout(150)
-    except Exception:
-        pass
     if hasattr(bot, "wait_for_aspnet_postback"):
         bot.wait_for_aspnet_postback(page, timeout_ms=5000)
 

@@ -37,7 +37,7 @@ from core.state import STATIC_DIR, AUTH_SESSIONS, AUTH_COOKIE
 
 from core.deps import _session_user
 
-from captcha_service import CaptchaService
+from api_solver import CaptchaService
 
 from core.job_queue import JobQueue, get_max_concurrency
 

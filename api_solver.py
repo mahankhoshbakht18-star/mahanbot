@@ -60,9 +60,10 @@ class CaptchaService:
         except Exception:
             pass
 
-        # 1. Fast in-memory bytes path (no disk I/O, no permission locks)
+        # 1. In memory: natural pixels (zoom-independent), screenshot fallback inside.
         try:
-            image_bytes = target.screenshot(type="png")
+            from captcha_engine import capture_captcha_bytes
+            image_bytes = capture_captcha_bytes(None, target)
             if image_bytes and len(image_bytes) >= 10:
                 return self.solve(image_bytes)
         except Exception:

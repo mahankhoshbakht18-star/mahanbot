@@ -14,8 +14,6 @@ from __future__ import annotations
 from typing import Any, Optional, Tuple
 from urllib.parse import urlsplit
 
-QUOTA_POLL_INTERVAL_SEC = 3.5
-
 _DISARM_JS = """() => {
     try {
         window.onbeforeunload = null;
@@ -72,36 +70,69 @@ def wait_for_viewstate_change(page: Any, previous: str, timeout_ms: int = 8000) 
         return False
 
 
-def wait_for_aspnet_idle(page: Any, bot: Any = None, timeout_ms: int = 8000) -> bool:
-    if bot is not None and hasattr(bot, "wait_for_aspnet_postback"):
-        try:
-            return bool(bot.wait_for_aspnet_postback(page, timeout_ms=timeout_ms))
-        except Exception:
-            pass
+# The one ASP.NET "postback finished" check. Runs inside the page so a single
+# round-trip covers both phases:
+#   1. up to graceMs: wait for the postback to START (busy, or __VIEWSTATE changed);
+#      returns at once when it starts, so the grace only costs time when nothing posts.
+#   2. until timeoutMs: wait for the page to be idle again.
+_POSTBACK_WAIT_JS = """async ({prev, graceMs, timeoutMs, pollMs}) => {
+    const busy = () => {
+        try {
+            if (window.Sys && Sys.WebForms && Sys.WebForms.PageRequestManager) {
+                const prm = Sys.WebForms.PageRequestManager.getInstance();
+                if (prm && prm.get_isInAsyncPostBack()) return true;
+            }
+            const up = document.getElementById('ctl00_ContentPlaceHolder1_updateProgress');
+            if (up && up.style && up.style.display !== 'none' && up.offsetParent !== null) return true;
+            const wd = document.getElementById('waitDiv');
+            if (wd && wd.style && wd.style.visibility === 'visible') return true;
+            return document.readyState === 'loading';
+        } catch (e) { return false; }
+    };
+    const viewstate = () => { const el = document.getElementById('__VIEWSTATE'); return el ? String(el.value || '') : ''; };
+    const sleep = ms => new Promise(r => setTimeout(r, ms));
+    const start = Date.now();
+    while (Date.now() - start < graceMs && !busy() && !(prev !== null && viewstate() !== prev)) await sleep(Math.min(pollMs, 10));
+    while (busy()) {
+        if (Date.now() - start > timeoutMs) return 'timeout';
+        await sleep(pollMs);
+    }
+    return 'idle';
+}"""
+
+
+def wait_for_postback(
+    page: Any,
+    settings: Any = None,
+    *,
+    previous_viewstate: Optional[str] = None,
+    grace_ms: Optional[int] = None,
+    timeout_ms: Optional[int] = None,
+    poll_ms: int = 25,
+) -> bool:
+    """Wait for the postback an action just triggered. False only on timeout."""
     if not page:
         return False
+    from core.timings import timing
+    grace = timing(settings, "bank_postback_start_grace_ms") if grace_ms is None else grace_ms
+    limit = timing(settings, "bank_postback_timeout_ms") if timeout_ms is None else timeout_ms
+    args = {"prev": previous_viewstate, "graceMs": int(max(0, grace)),
+            "timeoutMs": int(max(0, limit)), "pollMs": int(max(5, poll_ms))}
     try:
-        page.wait_for_function(
-            """() => {
-                try {
-                    if (window.Sys && Sys.WebForms && Sys.WebForms.PageRequestManager) {
-                        const prm = Sys.WebForms.PageRequestManager.getInstance();
-                        if (prm && prm.get_isInAsyncPostBack()) return false;
-                    }
-                    const up = document.getElementById('ctl00_ContentPlaceHolder1_updateProgress');
-                    if (up && up.style && up.style.display !== 'none' && up.offsetParent !== null) return false;
-                    const wd = document.getElementById('waitDiv');
-                    if (wd && wd.style && wd.style.visibility === 'visible') return false;
-                    return document.readyState === 'complete' || document.readyState === 'interactive';
-                } catch (e) {
-                    return true;
-                }
-            }""",
-            timeout=timeout_ms,
-        )
-        return True
+        return page.evaluate(_POSTBACK_WAIT_JS, args) != "timeout"
     except Exception:
-        return False
+        # A full (non-async) postback navigates and destroys the evaluate context.
+        try:
+            page.wait_for_load_state("domcontentloaded", timeout=int(max(1000, limit)))
+        except Exception:
+            pass
+        return True
+
+
+def wait_for_aspnet_idle(page: Any, bot: Any = None, timeout_ms: int = 8000) -> bool:
+    """Wait until no postback is running (no start grace)."""
+    del bot
+    return wait_for_postback(page, grace_ms=0, timeout_ms=timeout_ms)
 
 
 def _safe_page3_get_url(page: Any, bot: Any = None) -> Optional[str]:
@@ -139,7 +170,6 @@ def refresh_page3_banks_via_official_reload(
     except Exception:
         return False, "target_closed"
 
-    previous_vs = read_viewstate(page)
     if not disarm_logout_trap(page):
         # Still attempt reload; trap disarm failure is non-fatal on some mocks
         pass
@@ -158,8 +188,9 @@ def refresh_page3_banks_via_official_reload(
     except Exception as exc:
         return False, str(exc)
 
-    wait_for_aspnet_idle(page, bot=bot, timeout_ms=min(timeout_ms, 8000))
-    wait_for_viewstate_change(page, previous_vs, timeout_ms=min(3000, timeout_ms))
+    # reload/goto already returned a fresh document; a GET of the same page can keep
+    # an identical __VIEWSTATE, so waiting for it to change only burned up to 3s per reload.
+    wait_for_aspnet_idle(page, timeout_ms=min(timeout_ms, 8000))
     return True, reason
 
 

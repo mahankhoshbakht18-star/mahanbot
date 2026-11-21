@@ -764,9 +764,17 @@ class BankSelectionBot(BotCore):
                         continue
 
                     if self.consume_recovery_flag("captcha_invalid"):
-                        # No hard stop — keep retrying forever until Stage advances / user stops.
+                        # No hard stop — keep retrying until Stage advances / user stops, but back off
+                        # after a long reject streak instead of hammering the server.
                         self._captcha_retry = 0
-                        retry_delay = max(0.0, float(self.settings.get("captcha_retry_delay", 0.25)))
+                        from core.timings import timing
+                        retry_delay = timing(self.settings, "captcha_retry_delay")
+                        self._step1_captcha_rejects = int(getattr(self, "_step1_captcha_rejects", 0) or 0) + 1
+                        reject_limit = max(1, int(self.settings.get("captcha_reject_backoff_after", 12) or 12))
+                        if self._step1_captcha_rejects >= reject_limit:
+                            self._step1_captcha_rejects = 0
+                            retry_delay = max(retry_delay, float(self.settings.get("captcha_reject_backoff_seconds", 10) or 10))
+                            self.log(f"⚠️ {reject_limit} رد پیاپی کپچا؛ {int(retry_delay)} ثانیه مکث قبل از تلاش مجدد...", "warning", page)
                         if sleep_with_stop(stop_event, retry_delay, step=0.05):
                             break
                         stage_now = self.detect_actual_page_stage(page)
@@ -1304,6 +1312,12 @@ class BankSelectionBot(BotCore):
             self.log(f"دریافت فایل کپچا ناموفق بود؛ استفاده از تصویر مرورگر: {type(exc).__name__}", "warning")
         return super()._capture_captcha_image(captcha_element, "general")
 
+    def _reset_step1_throttle(self) -> None:
+        """Step1 passed: clear SMS-throttle and captcha-reject counters."""
+        self._server_sms_cooldown_until = 0.0
+        self._sms_cooldown_streak = 0
+        self._step1_captcha_rejects = 0
+
     def _solve_primary_captcha_fast(self, page, stop_event) -> bool:
         """
         Solve Step 1 CAPTCHA up to captcha_max_retries times.
@@ -1336,19 +1350,22 @@ class BankSelectionBot(BotCore):
             # Already advanced past Step1 — don't keep hunting NID/captcha here.
             if self._otp_input_visible(page) or self.detect_actual_page_stage(page) in {"STEP_2_OTP", "STEP_3_BANK_SELECT"}:
                 self._page3_hot_reentry = False
+                self._reset_step1_throttle()
                 return True
 
-            # SMS cooldown: never hard-block for 120s. Hot reentry / OTP→Step1 skips it.
+            # SMS cooldown. Hot reentry / OTP→Step1 may drop the local soft cooldown, but a
+            # throttle announced by the server is always honoured: submitting Step1 while it is
+            # active just gets "two minutes" back and loops the captcha forever.
+            server_cooldown = float(getattr(self, "_server_sms_cooldown_until", 0.0) or 0.0)
             if getattr(self, "_skip_sms_cooldown", False) or getattr(self, "_page3_hot_reentry", False):
                 self._sms_cooldown_until = 0.0
                 self._skip_sms_cooldown = False
-            else:
-                sms_cooldown = float(getattr(self, "_sms_cooldown_until", 0.0) or 0.0)
-                if time.time() < sms_cooldown:
-                    wait_rem = min(8, int(sms_cooldown - time.time()) + 1)
-                    self.log(f"⏳ محدودیت ارسال پیامک ({wait_rem}ث کوتاه)؛ سپس حل مجدد کپچا بدون توقف طولانی...", "info", page)
-                    if sleep_with_stop(stop_event, wait_rem, step=0.5):
-                        return False
+            sms_cooldown = max(server_cooldown, float(getattr(self, "_sms_cooldown_until", 0.0) or 0.0))
+            if time.time() < sms_cooldown:
+                wait_rem = int(sms_cooldown - time.time()) + 1
+                self.log(f"⏳ محدودیت ارسال پیامک سامانه؛ {wait_rem} ثانیه صبر و سپس حل کپچا (جلوگیری از حلقه بی‌پایان کپچا)...", "info", page)
+                if sleep_with_stop(stop_event, wait_rem, step=0.5):
+                    return False
 
             # Fill NID BEFORE captcha wait/refresh — BotDetect reload can wipe the field.
             if not self._ensure_nid_after_reload(page):
@@ -1410,16 +1427,19 @@ class BankSelectionBot(BotCore):
                     stop_event=stop_event,
                     step="STEP_1_ENTRY_FORM",
                 )
-                submitted = bool(solved.filled and solved.submitted)
-                if not submitted:
-                    if solved.filled:
-                        self.log("کپچا پر شد ولی دکمه ورود پست‌بک نساخت.", "warning", page)
-                    else:
-                        self.log(
-                            f"کپچای انتخاب بانک خوانا نبود (تلاش {attempts}/{max_auto})؛ تصویر تازه گرفته می‌شود.",
-                            "warning",
-                            page,
-                        )
+                if not solved.filled:
+                    self.log(
+                        f"کپچای انتخاب بانک خوانا نبود (تلاش {attempts}/{max_auto})؛ تصویر تازه گرفته می‌شود.",
+                        "warning",
+                        page,
+                    )
+                    self._ensure_nid_after_reload(page)
+                    if sleep_with_stop(stop_event, 0.4):
+                        return False
+                    continue
+
+                if not solved.submitted:
+                    self.log("دکمه ورود پست‌بک نساخت.", "warning", page)
                     self._ensure_nid_after_reload(page)
                     if sleep_with_stop(stop_event, 0.4):
                         return False
@@ -1429,23 +1449,24 @@ class BankSelectionBot(BotCore):
                 self._ensure_nid_after_reload(page)
                 continue
 
-            # Wait for ASP.NET postback / AJAX update to complete
-            if hasattr(self, "wait_for_aspnet_postback"):
-                self.wait_for_aspnet_postback(page, timeout_ms=3000)
-
-            # Stay on this submit until the server answers. A new solve during the postback clears the national id.
+            # Stay on this submit until a definitive answer (alert, tbMobileConfCode, or postback complete). Ceiling ~8 seconds.
             transitioned = False
-            for _ in range(60):
+            for step_i in range(80):
                 if stop_event.is_set():
                     return False
-                if self._otp_input_visible(page) or self.detect_actual_page_stage(page) in {"STEP_2_OTP", "STEP_3_BANK_SELECT"}:
+                if self.consume_recovery_flag("captcha_invalid") or self._detect_captcha_failure(page):
+                    break
+                tb_otp = page.locator("#ctl00_ContentPlaceHolder1_tbMobileConfCode, input[name$='tbMobileConfCode']")
+                tb_otp_visible = False
+                try:
+                    tb_otp_visible = tb_otp.count() > 0 and tb_otp.first.is_visible()
+                except Exception:
+                    pass
+                if tb_otp_visible or self._otp_input_visible(page) or self.detect_actual_page_stage(page) in {"STEP_2_OTP", "STEP_3_BANK_SELECT"}:
                     transitioned = True
                     self._page3_hot_reentry = False
                     break
-                if self.consume_recovery_flag("captcha_invalid") or self._detect_captcha_failure(page):
-                    break
                 if self.consume_recovery_flag("sms_cooldown") or getattr(self, "_last_dialog_action", None) == "sms_cooldown":
-                    # Cooldown dialog after a good captcha: keep trying soon, do not abort loop for 120s
                     self._last_dialog_action = None
                     break
                 try:
@@ -1463,6 +1484,7 @@ class BankSelectionBot(BotCore):
 
             if transitioned:
                 self.clear_otp_locks()
+                self._reset_step1_throttle()
                 return True
 
             # Server already replaced a wrong image. Read that image again; do not click reload.

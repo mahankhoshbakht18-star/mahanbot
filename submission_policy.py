@@ -23,7 +23,8 @@ def submission_policy(config, applicant):
     enabled = applicant.get('auto_final_submit')
     if not isinstance(enabled, bool):
         enabled = bool(config.get('auto_final_submit', config.get('final_submit', False)))
-    inherited = config.get('bank_capacity_check_interval', config.get('bank_capacity_recheck_seconds', 20))
+    from core.timings import timing
+    inherited = timing(config, 'bank_capacity_check_interval')
     value = applicant.get('final_submit_interval_seconds')
     try:
         interval = float(inherited if value is None else value)

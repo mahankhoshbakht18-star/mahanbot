@@ -16,6 +16,7 @@ except ImportError:  # pragma: no cover - sync wrapper when aiosqlite is unavail
     AIOSQLITE_AVAILABLE = False
 
 from database import DBHandler, DB_PATH
+from core.persian_normalizer import to_ascii_digits
 
 
 # ── NID & Postal Code normalization ──────────────────────────────────
@@ -25,8 +26,7 @@ def _normalize_nid(value: Optional[str]) -> str:
     s = str(value).strip()
     if not s:
         return ""
-    trans = str.maketrans("۰۱۲۳۴۵۶۷۸۹٠١٢٣٤٥٦٧٨٩", "01234567890123456789")
-    s = s.translate(trans)
+    s = to_ascii_digits(s)
     s = s.replace("-", "").replace(" ", "")
     if s.endswith(".0") and s[:-2].isdigit():
         s = s[:-2]
@@ -42,8 +42,7 @@ def normalize_postal_code(value: Optional[Any]) -> str:
     s = str(value).strip()
     if not s:
         return ""
-    trans = str.maketrans("۰۱۲۳۴۵۶۷۸۹٠١٢٣٤٥٦٧٨٩", "01234567890123456789")
-    s = s.translate(trans).replace("-", "").replace(" ", "")
+    s = to_ascii_digits(s).replace("-", "").replace(" ", "")
     if s.endswith(".0") and s[:-2].isdigit():
         s = s[:-2]
     if s.isdigit() and 0 < len(s) < 10:
@@ -58,8 +57,7 @@ def normalize_mobile(value: Optional[Any]) -> str:
     s = str(value).strip()
     if not s:
         return ""
-    trans = str.maketrans("۰۱۲۳۴۵۶۷۸۹٠١٢٣٤٥٦٧٨٩", "01234567890123456789")
-    s = s.translate(trans).replace("-", "").replace(" ", "")
+    s = to_ascii_digits(s).replace("-", "").replace(" ", "")
     if s.endswith(".0") and s[:-2].isdigit():
         s = s[:-2]
     if s.startswith("+98"):

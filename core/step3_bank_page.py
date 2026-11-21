@@ -50,43 +50,9 @@ class Step3BankPage:
             return False
 
     def wait_for_update_panel(self, page, timeout_ms: int = 4000) -> bool:
-        """
-        Wait until Sys.WebForms.PageRequestManager finishes async postback
-        and updateProgress indicator is hidden.
-        """
-        script = f"""() => {{
-            return new Promise((resolve) => {{
-                const start = Date.now();
-                const check = () => {{
-                    try {{
-                        const prm = (window.Sys && window.Sys.WebForms && window.Sys.WebForms.PageRequestManager)
-                            ? window.Sys.WebForms.PageRequestManager.getInstance()
-                            : null;
-                        const inPostBack = prm ? prm.get_isInAsyncPostBack() : false;
-                        const prog = document.querySelector('{self.PROGRESS_SELECTOR}');
-                        const progVisible = prog ? (prog.style.display !== 'none' && prog.offsetParent !== null) : false;
-                        if (!inPostBack && !progVisible) {{
-                            return resolve(true);
-                        }}
-                    }} catch (e) {{
-                        return resolve(true);
-                    }}
-                    if (Date.now() - start > {timeout_ms}) {{
-                        return resolve(false);
-                    }}
-                    setTimeout(check, 50);
-                }};
-                check();
-            }});
-        }}"""
-        try:
-            return bool(page.evaluate(script))
-        except Exception:
-            try:
-                page.wait_for_timeout(400)
-            except Exception:
-                pass
-            return True
+        """Wait until the UpdatePanel postback finished (core.aspnet_postback)."""
+        from core.aspnet_postback import wait_for_aspnet_idle
+        return wait_for_aspnet_idle(page, timeout_ms=timeout_ms)
 
     def ensure_city_selected(self, page, target_city: str) -> bool:
         """

@@ -62,7 +62,6 @@ class SettingsRequest(BaseModel):
     loan_browser_maximized: Optional[bool] = None
     loan_browser_always_on_top: Optional[bool] = None
     otp_receive_timeout: Optional[int] = None
-    captcha_delay: Optional[float] = None
     retry_count: Optional[int] = None
     headless: Optional[bool] = None
     browser_headless: Optional[bool] = None
@@ -86,7 +85,6 @@ class SettingsRequest(BaseModel):
     default_timeout_ms: Optional[int] = None
     navigation_timeout_ms: Optional[int] = None
     retry_delay: Optional[float] = None
-    captcha_poll_interval: Optional[float] = None
     captcha_retry_delay: Optional[float] = None
     captcha_max_retries: Optional[int] = None
     captcha_manual_timeout: Optional[int] = None

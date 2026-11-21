@@ -14,6 +14,7 @@ from database import DBHandler
 from core.state import AUTH_SESSIONS, AUTH_COOKIE, STATIC_DIR
 from core.deps import _current_user, _admin_user
 from core.sms_gateway import get_sms_gateway, normalize_mobile, mask_mobile
+from core.persian_normalizer import to_ascii_digits
 from core.models import (
     LoginRequest,
     SubscriptionUserRequest,
@@ -29,17 +30,7 @@ router = APIRouter()
 
 
 def _normalize_digits(s: str) -> str:
-    fa_digits = "۰۱۲۳۴۵۶۷۸۹"
-    ar_digits = "٠١٢٣٤٥٦٧٨٩"
-    res = []
-    for ch in str(s or ""):
-        if ch in fa_digits:
-            res.append(str(fa_digits.index(ch)))
-        elif ch in ar_digits:
-            res.append(str(ar_digits.index(ch)))
-        else:
-            res.append(ch)
-    return "".join(res).strip()
+    return to_ascii_digits(s).strip()
 
 
 def _issue_auth_session(user: Dict[str, Any]) -> JSONResponse:

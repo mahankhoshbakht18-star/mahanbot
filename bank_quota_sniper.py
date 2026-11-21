@@ -119,6 +119,8 @@ def submit_quota_attempt(bot, page, stop_event, *, timeout=10, blocked=lambda: F
         if not DBHandler.claim_final_submission(bot.nid):
             return 'submit_rejected'
         page.click('#ctl00_ContentPlaceHolder1_btnSave', timeout=5000, no_wait_after=True)
+        from core.timings import timing
+        poll_ms = timing(getattr(bot, 'settings', None), 'final_submit_poll_ms')
         deadline = time.monotonic() + max(.05, timeout)
         while True:
             if stop_event.is_set():
@@ -170,7 +172,7 @@ def submit_quota_attempt(bot, page, stop_event, *, timeout=10, blocked=lambda: F
                 bot.emit_event('FINAL_SUBMIT_UNCONFIRMED', step='FINAL_SUBMIT', reason='quota_result_unknown',
                                result='awaiting_result', message='نتیجه درخواست روشن نیست؛ وضعیت پاسخ و صفحه بررسی می‌شود.', level='warning', page=page)
                 return 'submit_rejected'
-            page.wait_for_timeout(50)
+            page.wait_for_timeout(poll_ms)
     except Exception as exc:
         bot.emit_event('FINAL_SUBMIT_UNCONFIRMED', step='FINAL_SUBMIT', reason=type(exc).__name__,
                        result='awaiting_result', message='پاسخ ثبت درخواست تایید نشد؛ وضعیت پاسخ و صفحه بررسی می‌شود.', level='warning')

@@ -7,10 +7,11 @@ from email.utils import parsedate_to_datetime
 
 import requests
 from database import DBHandler
+from core.persian_normalizer import to_ascii_digits
 
 
 def normalized_code(value):
-    return str(value or "").translate(str.maketrans("۰۱۲۳۴۵۶۷۸۹٠١٢٣٤٥٦٧٨٩", "01234567890123456789")).strip()
+    return to_ascii_digits(value).strip()
 
 
 def invalidate_otp(bot, status='expired'):
@@ -85,6 +86,12 @@ def poll_once(bot, stop_event=None, timeout=1):
     code = fresh_record(bot, local)
     if code:
         return code
+    return poll_remote(bot, stop_event, timeout, include_local_server=True)
+
+
+def poll_remote(bot, stop_event=None, timeout=1, include_local_server=False):
+    """Relay / remote OTP API only. A code found is written to the local DB,
+    which wakes the waiting bot thread through otp_signal."""
     from relay_transport import config as relay_config, poll as relay_poll
     if relay_config():
         remote = relay_poll(bot, timeout)
@@ -110,6 +117,9 @@ def poll_once(bot, stop_event=None, timeout=1):
     slice_seconds = max(1, min(int(timeout), 2))
     # Manual codes are already read from SQLite. Query the configured Android relay first.
     endpoints = [bot.local_api_base] if relay_config() else list(dict.fromkeys((bot.api_base_url, bot.local_api_base)))
+    if not include_local_server:
+        # The local server writes the same SQLite DB the bot reads, so asking it over HTTP adds nothing.
+        endpoints = [base for base in endpoints if base != bot.local_api_base]
     for base in endpoints:
         if stop_event is not None and stop_event.is_set():
             return None
@@ -148,3 +158,61 @@ def poll_once(bot, stop_event=None, timeout=1):
         except (ValueError, TypeError, KeyError):
             DBHandler.update_runtime(bot.nid, otp_transport_error="invalid_json_or_timestamp")
     return None
+
+
+class RemoteOtpFetcher:
+    """Polls relay/remote OTP sources on its own thread while a bot waits for SMS.
+
+    The bot's OTP loop then only reads the local DB and waits on otp_signal, so a
+    slow network call never delays a code that already arrived."""
+
+    def __init__(self, bot, stop_event=None):
+        import threading
+        self.bot = bot
+        self.stop_event = stop_event
+        self._done = threading.Event()
+        self._thread = None
+
+    def needed(self):
+        from relay_transport import config as relay_config
+        local = getattr(self.bot, "local_api_base", None)
+        remote = getattr(self.bot, "api_base_url", None)
+        return bool(relay_config()) or bool(remote and remote != local)
+
+    def start(self):
+        import threading
+        if not self.needed():
+            return self
+        self.bot._otp_fetcher = self
+        self._thread = threading.Thread(target=self._run, name=f"otp-fetch-{self.bot.nid}", daemon=True)
+        self._thread.start()
+        return self
+
+    def _stopped(self):
+        return self._done.is_set() or (self.stop_event is not None and self.stop_event.is_set())
+
+    def _run(self):
+        from core.timings import timing
+        try:
+            while not self._stopped():
+                started = time.monotonic()
+                try:
+                    poll_remote(self.bot, self.stop_event, timeout=2)
+                except Exception:
+                    pass
+                interval = timing(getattr(self.bot, "settings", None), "otp_remote_poll_interval_sec")
+                self._done.wait(max(0.0, interval - (time.monotonic() - started)))
+        finally:
+            self._release()
+
+    def _release(self):
+        if getattr(self.bot, "_otp_fetcher", None) is self:
+            self.bot._otp_fetcher = None
+
+    def stop(self):
+        self._done.set()
+        self._release()
+
+
+def remote_fetcher_running(bot):
+    return isinstance(getattr(bot, "_otp_fetcher", None), RemoteOtpFetcher)

@@ -9,6 +9,7 @@ import re
 import urllib.request
 import urllib.parse
 from typing import Dict, Any, Tuple, Optional
+from core.persian_normalizer import to_ascii_digits
 
 logger = logging.getLogger("mahanbot.auth.sms")
 
@@ -24,17 +25,7 @@ def normalize_mobile(mobile: str) -> Optional[str]:
     """Validate and normalize an Iranian mobile number to 09XXXXXXXXX format."""
     digits = str(mobile or "").strip()
     # Normalize Persian / Arabic digits
-    fa_digits = "۰۱۲۳۴۵۶۷۸۹"
-    ar_digits = "٠١٢٣٤٥٦٧٨٩"
-    cleaned = []
-    for ch in digits:
-        if ch in fa_digits:
-            cleaned.append(str(fa_digits.index(ch)))
-        elif ch in ar_digits:
-            cleaned.append(str(ar_digits.index(ch)))
-        elif ch.isdigit() or ch == "+":
-            cleaned.append(ch)
-    num = "".join(cleaned)
+    num = "".join(ch for ch in to_ascii_digits(digits) if ch.isascii() and (ch.isdigit() or ch == "+"))
     if num.startswith("+98"):
         num = "0" + num[3:]
     elif num.startswith("0098"):

@@ -184,12 +184,13 @@ def detect_otp_form(page, timeout_ms=0):
     return UnifiedOTPFormDetector().detect(page, timeout_ms)
 
 
-def fill_otp_form(page, code):
+def fill_otp_form(page, code, form=None):
     from otp_transport import normalized_code
     code = normalized_code(code)
     if not re.fullmatch(r'[0-9]{4,8}', code):
         return False
-    form = detect_otp_form(page, timeout_ms=1500)
+    if form is None or not form.fields:
+        form = detect_otp_form(page, timeout_ms=1500)
     control = form.resolve('otp')
     if control is None:
         return False

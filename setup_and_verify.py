@@ -56,9 +56,9 @@ def run_checks() -> bool:
         size_mb = os.path.getsize(model_path) / (1024 * 1024)
         print_status("فایل مدل عصبی کپچا (my_captcha_model.pth)", True, f"{size_mb:.1f} مگابایت")
         try:
-            from core.pure_crnn_solver import PureCRNNSolver
-            solver = PureCRNNSolver.get_instance(model_path)
-            print_status("بارگذاری وزن‌های شبکه CRNN بدون ddddocr", solver.model is not None, "OK")
+            from captcha_engine import CaptchaModel
+            model = CaptchaModel.shared().load()
+            print_status("بارگذاری وزن‌های شبکه CRNN بدون ddddocr", model is not None, "OK")
         except Exception as e:
             print_status("بارگذاری وزن‌های شبکه CRNN", False, str(e))
             all_ok = False

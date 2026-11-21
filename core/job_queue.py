@@ -476,7 +476,7 @@ class JobQueue:
 
 # ── Lazy captcha-service accessor ────────────────────────────────────
 def _get_captcha_service():
-    from captcha_service import CaptchaService
+    from api_solver import CaptchaService
     from core.state import CAPTCHA_SERVICE
     if CAPTCHA_SERVICE is None:
         return CaptchaService()

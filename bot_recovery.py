@@ -262,18 +262,7 @@ class RecoveryBot(BotCore):
         return True
 
     def _extract_tracking_code(self, page) -> Optional[str]:
-        def _normalize_digits(s: str) -> str:
-            fa_digits = "۰۱۲۳۴۵۶۷۸۹"
-            ar_digits = "٠١٢٣٤٥٦٧٨٩"
-            res = []
-            for ch in s:
-                if ch in fa_digits:
-                    res.append(str(fa_digits.index(ch)))
-                elif ch in ar_digits:
-                    res.append(str(ar_digits.index(ch)))
-                else:
-                    res.append(ch)
-            return "".join(res)
+        from core.persian_normalizer import to_ascii_digits as _normalize_digits
 
         selectors = [
             "#ctl00_ContentPlaceHolder1_lblTrackingCode",

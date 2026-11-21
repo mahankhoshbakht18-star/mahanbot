@@ -146,7 +146,7 @@ def refresh_captcha_or_reload(bot, page, input_sel="#ctl00_ContentPlaceHolder1_t
             continue
     if image is None:
         return False
-    ok = refresh_captcha(page, image, reload)
+    ok = refresh_captcha(page, image, reload, getattr(bot, 'settings', None))
     for selector in (input_sel, "input[id*='tbCaptcha' i]"):
         try:
             field = page.locator(selector)
