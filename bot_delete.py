@@ -32,18 +32,14 @@ class DeleteRequestBot(BotCore):
     def run(self, stop_event) -> bool:
         self._active_stop_event = stop_event
 
-        # 1. Verify tracking code existence first
         data = self.user_data or {}
         tracking_code = str(data.get("tracking_code") or "").strip()
         if not tracking_code or tracking_code == "-":
             cp = DBHandler.get_checkpoint(self.nid) or {}
             tracking_code = str(cp.get("tracking_code") or "").strip()
-
         if not tracking_code or tracking_code == "-":
-            msg = "کد رهگیری برای متقاضی یافت نشد. برای حذف از سامانه مرکزی داشتن کد رهگیری الزامی است؛ ابتدا بازیابی کنید."
-            self.log(msg, "error")
-            DBHandler.update_status(self.nid, "Stopped", msg)
-            return False
+            tracking_code = ""
+            self.log("کد رهگیری در پرونده نیست؛ حذف فقط با کد ملی در سامانه مرکزی ادامه پیدا می‌کند.", "info")
 
         if not (self.settings.get("delete_approved") is True and self.settings.get("delete_confirmed_by")):
             self.log("حذف ثبت‌نام بدون تأیید صریح مدیر مجاز آغاز نمی‌شود.", "error")
@@ -176,7 +172,7 @@ class DeleteRequestBot(BotCore):
 
         # Fill Tracking Code
         track_input = self._first_visible_locator(page, ["#ctl00_ContentPlaceHolder1_tbTraceCD", "input[name*='tbTraceCD']", "input[name*='TraceCD']"])
-        if track_input:
+        if track_input and tracking_code:
             BrowserActions.human_fill(track_input, tracking_code)
 
         # Fill Mobile (if present on form)
@@ -184,7 +180,10 @@ class DeleteRequestBot(BotCore):
         if mob_input and mobile:
             BrowserActions.human_fill(mob_input, mobile)
 
-        self.log(f"فرم حذف درخواست با کد ملی و کد رهگیری {self._mask(tracking_code)} تکمیل شد.", "info", page)
+        if tracking_code:
+            self.log(f"فرم حذف درخواست با کد ملی و کد رهگیری {self._mask(tracking_code)} تکمیل شد.", "info", page)
+        else:
+            self.log("فرم حذف درخواست فقط با کد ملی تکمیل شد.", "info", page)
 
     def _refresh_captcha(self, page):
         reload_btn = self._first_visible_locator(page, [".BDC_ReloadLink", "a[title*='کد جدید']"])

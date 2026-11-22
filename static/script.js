@@ -4858,14 +4858,10 @@ function renderDeleteReqList(data) {
         const hasCode = code && code !== '-';
         const codeDisplay = hasCode
             ? `<span class="badge bg-success-subtle text-success fw-bold px-2 py-1 font-monospace">${escapeHtml(code)}</span>`
-            : `<span class="badge bg-danger-subtle text-danger fw-semibold">فاقد کد (الزامی)</span>`;
+            : `<span class="badge bg-secondary-subtle text-secondary fw-semibold">فاقد کد رهگیری</span>`;
 
-        const deleteButton = hasCode
-            ? `<button class="btn btn-sm btn-outline-danger rounded-pill px-3" onclick="actionDeleteReq('${user.national_id}')">
+        const deleteButton = `<button class="btn btn-sm btn-outline-danger rounded-pill px-3" onclick="actionDeleteReq('${user.national_id}')">
                    <i class="fa-solid fa-trash-can me-1"></i>حذف از سامانه مرکزی
-               </button>`
-            : `<button class="btn btn-sm btn-outline-secondary rounded-pill px-3" disabled title="برای حذف در سامانه ve.cbi.ir، کد رهگیری الزامی است. ابتدا بازیابی کنید.">
-                   <i class="fa-solid fa-ban me-1"></i>نیازمند کد رهگیری
                </button>`;
 
         tbody.innerHTML += `

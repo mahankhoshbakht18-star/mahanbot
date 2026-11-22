@@ -59,6 +59,9 @@ class TelegramNotifierService:
         self._stop_event = threading.Event()
         self._last_send_ts = 0.0
         self._min_send_interval = 0.04  # ~25 messages/sec max rate limit
+        self._good_proxy = ""
+        self._proxy_scan_at = 0.0
+        self._proxy_scan: List[str] = []
 
     DEFAULT_BOT_TOKEN = "8988974593:AAHnlt1ZVf5WAMFm59fbLtenxppF9aHM_Fc"
     # Prefer public @username — numeric IDs go stale when channel is recreated.
@@ -140,32 +143,206 @@ class TelegramNotifierService:
         return bool(cfg.get("telegram_notifications_enabled", True))
 
     @staticmethod
-    def _detect_effective_proxy() -> Optional[str]:
-        """Detect configured or active local proxy."""
+    def _configured_proxy_only() -> str:
+        """Explicit Telegram proxy only. Never inherit a system VPN proxy."""
         cfg = DBHandler.get_config()
-        configured = (
-            cfg.get("telegram_proxy")
-            or os.environ.get("TELEGRAM_PROXY")
-            or os.environ.get("HTTPS_PROXY")
-            or os.environ.get("HTTP_PROXY")
-            or os.environ.get("ALL_PROXY")
-        )
-        if configured:
-            return str(configured).strip()
-        
-        # Check standard local proxy ports (V2Ray, Clash, Nekoray, etc.)
+        configured = cfg.get("telegram_proxy") or os.environ.get("TELEGRAM_PROXY") or ""
+        return str(configured).strip()
+
+    @staticmethod
+    def _looks_like_network_error(detail: str) -> bool:
+        text = str(detail or "").lower()
+        return any(token in text for token in ("proxy", "timed out", "timeout", "connection", "refused", "unreachable"))
+
+    @classmethod
+    def _resolve_channel_target(cls, chat_id: str) -> str:
+        """The old numeric channel id is dead. Tests and posts go to @Mahanvpn3."""
+        cid = str(chat_id or "").strip()
+        if not cid or cid == "-1003720759140":
+            return cls.get_channel_id()
+        return cid
+
+    @staticmethod
+    def _expand_proxy(raw: str) -> List[str]:
+        text = str(raw or "").strip()
+        if not text:
+            return []
+        if "://" not in text:
+            return [f"socks5h://{text}", f"http://{text}"]
+        if text.startswith("socks5://"):
+            return ["socks5h://" + text[len("socks5://"):]]
+        if text.startswith("socks://"):
+            return ["socks5h://" + text[len("socks://"):]]
+        return [text]
+
+    def _local_proxy_candidates(self) -> List[str]:
+        """Open local inbounds only. The browser to ve.cbi.ir stays direct."""
+        now = time.time()
+        if now - self._proxy_scan_at < 15:
+            return list(self._proxy_scan)
         import socket
-        for p in [10809, 20811, 7890, 8080, 8889, 10808]:
+        endpoints = (
+            (10808, "socks5h"),
+            (10809, "http"),
+            (1080, "socks5h"),
+            (7890, "http"),
+            (7891, "socks5h"),
+            (2080, "socks5h"),
+            (2081, "http"),
+            (20170, "socks5h"),
+            (20171, "http"),
+            (9050, "socks5h"),
+        )
+        found: List[str] = []
+        for port, scheme in endpoints:
+            sock = socket.socket()
+            sock.settimeout(0.15)
             try:
-                s = socket.socket()
-                s.settimeout(0.15)
-                if s.connect_ex(("127.0.0.1", p)) == 0:
-                    s.close()
-                    return f"http://127.0.0.1:{p}"
-                s.close()
+                if sock.connect_ex(("127.0.0.1", port)) == 0:
+                    found.append(f"{scheme}://127.0.0.1:{port}")
             except Exception:
                 pass
-        return None
+            finally:
+                sock.close()
+        self._proxy_scan = found
+        self._proxy_scan_at = now
+        return found
+
+    def _proxy_candidates(self) -> List[str]:
+        local = ""
+        try:
+            from core.telegram_local_proxy import ensure_telegram_proxy
+            local = ensure_telegram_proxy(self.get_token())
+        except Exception as exc:
+            logger.warning("telegram local proxy skipped: %s", exc)
+        ordered: List[str] = []
+        for item in [self._good_proxy, local, *self._expand_proxy(self._configured_proxy_only()), *self._local_proxy_candidates()]:
+            if item and item not in ordered:
+                ordered.append(item)
+        return ordered
+
+    def _public_error(self, detail: str) -> str:
+        text = str(detail or "")
+        try:
+            token = self.get_token()
+        except Exception:
+            token = ""
+        if token and token in text:
+            text = text.replace(token, "***")
+        import re
+        text = re.sub(r"/bot[0-9]+:[A-Za-z0-9_-]+", "/bot***", text)
+        low = text.lower()
+        if any(key in low for key in ("10061", "timed out", "timeout", "refused", "newconnection", "telegram_dns", "telegram_direct", "failed to establish", "getaddrinfo")):
+            return (
+                "تلگرام از این خط مستقیم باز نمی‌شود و DNS آن را به آی‌پی داخلی می‌برد. "
+                "وی‌پی‌ان سراسری را روشن نکن تا سامانه ازدواج باز بماند. "
+                "Happ را در حالت پروکسی محلی و بدون تونل روشن کن، یا در فیلد پروکسی بنویس socks5://127.0.0.1:10808"
+            )
+        return (text[:240] or "ارسال تلگرام ناموفق بود.")
+
+    @staticmethod
+    def _resolve_telegram_ips() -> List[str]:
+        """Ask 8.8.8.8 directly. The system resolver answers 10.10.34.35 for api.telegram.org."""
+        import random
+        import socket
+        import struct
+        packet = struct.pack(">HHHHHH", random.randint(0, 65535), 0x0100, 1, 0, 0, 0)
+        for part in "api.telegram.org".split("."):
+            packet += bytes([len(part)]) + part.encode()
+        packet += b"\x00" + struct.pack(">HH", 1, 1)
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        sock.settimeout(2)
+        try:
+            sock.sendto(packet, ("8.8.8.8", 53))
+            data, _ = sock.recvfrom(2048)
+        except Exception:
+            return []
+        finally:
+            sock.close()
+        if len(data) < 12:
+            return []
+        qdcount, ancount = struct.unpack_from(">HH", data, 4)
+
+        def skip_name(pos: int) -> int:
+            while pos < len(data):
+                size = data[pos]
+                if size == 0:
+                    return pos + 1
+                if size & 0xC0 == 0xC0:
+                    return pos + 2
+                pos += 1 + size
+            return pos
+
+        index = 12
+        for _ in range(qdcount):
+            index = skip_name(index) + 4
+        ips: List[str] = []
+        for _ in range(ancount):
+            index = skip_name(index)
+            if index + 10 > len(data):
+                break
+            typ, _cls, _ttl, rdlen = struct.unpack_from(">HHIH", data, index)
+            index += 10
+            rdata = data[index:index + rdlen]
+            index += rdlen
+            if typ == 1 and len(rdata) == 4:
+                ip = ".".join(str(part) for part in rdata)
+                if not ip.startswith(("10.", "127.", "0.", "192.168.")):
+                    ips.append(ip)
+        return ips
+
+    def _post_requests(self, url: str, payload: Dict[str, Any], proxy: str, timeout: float) -> Tuple[int, Dict[str, Any]]:
+        import requests
+        session = requests.Session()
+        session.trust_env = False
+        proxies = {"http": proxy, "https": proxy} if proxy else None
+        resp = session.post(url, json=payload, proxies=proxies, timeout=timeout)
+        try:
+            data = resp.json()
+        except Exception:
+            data = {}
+        return resp.status_code, data if isinstance(data, dict) else {}
+
+    def _post_pinned(self, path: str, body: bytes, timeout: float) -> Tuple[int, Dict[str, Any]]:
+        import http.client
+        import socket
+        import ssl
+        ips = self._resolve_telegram_ips()
+        if not ips:
+            raise OSError("telegram_dns_blocked")
+
+        class _Pin(http.client.HTTPSConnection):
+            def connect(self):
+                raw = socket.create_connection((self._ip, 443), self.timeout)
+                self.sock = self._context.wrap_socket(raw, server_hostname="api.telegram.org")
+
+        last: Optional[Exception] = None
+        for ip in ips[:3]:
+            conn = _Pin("api.telegram.org", timeout=timeout, context=ssl.create_default_context())
+            conn._ip = ip
+            try:
+                conn.request(
+                    "POST",
+                    path,
+                    body=body,
+                    headers={
+                        "Host": "api.telegram.org",
+                        "Content-Type": "application/json; charset=utf-8",
+                        "Connection": "close",
+                    },
+                )
+                resp = conn.getresponse()
+                raw = resp.read()
+                try:
+                    data = json.loads(raw.decode("utf-8"))
+                except Exception:
+                    data = {}
+                return resp.status, data if isinstance(data, dict) else {}
+            except Exception as exc:
+                last = exc
+            finally:
+                conn.close()
+        raise last or OSError("telegram_direct_failed")
 
     @staticmethod
     def _telegram_ok_detail(data: Dict[str, Any], prefix: str = "OK") -> Tuple[bool, str]:
@@ -200,7 +377,7 @@ class TelegramNotifierService:
         if not token:
             return False, "توکن ربات تلگرام تنظیم نشده است."
 
-        clean_cid = str(chat_id).strip()
+        clean_cid = self._resolve_channel_target(chat_id)
         if not clean_cid:
             return False, "شناسه چت (chat_id) نامعتبر است."
 
@@ -228,69 +405,44 @@ class TelegramNotifierService:
                 time.sleep(self._min_send_interval - elapsed)
             self._last_send_ts = time.time()
 
-        proxy = self._detect_effective_proxy()
-        last_err = "unknown"
-
-        # Try with requests first (better proxy and error handling)
-        try:
-            import requests
-            proxies_dict = {"http": proxy, "https": proxy} if proxy else None
-            resp = requests.post(url, json=payload, proxies=proxies_dict, timeout=12)
+        path = f"/bot{token}/sendMessage"
+        body = json.dumps(payload).encode("utf-8")
+        last_err = ""
+        attempts: List[Tuple[str, float]] = [(item, 10) for item in self._proxy_candidates()]
+        attempts.append(("", 5))
+        for proxy, timeout in attempts:
             try:
-                data = resp.json()
-            except Exception:
-                data = {}
-            if resp.status_code == 200:
-                ok, detail = self._telegram_ok_detail(data, "OK")
-                if ok:
-                    return True, detail
-                last_err = detail
-            else:
-                last_err = data.get("description", f"HTTP {resp.status_code}")
-        except Exception as req_err:
-            last_err = str(req_err)
-
-        # Fallback to urllib if requests failed / incomplete
-        try:
-            req_data = json.dumps(payload).encode("utf-8")
-            req = urllib.request.Request(
-                url,
-                data=req_data,
-                headers={"Content-Type": "application/json; charset=utf-8"},
-                method="POST",
-            )
-            if proxy:
-                proxy_handler = urllib.request.ProxyHandler({"http": proxy, "https": proxy})
-                opener = urllib.request.build_opener(proxy_handler)
-            else:
-                opener = urllib.request.build_opener()
-
-            with opener.open(req, timeout=12) as response:
-                resp_bytes = response.read()
-                resp_json = json.loads(resp_bytes.decode("utf-8"))
-                ok, detail = self._telegram_ok_detail(resp_json, "OK")
-                if ok:
-                    return True, detail
-                last_err = detail
-        except Exception as e:
-            last_err = str(e)
-
-        # Last resort: plain text without parse_mode (HTML entity issues won't silently "succeed")
-        try:
-            import requests
-            plain_payload = dict(payload)
-            plain_payload.pop("parse_mode", None)
-            proxies_dict = {"http": proxy, "https": proxy} if proxy else None
-            resp = requests.post(url, json=plain_payload, proxies=proxies_dict, timeout=12)
-            data = resp.json() if resp.content else {}
-            ok, detail = self._telegram_ok_detail(data, "OK(plain)")
-            if ok:
-                return True, detail
-            last_err = detail if detail else last_err
-        except Exception as plain_err:
-            last_err = f"{last_err} | plain:{plain_err}"
-
-        return False, last_err
+                if proxy:
+                    status, data = self._post_requests(url, payload, proxy, timeout)
+                    prefix = "OK"
+                else:
+                    status, data = self._post_pinned(path, body, timeout)
+                    prefix = "OK(direct)"
+                if status != 200 and "parse" in str((data or {}).get("description") or "").lower() and payload.get("parse_mode"):
+                    plain = dict(payload)
+                    plain.pop("parse_mode", None)
+                    if proxy:
+                        status, data = self._post_requests(url, plain, proxy, timeout)
+                    else:
+                        status, data = self._post_pinned(path, json.dumps(plain).encode("utf-8"), timeout)
+                    prefix = "OK(plain)"
+                if status == 200:
+                    ok, detail = self._telegram_ok_detail(data, prefix)
+                    if ok:
+                        if proxy:
+                            self._good_proxy = proxy
+                        return True, detail + (f" via {proxy}" if proxy else "")
+                    last_err = detail
+                else:
+                    last_err = str((data or {}).get("description") or f"HTTP {status}")
+                if proxy and not self._looks_like_network_error(last_err):
+                    self._good_proxy = proxy
+                    return False, self._public_error(last_err)
+            except Exception as exc:
+                last_err = str(exc)
+                if proxy and proxy == self._good_proxy:
+                    self._good_proxy = ""
+        return False, self._public_error(last_err)
 
     # ── MESSAGE BUILDERS (Persian Formatting / Phase 6) ───────────────
     @staticmethod
@@ -305,6 +457,8 @@ class TelegramNotifierService:
         visit_method: str = "all",
     ) -> str:
         """Format capacity state change alert with emojis and disclaimers."""
+        from core.bank_matcher import bank_identity
+        _, bank_title, bank_emoji = bank_identity(bank_name)
         status_map = {
             "AVAILABLE_OBSERVED": "🟢 دارای ظرفیت ثبت‌نام (مشاهده‌شده)",
             "AVAILABLE_CONFIRMED": "🟢 دارای ظرفیت قطعی",
@@ -324,7 +478,7 @@ class TelegramNotifierService:
             f"🔔 <b>تغییر وضعیت ظرفیت بانک‌ها | رادار MAHANBOT</b>\n\n"
             f"📍 <b>استان:</b> {province_name}\n"
             f"🏙 <b>شهر:</b> {city_name}\n"
-            f"🏦 <b>بانک:</b> {bank_name}\n"
+            f"{bank_emoji} <b>بانک:</b> {bank_title}\n"
             f"💍 <b>تسهیلات:</b> {loan_label} ({method_label})\n\n"
             f"<b>وضعیت قبلی:</b> {old_text}\n"
             f"<b>وضعیت جدید:</b> <b>{new_text}</b>\n\n"
@@ -376,12 +530,13 @@ class TelegramNotifierService:
         if not bank_items:
             lines.append("⚪ <i>اطلاعات فعالی برای این محدوده ثبت نشده است.</i>")
         else:
-            for item in bank_items:
-                b_name = item.get("bank_name", "بانک")
+            from core.bank_matcher import bank_identity, bank_sort_key
+            for item in sorted(bank_items, key=lambda it: bank_sort_key(it.get("bank_name"))):
+                _, b_name, bank_emoji = bank_identity(item.get("bank_name", "بانک"))
                 st = item.get("current_status", "UNKNOWN")
                 emoji = status_emojis.get(st, "⚪")
                 st_label = status_persian.get(st, st)
-                lines.append(f"{emoji} <b>{b_name}</b> — {st_label}")
+                lines.append(f"{bank_emoji} <b>{b_name}</b> — {emoji} {st_label}")
 
         lines.extend([
             f"\n🕒 <b>آخرین بروزرسانی:</b> {time_str}",
@@ -400,68 +555,52 @@ class TelegramNotifierService:
         action_status: str = "پایش فعال ظرفیت",
         provincial_only: bool = False,
     ) -> str:
+        """Channel digest of page-3 banks.
+
+        Every bank sits on its own line with its own emoji, in the official CBI
+        order, grouped into open capacity and reserve queue.
         """
-        Piece 3: Format a beautiful, structured capacity radar message for Telegram.
-        Unified broadcast:
-        - Mentions ONLY the province name (no applicant NID or city when provincial_only=True)
-        - Groups active capacity banks (green ✅) and reserve banks (yellow ⏳) into one single stylish message
-        - Uses beautiful separators and Persian digits
-        """
-        active_banks = active_banks or []
-        reserve_banks = reserve_banks or []
+        import html
+        from core.bank_matcher import bank_identity, bank_sort_key
+        from core.persian_normalizer import gregorian_to_jalali, to_persian_digits
 
-        def _to_persian_digits(n: Any) -> str:
-            if n is None or n == "":
-                return "۰"
-            if isinstance(n, (int, float)):
-                formatted = f"{int(n):,}"
-            else:
-                formatted = str(n)
-            p_digits = "۰۱۲۳۴۵۶۷۸۹"
-            for i in range(10):
-                formatted = formatted.replace(str(i), p_digits[i])
-            return formatted
+        def ordered(banks: Optional[List[Dict[str, Any]]]) -> List[Tuple[str, str, int]]:
+            merged: Dict[str, Tuple[str, str, int]] = {}
+            for bank in banks or []:
+                raw = bank.get("bank_name") or bank.get("clean_title") or bank.get("text") or ""
+                code, official, emoji = bank_identity(raw)
+                waiting = int(bank.get("waiting_count") or 0)
+                key = code or official
+                if key not in merged or waiting > merged[key][2]:
+                    merged[key] = (official, emoji, waiting)
+            return sorted(merged.values(), key=lambda item: bank_sort_key(item[0]))
 
-        time_str = datetime.now().strftime("%H:%M:%S")
-        lines = [
-            "📡 <b>رادار لحظه‌ای سهمیه وام ازدواج | MAHANBOT</b>",
-            f"📍 <b>استان:</b> {province_name or 'نامشخص'}",
-            f"⏰ <b>ساعت استعلام:</b> {time_str}",
-            "━━━━━━━━━━━━━━━━━━━",
-        ]
+        def bank_line(official: str, emoji: str, waiting: int) -> str:
+            queue = f" ┊ 👥 {to_persian_digits(waiting, group=True)} نفر در صف" if waiting > 0 else ""
+            return f"{emoji} <b>{html.escape(official)}</b>{queue}"
 
+        active = ordered(active_banks)
+        reserve = ordered(reserve_banks)
+        now = datetime.now()
+        jy, jm, jd = gregorian_to_jalali(now.year, now.month, now.day)
+        date_text = to_persian_digits(f"{jy}/{jm:02d}/{jd:02d}")
+        time_text = to_persian_digits(now.strftime("%H:%M"))
+        rule = "━━━━━━━━━━━━━━━━━━"
+
+        place = f"📍 استان <b>{html.escape(province_name or 'نامشخص')}</b>"
         if city_name:
-            lines.insert(2, f"🏙 <b>شهر:</b> {city_name}")
-
-        # 1. Active Quota Banks
-        active_count = len(active_banks)
-        lines.append(f"🟢 <b>بانک‌های دارای ظرفیت قطعی ({_to_persian_digits(active_count)} بانک):</b>")
-        if not active_banks:
-            lines.append("<i>در حال حاضر سهمیه قطعی بازی در این استان یافت نشد.</i>")
-        else:
-            for b in active_banks:
-                b_name = b.get("bank_name") or b.get("clean_title") or "بانک"
-                w_count = b.get("waiting_count", 0)
-                q_text = f" (صف: {_to_persian_digits(w_count)} نفر)" if w_count > 0 else ""
-                lines.append(f"  ✅ <b>{b_name}</b>{q_text}")
-
-        # 2. Reserve Banks (Unified single message, grouped cleanly)
-        reserve_count = len(reserve_banks)
-        lines.append(f"\n🟡 <b>بانک‌های دارای سهمیه رزرو ({_to_persian_digits(reserve_count)} بانک):</b>")
-        if not reserve_banks:
-            lines.append("<i>هیچ بانکی در حالت رزرو قرار ندارد.</i>")
-        else:
-            reserve_items = []
-            for b in reserve_banks:
-                b_name = b.get("bank_name") or b.get("clean_title") or "بانک"
-                w_count = b.get("waiting_count", 0)
-                q_text = f" ({_to_persian_digits(w_count)})" if w_count > 0 else ""
-                reserve_items.append(f"{b_name}{q_text}")
-
-            chunk_size = 3
-            for i in range(0, len(reserve_items), chunk_size):
-                chunk = reserve_items[i : i + chunk_size]
-                lines.append("  ⏳ " + " • ".join(chunk))
+            place += f" · 🏙 شهر <b>{html.escape(city_name)}</b>"
+        lines = [
+            "📡 <b>رادار لحظه‌ای سهمیه وام ازدواج</b>",
+            rule,
+            place,
+            f"🗓 {date_text}  ⏰ {time_text}",
+            rule,
+            f"🟢 <b>ظرفیت آزاد ثبت‌نام</b> — {to_persian_digits(len(active))} بانک",
+        ]
+        lines += [bank_line(*item) for item in active] or ["<i>فعلاً بانکی با ظرفیت آزاد در این استان نیست.</i>"]
+        lines += ["", f"🟡 <b>صف ذخیره (رزرو)</b> — {to_persian_digits(len(reserve))} بانک"]
+        lines += [bank_line(*item) for item in reserve] or ["<i>بانکی در صف ذخیره نیست.</i>"]
 
         if not provincial_only:
             masked_nid = ""
@@ -469,16 +608,18 @@ class TelegramNotifierService:
                 s_nid = str(applicant_nid).strip()
                 masked_nid = f"{s_nid[:2]}******{s_nid[-2:]}" if len(s_nid) >= 8 else s_nid
             nid_line = f" ({masked_nid})" if masked_nid else ""
-            lines.extend([
-                f"\n🎯 <b>وضعیت اقدام متقاضی{nid_line}:</b>",
-                f"<code>[{action_status}]</code>",
-            ])
+            lines += ["", f"🎯 <b>وضعیت اقدام متقاضی{nid_line}:</b> <code>{html.escape(action_status)}</code>"]
 
-        lines.extend([
-            "━━━━━━━━━━━━━━━━━━━",
-            "📢 @Mahanvpn3 | 🤖 @MahanVPN_Shop_Bot",
-        ])
+        total = len(active) + len(reserve)
+        lines += [
+            rule,
+            f"📊 مجموع {to_persian_digits(total)} بانک: {to_persian_digits(len(active))} آزاد · {to_persian_digits(len(reserve))} رزرو",
+            "⚠️ <i>دیده شدن نام بانک به معنی تضمین ثبت نیست؛ ثبت نهایی با تأیید سامانه است.</i>",
+            "",
+            "📢 @Mahanvpn3 · 🤖 @MahanVPN_Shop_Bot",
+        ]
         return "\n".join(lines)
+
     @staticmethod
     def format_channel_post(
         title: str = "🚀 ظرفیت جدید سرویس‌های MahanBot و سهمیه‌های بانکی",
@@ -540,15 +681,11 @@ class TelegramNotifierService:
 
         self.ensure_defaults_in_config()
         key = dedupe_key or hashlib_key(province_name, city_name, active_banks, reserve_banks)
+        province_key = str(province_name or "سراسری")
         with self._lock:
             last = getattr(self, "_last_page3_digest_keys", {}) or {}
-            if not force and last.get(str(province_name or "سراسری")) == key:
+            if not force and last.get(province_key) == key:
                 return False, "duplicate_digest"
-            last[str(province_name or "سراسری")] = key
-            # Cap memory
-            if len(last) > 64:
-                last = dict(list(last.items())[-32:])
-            self._last_page3_digest_keys = last
 
         body = self.format_beautiful_radar_message(
             province_name=province_name or "سراسری",
@@ -571,6 +708,12 @@ class TelegramNotifierService:
         self.start_background_worker()
         ok, detail = self.send_raw_telegram(channel_cid, body, reply_markup=reply_markup)
         if ok:
+            with self._lock:
+                last = getattr(self, "_last_page3_digest_keys", {}) or {}
+                last[province_key] = key
+                if len(last) > 64:
+                    last = dict(list(last.items())[-32:])
+                self._last_page3_digest_keys = last
             # Also mirror to admin if different from channel
             admin_cid = self.get_admin_chat_id()
             if admin_cid and str(admin_cid).lower() != str(channel_cid).lower():
@@ -680,7 +823,7 @@ class TelegramNotifierService:
         custom_message: Optional[str] = None,
     ) -> Tuple[bool, str]:
         """Send a test verification message to target chat_id or configured admin/channel."""
-        target_cid = (chat_id or self.get_channel_id() or self.get_admin_chat_id() or "").strip()
+        target_cid = self._resolve_channel_target(chat_id or "")
         if not target_cid:
             return False, "شناسه چت یا کانال تنظیم نشده است. لطفاً شناسه چت یا کانال تلگرام را وارد کنید."
 

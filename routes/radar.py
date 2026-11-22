@@ -71,6 +71,7 @@ def get_radar_summary(
     cfg = DBHandler.get_config()
     bot_token = cfg.get("telegram_bot_token", "")
     admin_chat_id = cfg.get("telegram_admin_chat_id", "")
+    channel_id = TELEGRAM_NOTIFIER.get_channel_id()
     notifications_enabled = cfg.get("telegram_notifications_enabled", True)
 
     return {
@@ -88,6 +89,8 @@ def get_radar_summary(
             "notifications_enabled": bool(notifications_enabled),
             "has_token": bool(bot_token),
             "admin_chat_id": str(admin_chat_id) if admin_chat_id else None,
+            "channel_id": channel_id,
+            "proxy": cfg.get("telegram_proxy", "") or "",
         },
         "states": states,
     }
@@ -181,7 +184,10 @@ def update_telegram_config(
     if req.admin_chat_id is not None:
         updates["telegram_admin_chat_id"] = req.admin_chat_id.strip()
     if req.channel_id is not None:
-        updates["telegram_channel_id"] = req.channel_id.strip()
+        channel = req.channel_id.strip()
+        if not channel or channel == "-1003720759140":
+            channel = "@Mahanvpn3"
+        updates["telegram_channel_id"] = channel
     if req.notifications_enabled is not None:
         updates["telegram_notifications_enabled"] = bool(req.notifications_enabled)
     if req.proxy is not None:

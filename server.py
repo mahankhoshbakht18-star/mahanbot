@@ -262,7 +262,7 @@ async def require_subscription_login(request: Request, call_next):
 
     response.headers.setdefault("X-Content-Type-Options", "nosniff")
 
-    if path.startswith('/api/license/'):
+    if path.startswith('/api/license/') or path == '/' or path.startswith('/static/'):
 
         response.headers['Cache-Control'] = 'no-store'
 
