@@ -75,6 +75,8 @@ HARD_ALLOWED_URLS = {
     "https://ve.cbi.ir/Register.aspx",
     "https://ve.cbi.ir/SelectBnkShb.aspx",
     "https://ve.cbi.ir/SelEditCase.aspx",
+    "https://ve.cbi.ir/RegisterInfoEdit.aspx",
+    "https://ve.cbi.ir/EditAddress.aspx",
     "https://ve.cbi.ir/EditShb.aspx",
     "https://ve.cbi.ir/TasReqDelete.aspx",
     "https://ve.cbi.ir/TasTrace.aspx",

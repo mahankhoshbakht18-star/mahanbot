@@ -522,6 +522,8 @@ function switchView(viewId, navEl) {
 
     if(viewId === 'delete-req') fetchApplicants('delete-req');
 
+    if(viewId === 'edit-postal') fetchApplicants('edit-postal');
+
     if(viewId === 'settings') {
 
         loadSettings();
@@ -1176,6 +1178,8 @@ async function fetchApplicants(mode) {
         else if(mode === 'recover') renderRecoverList(data);
 
         else if(mode === 'delete-req') renderDeleteReqList(data);
+
+        else if(mode === 'edit-postal') renderEditPostalList(data);
 
     } catch(e){console.error(e);}
 
@@ -3288,6 +3292,7 @@ function refreshCurrentView() {
     if (currentViewId === 'recover') renderRecoverList(allUsersData);
 
     if (currentViewId === 'delete-req') renderDeleteReqList(allUsersData);
+    if (currentViewId === 'edit-postal') renderEditPostalList(allUsersData);
 
 }
 
@@ -4877,6 +4882,58 @@ function renderDeleteReqList(data) {
             </tr>
         `;
     });
+}
+
+
+function renderEditPostalList(data) {
+    const tbody = document.getElementById('editPostalListBody');
+    if (!tbody) return;
+    tbody.innerHTML = '';
+    (data || []).forEach((user, idx) => {
+        const d = parseUserData(user.data);
+        const province = d.state || d.province || '';
+        const postal = d.postal_code || d.zip_code || '';
+        const ready = province && String(postal).replace(/\D/g, '').length >= 5;
+        const button = ready
+            ? `<button class="btn btn-sm btn-outline-primary rounded-pill px-3" onclick="actionEditPostal('${user.national_id}')">
+                   <i class="fa-solid fa-location-dot me-1"></i>تغییر در سامانه
+               </button>`
+            : `<button class="btn btn-sm btn-outline-secondary rounded-pill px-3" disabled title="استان و کد پستی باید در اطلاعات متقاضی ذخیره شده باشد.">
+                   استان یا کد پستی ندارد
+               </button>`;
+        tbody.innerHTML += `
+            <tr>
+                <td class="text-center fw-bold" style="color:#64748B;font-size:12px;">${idx + 1}</td>
+                <td><span class="applicant-name-link" onclick="editUser(${idx})">${escapeHtml(user.full_name)}</span></td>
+                <td class="font-monospace text-center">${formatNid(user.national_id)}</td>
+                <td class="text-center">${escapeHtml(province || '—')}</td>
+                <td class="font-monospace text-center">${escapeHtml(postal || '—')}</td>
+                <td class="text-center">${button}</td>
+            </tr>
+        `;
+    });
+}
+
+async function actionEditPostal(nid) {
+    const user = (allUsersData || []).find(u => String(u.national_id) === String(nid));
+    const d = parseUserData(user?.data);
+    const province = d.state || d.province || '';
+    const postal = d.postal_code || d.zip_code || '';
+    const name = user?.full_name || nid;
+    if (!confirm(`اطلاعات متقاضی «${name}» در سامانه مرکزی عوض شود؟\n\nاستان ${province} در RegisterInfoEdit\nکد پستی ${postal} در فرم نشانی`)) {
+        return;
+    }
+    try {
+        const response = await apiCall(`/bot/action/edit-postal/${nid}`, 'POST', {});
+        if (response?.status === 'queued' || response?.status === 'already_running') {
+            setUserStatus(nid, 'Running');
+            switchView('dashboard');
+        } else {
+            alert('درخواست تغییر کد پستی در صف قرار گرفت.');
+        }
+    } catch (e) {
+        alert(e.message || 'خطا در شروع تغییر کد پستی');
+    }
 }
 
 async function actionDeleteReq(nid) {

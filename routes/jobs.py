@@ -144,3 +144,20 @@ def delete_request(nid: str, approval: Optional[ExplicitDeleteApproval] = None, 
     log_event(nid, None, "Delete request enqueued for CBI TasReqDelete", "warning")
     _emit_applicants_snapshot()
     return {"status": "queued", "job": job.to_dict()}
+
+
+@router.post("/bot/action/edit-postal/{nid}")
+def edit_postal(nid: str, _: Dict[str, Any] = Depends(_admin_user)):
+    applicant = DBHandler.get_applicant(nid)
+    if not applicant:
+        raise HTTPException(status_code=404, detail="Applicant not found")
+    if not _state.JOB_QUEUE:
+        raise HTTPException(status_code=500, detail="Job queue not ready")
+    job = _state.JOB_QUEUE.enqueue("edit_postal", nid, {})
+    if job is None:
+        existing = _state.JOB_QUEUE.find_active("edit_postal", nid)
+        return {"status": "already_running", "job": existing.to_dict() if existing else None}
+    from event_logger import log_event
+    log_event(nid, None, "Postal edit enqueued for CBI RegisterInfoEdit", "info")
+    _emit_applicants_snapshot()
+    return {"status": "queued", "job": job.to_dict()}

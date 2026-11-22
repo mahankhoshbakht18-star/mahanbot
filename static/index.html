@@ -76,6 +76,7 @@
       <div onclick="switchView('browser-health',this)"><button class="nav-link" data-tooltip="سلامت مرورگر و نشست: پایش، عیب‌یابی و بازیابی هوشمند نشست‌ها"><i class="fa-solid fa-shield-virus"></i><span>سلامت مرورگر</span></button></div>
       <div onclick="switchView('recover',this)"><button class="nav-link" data-tooltip="بازیابی کد رهگیری: استعلام و استخراج خودکار کد رهگیری ۱۰ رقمی از ve.cbi.ir/GetTraceCD.aspx"><i class="fa-solid fa-file-invoice"></i><span>بازیابی کد رهگیری</span></button></div>
       <div onclick="switchView('delete-req',this)"><button class="fa-trash-nav nav-link" data-tooltip="حذف ثبت‌نام: لغو رسمی درخواست در سامانه مرکزی (ve.cbi.ir/TasReqDelete.aspx)"><i class="fa-solid fa-trash-can"></i><span>حذف ثبت‌نام</span></button></div>
+      <div onclick="switchView('edit-postal',this)"><button class="nav-link" data-tooltip="استان در RegisterInfoEdit عوض می‌شود و کد پستی در فرم نشانی"><i class="fa-solid fa-location-dot"></i><span>تغییر کد پستی</span></button></div>
       <div onclick="switchView('status',this)"><button class="nav-link" data-tooltip="گزارش‌ها: مشاهده رویدادها، تاریخچه پیگیری و لاگ‌های زنده"><i class="fa-solid fa-clipboard-list"></i><span>گزارش‌ها</span></button></div>
       <div onclick="switchView('settings',this)"><button class="nav-link" data-tooltip="تنظیمات سامانه: پارامترهای اتوماسیون، فواصل پایش، مرورگر و وب‌هوک"><i class="fa-solid fa-sliders"></i><span>تنظیمات</span></button></div>
       <div onclick="switchView('support',this)"><button class="nav-link" data-tooltip="پشتیبانی: کانال تلگرام، ارتباط با ادمین، راهنما و اپلیکیشن اندروید"><i class="fa-solid fa-headset"></i><span>پشتیبانی</span></button></div>
@@ -1394,6 +1395,34 @@
       </article>
     </section>
 
+
+    <!-- ════════════════ VIEW: EDIT POSTAL ════════════════ -->
+    <section id="view-edit-postal" class="view-section">
+      <div class="page-heading">
+        <div>
+          <span class="section-kicker">سامانه مرکزی</span>
+          <h2>تغییر استان و کد پستی در سامانه</h2>
+          <p>استان از پرونده متقاضی در ve.cbi.ir/RegisterInfoEdit.aspx انتخاب می‌شود. کد پستی و شهر در فرم نشانی نوشته می‌شود.</p>
+        </div>
+      </div>
+      <article class="panel">
+        <div class="table-responsive">
+          <table class="table modern-table">
+            <thead>
+              <tr>
+                <th>متقاضی</th>
+                <th>کد ملی</th>
+                <th>استان</th>
+                <th>کد پستی</th>
+                <th>اقدام</th>
+              </tr>
+            </thead>
+            <tbody id="editPostalListBody"></tbody>
+          </table>
+        </div>
+      </article>
+    </section>
+
     <!-- ════════════════ VIEW: SETTINGS (تنظیمات سامانه و ظاهر) ════════════════ -->
     <section id="view-settings" class="view-section">
       <div class="page-heading">
@@ -2583,7 +2612,7 @@
   <!-- Scripts -->
   <script src="/static/vendor/bootstrap.bundle.min.js"></script>
   <script src="/static/messages_fa.js?v=20261016-2"></script>
-  <script src="/static/script.js?v=20261122-delete"></script>
+  <script src="/static/script.js?v=20261122-province"></script>
   <script src="/static/licensing.js?v=20261022-1"></script>
   <script src="/static/page3_management.js"></script>
 </body>
