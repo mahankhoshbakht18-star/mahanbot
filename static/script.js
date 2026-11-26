@@ -10,6 +10,8 @@ const warnedMessageKeys = new Set();
 let dashboardInterval = null;
 
 let editingUserId = null;
+let openingEditView = false;
+let submittingApplicant = false;
 let submissionDefaults = { enabled: false, interval: 20 };
 
 function setSubmissionDefaults(config) {
@@ -27,7 +29,31 @@ function syncApplicantSubmissionControls() {
     if (!inherit || !checkbox) return;
     checkbox.disabled = inherit.checked;
     if (inherit.checked) checkbox.checked = submissionDefaults.enabled;
-    if (interval) interval.placeholder = `خالی: عمومی (${submissionDefaults.interval} ثانیه)`;
+    if (interval) interval.placeholder = String(submissionDefaults.interval);
+
+    const mode = inherit.checked ? 'inherit' : (checkbox.checked ? 'auto' : 'manual');
+    document.querySelectorAll('#segFinalSubmit button').forEach(btn =>
+        btn.classList.toggle('active', btn.dataset.final === mode));
+    const effective = checkbox.checked;
+    const intervalLabel = document.getElementById('lblFinalSubmitInterval');
+    if (intervalLabel) intervalLabel.hidden = !effective;
+    const hint = document.getElementById('finalSubmitHint');
+    if (hint) {
+        const auto = 'ثبت فوری؛ اگر ظرفیت پر بود بانک بعدی همان لحظه ثبت می‌شود و اگر همه پر بودند پایش ادامه دارد.';
+        const manual = 'فرم کامل و آماده می‌شود؛ دکمه ثبت نهایی را خودتان بزنید.';
+        hint.textContent = mode === 'inherit'
+            ? `طبق تنظیم عمومی (الان: ${effective ? 'خودکار' : 'دستی'}) — ${effective ? auto : manual}`
+            : (effective ? auto : manual);
+    }
+}
+
+function setFinalSubmitMode(mode) {
+    const inherit = document.getElementById('inpInheritFinalSubmit');
+    const checkbox = document.getElementById('inpAutoFinalSubmit');
+    if (!inherit || !checkbox) return;
+    inherit.checked = mode === 'inherit';
+    if (mode !== 'inherit') checkbox.checked = mode === 'auto';
+    syncApplicantSubmissionControls();
 }
 
 async function updateApplicantSubmission(nid, patch) {
@@ -453,8 +479,22 @@ async function pollApplicants() {
 }
 
 
-function switchView(viewId, navEl) {
+// Highlight the sidebar item that owns this view, whoever opened it (sidebar,
+// top bar, a tab or code). One sidebar item can own several views through
+// data-views, e.g. «متقاضیان و صف» owns list, add and queue.
+function syncNavHighlight(viewId) {
+    document.querySelectorAll('.sidebar-nav > div').forEach(item => {
+        const owned = (item.dataset.views || '').split(/\s+/).filter(Boolean);
+        const own = (item.getAttribute('onclick') || '').match(/switchView\('([^']+)'/);
+        const active = owned.includes(viewId) || (own && own[1] === viewId);
+        item.querySelector('.nav-link')?.classList.toggle('active', Boolean(active));
+    });
+    document.querySelectorAll('.hub-tabs [data-hub]').forEach(tab => {
+        tab.classList.toggle('active', tab.dataset.hub === viewId);
+    });
+}
 
+function switchView(viewId, navEl) {
     currentViewId = viewId;
     if (viewId === 'license' && window.MahanLicense) {
         window.MahanLicense.refresh();
@@ -469,13 +509,7 @@ function switchView(viewId, navEl) {
 
     
 
-    if(navEl) {
-
-        document.querySelectorAll('.nav-link').forEach(el => el.classList.remove('active'));
-
-        navEl.querySelector('.nav-link').classList.add('active');
-
-    }
+    syncNavHighlight(viewId);
 
 
 
@@ -540,7 +574,7 @@ function switchView(viewId, navEl) {
 
     
 
-    if(viewId === 'add' && !editingUserId) resetAddForm();
+    if(viewId === 'add' && !openingEditView && !editingUserId && !_normField('inpNid')) resetAddForm();
 
 }
 
@@ -1751,21 +1785,16 @@ async function startStatus(nid) {
     try {
 
         const response = await apiCall(`/jobs/start`, 'POST', {bot_name: 'status', nid: nid});
-
-        if (response?.status && response.status !== 'queued') {
-
-            console.warn('Unexpected status from status bot start:', response);
-
+        if (response?.status === 'already_running') {
+            showMahanToast('استعلام در جریان است', 'مرورگر استعلام این متقاضی از قبل باز است.', 'info', { icon: 'fa-window-maximize', delay: 4000 });
+            return;
         }
-
         setUserStatus(nid, 'Running');
-
-        switchView('dashboard');
-
+        // Stay on this page: the result stays open in the browser window until it is closed.
+        showMahanToast('استعلام وضعیت شروع شد', 'نتیجه روی مرورگر باز می‌ماند؛ برای پایان، پنجره را ببندید یا «توقف» را بزنید.', 'info', { icon: 'fa-magnifying-glass', delay: 5000 });
     } catch(e) {
-
-        console.warn('Status bot start failed', e);
-
+        // e.g. another status window is still open: say so instead of failing silently.
+        showMahanToast('استعلام شروع نشد', e.message || 'خطا در شروع استعلام', 'warning', { icon: 'fa-triangle-exclamation', delay: 7000 });
     }
 
 }
@@ -1812,38 +1841,53 @@ async function deleteApplicant(nid) {
 
 
 
+function _showAddFormError(msg) {
+    const el = document.getElementById('addFormError');
+    if (el) {
+        if (msg) {
+            el.textContent = msg;
+            el.classList.remove('d-none');
+        } else {
+            el.textContent = '';
+            el.classList.add('d-none');
+        }
+    }
+}
+
+function _normField(id) {
+    const el = document.getElementById(id);
+    return el ? normalizePersianDigits(String(el.value || '')).trim() : '';
+}
+
+function _validateDateInputs(label, y, m, d) {
+    if (!y && !m && !d) return null;
+    if (!y || !m || !d) return `${label} ناقص است (روز، ماه و سال باید کامل وارد شوند).`;
+    if (!/^\d{4}$/.test(y) || Number(y) < 1300 || Number(y) > 1499) return `سال ${label} نامعتبر است.`;
+    if (!/^\d{1,2}$/.test(m) || Number(m) < 1 || Number(m) > 12) return `ماه ${label} باید بین ۱ تا ۱۲ باشد.`;
+    if (!/^\d{1,2}$/.test(d) || Number(d) < 1 || Number(d) > 31) return `روز ${label} باید بین ۱ تا ۳۱ باشد.`;
+    return null;
+}
+
 function editUser(idx) {
-
     const user = allUsersData[idx];
-
     if(!user) return;
-
+    _showAddFormError('');
     editingUserId = user.id;
-
-    document.getElementById('formTitle').innerText = `: ${user.full_name}`;
-
+    document.getElementById('formTitle').innerText = `ویرایش متقاضی: ${user.full_name}`;
     document.getElementById('btnResetForm').style.display = 'block';
 
-    
-
-    let d = parseUserData(user.data); 
-
-    
+    let d = parseUserData(user.data);
 
     document.getElementById('inpName').value = user.full_name || '';
-
     document.getElementById('inpNid').value = user.national_id || '';
-
     document.getElementById('inpMobile').value = d.mobile || '';
-
     document.getElementById('inpSpouseNationalId').value = d.spouse_national_id || (String(d.spouse || '').match(/^\d{10}$/) ? d.spouse : '');
-
     document.getElementById('inpPhone').value = d.phone || '';
-
     document.getElementById('inpZip').value = d.postal_code || d.zip_code || '';
     if (document.getElementById('inpLoanType')) {
         document.getElementById('inpLoanType').value = d.loan_type || 'marriage';
         toggleLoanTypeFields();
+        syncVisualLoanCard();
     }
     if (document.getElementById('inpChildNationalId')) {
         document.getElementById('inpChildNationalId').value = d.child_national_id || '';
@@ -1852,8 +1896,9 @@ function editUser(idx) {
     if (document.getElementById('cd_m')) document.getElementById('cd_m').value = d.child_birth_m || '';
     if (document.getElementById('cd_y')) document.getElementById('cd_y').value = d.child_birth_y || '';
     if (document.getElementById('inpBankMode')) {
-        document.getElementById('inpBankMode').value = d.bank_mode || '';
+        document.getElementById('inpBankMode').value = d.bank_mode || 'only_online';
         toggleBranchFieldByMode();
+        syncVisualBankMode();
     }
     if (document.getElementById('inpPriorityBranches')) {
         const br = d.priority_branches || (d.branch_code ? [d.branch_code] : []);
@@ -1862,7 +1907,6 @@ function editUser(idx) {
     if (document.getElementById('inpAllowReserve')) {
         document.getElementById('inpAllowReserve').checked = Boolean(d.allow_reserve);
     }
-
     if (document.getElementById('inpInheritFinalSubmit')) {
         document.getElementById('inpInheritFinalSubmit').checked = typeof d.auto_final_submit !== 'boolean';
         document.getElementById('inpAutoFinalSubmit').checked = d.auto_final_submit === true;
@@ -1873,169 +1917,182 @@ function editUser(idx) {
     if (d.state) {
         onProvinceSelected(d.state, d.city || '');
     } else {
-        const cEl = document.getElementById('inpCity');
-        if (cEl) {
-            cEl.innerHTML = '<option value="">-- ابتدا استان را انتخاب کنید --</option>' + (d.city ? `<option value="${escapeHtml(d.city)}" selected>${escapeHtml(d.city)}</option>` : '');
-        }
+        setCityControlValue(d.city || '');
     }
 
     document.getElementById('inpMilitary').value = d.military_status || '1';
-
     document.getElementById('inpTrackingCode').value = d.tracking_code || '';
-
-    
-
-    document.getElementById('bd_d').value = d.birth_d || ''; 
-
-    document.getElementById('bd_m').value = d.birth_m || ''; 
-
+    document.getElementById('bd_d').value = d.birth_d || '';
+    document.getElementById('bd_m').value = d.birth_m || '';
     document.getElementById('bd_y').value = d.birth_y || '';
-
-    
-
-    document.getElementById('md_d').value = d.marriage_d || ''; 
-
-    document.getElementById('md_m').value = d.marriage_m || ''; 
-
+    document.getElementById('md_d').value = d.marriage_d || '';
+    document.getElementById('md_m').value = d.marriage_m || '';
     document.getElementById('md_y').value = d.marriage_y || '';
 
-    
-
-    priorityBanks = d.priority_banks || d.banks || [];
-
-    favoriteBanks = d.favorite_banks || [];
-
+    priorityBanks = [...(d.priority_banks || d.banks || [])];
+    favoriteBanks = [...(d.favorite_banks || [])];
     renderBankOptions();
-
     renderPriorityBanks();
-
     renderFavoriteBanks();
 
-    
-
-    switchView('add');
-
+    openingEditView = true;
+    try {
+        switchView('add');
+    } finally {
+        openingEditView = false;
+    }
     document.getElementById('view-add').scrollIntoView({ behavior: 'smooth' });
-
 }
-
-
 
 function resetAddForm() {
-
     editingUserId = null;
-
-    document.getElementById('addForm').reset();
+    _showAddFormError('');
+    const form = document.getElementById('addForm');
+    if (form) form.reset();
+    if (document.getElementById('inpLoanType')) {
+        document.getElementById('inpLoanType').value = 'marriage';
+        toggleLoanTypeFields();
+        syncVisualLoanCard();
+    }
+    const cEl = document.getElementById('inpCity');
+    if (cEl) cEl.innerHTML = '<option value="">-- ابتدا استان را انتخاب کنید --</option>';
+    const cCustom = document.getElementById('inpCityCustom');
+    if (cCustom) {
+        cCustom.value = '';
+        cCustom.hidden = true;
+    }
+    if (document.getElementById('inpBankMode')) {
+        document.getElementById('inpBankMode').value = 'only_online';
+        toggleBranchFieldByMode();
+        syncVisualBankMode();
+    }
     syncApplicantSubmissionControls();
     if (document.getElementById('inpAllowReserve')) document.getElementById('inpAllowReserve').checked = true;
-
-    document.getElementById('formTitle').innerText = "  ";
-
-    document.getElementById('btnResetForm').style.display = 'none';
-
+    const titleEl = document.getElementById('formTitle');
+    if (titleEl) titleEl.innerText = 'ثبت متقاضی جدید';
+    const resetBtn = document.getElementById('btnResetForm');
+    if (resetBtn) resetBtn.style.display = 'none';
     priorityBanks = [];
-
     favoriteBanks = [];
-
     renderBankOptions();
-
     renderPriorityBanks();
-
     renderFavoriteBanks();
-
 }
 
+function collectApplicantForm() {
+    const nid = _normField('inpNid').replace(/[\s-]+/g, '');
+    const name = String(document.getElementById('inpName')?.value || '').replace(/\s+/g, ' ').trim();
+    const spouseNationalId = _normField('inpSpouseNationalId').replace(/[\s-]+/g, '');
+    const childNationalId = _normField('inpChildNationalId').replace(/[\s-]+/g, '');
+    let mobile = _normField('inpMobile').replace(/[\s-]+/g, '');
+    if (mobile.startsWith('+98')) mobile = '0' + mobile.slice(3);
+    else if (/^9\d{9}$/.test(mobile)) mobile = '0' + mobile;
+    const phone = _normField('inpPhone').replace(/\s+/g, '');
+    const zipCode = _normField('inpZip').replace(/[\s-]+/g, '');
+    const loanType = document.getElementById('inpLoanType') ? document.getElementById('inpLoanType').value : 'marriage';
+    const bd_d = _normField('bd_d'), bd_m = _normField('bd_m'), bd_y = _normField('bd_y');
+    const md_d = _normField('md_d'), md_m = _normField('md_m'), md_y = _normField('md_y');
+    const cd_d = _normField('cd_d'), cd_m = _normField('cd_m'), cd_y = _normField('cd_y');
 
+    const fail = (msg) => ({ok: false, error: msg});
 
-async function submitNewApplicant() {
+    if (!name) return fail('نام و نام خانوادگی الزامی است.');
+    if (!/^\d{10}$/.test(nid)) return fail('کد ملی متقاضی باید دقیقاً ۱۰ رقم باشد.');
+    if (spouseNationalId && !/^\d{10}$/.test(spouseNationalId)) return fail('کد ملی همسر باید دقیقاً ۱۰ رقم باشد.');
+    if (childNationalId && !/^\d{10}$/.test(childNationalId)) return fail('کد ملی فرزند باید دقیقاً ۱۰ رقم باشد.');
+    if (zipCode && !/^\d{10}$/.test(zipCode)) return fail('کد پستی باید دقیقاً ۱۰ رقم باشد.');
+    if (mobile && !/^09\d{9}$/.test(mobile)) return fail('شماره تلفن همراه باید ۱۱ رقم و با ۰۹ شروع شود.');
 
-    const nid = document.getElementById('inpNid').value;
+    for (const err of [
+        _validateDateInputs('تاریخ تولد متقاضی', bd_y, bd_m, bd_d),
+        _validateDateInputs('تاریخ عقد ازدواج', md_y, md_m, md_d),
+        _validateDateInputs('تاریخ تولد فرزند', cd_y, cd_m, cd_d),
+    ]) {
+        if (err) return fail(err);
+    }
 
-    const name = document.getElementById('inpName').value;
-
-
-
-    if(!/^\d{10}$/.test(nid) || !name) return alert('نام و کد ملی ۱۰ رقمی الزامی است.');
-    const spouseNationalId = document.getElementById('inpSpouseNationalId').value.trim();
-    if (spouseNationalId && !/^\d{10}$/.test(spouseNationalId)) return alert('کد ملی همسر باید دقیقاً ۱۰ رقم باشد.');
-
-
-
+    const bankMode = document.getElementById('inpBankMode') ? document.getElementById('inpBankMode').value : 'only_online';
+    const isOnlineOnly = bankMode === 'only_online' || bankMode === 'online';
     const formData = {
-
-        mobile: document.getElementById('inpMobile').value,
-
+        mobile,
         spouse_national_id: spouseNationalId,
-
-        phone: document.getElementById('inpPhone').value,
-
-        zip_code: document.getElementById('inpZip').value.trim(),
-        postal_code: document.getElementById('inpZip').value.trim(),
-        loan_type: document.getElementById('inpLoanType') ? document.getElementById('inpLoanType').value : 'marriage',
-        child_national_id: document.getElementById('inpChildNationalId') ? document.getElementById('inpChildNationalId').value.trim() : '',
-        child_birth_d: document.getElementById('cd_d') ? document.getElementById('cd_d').value : '',
-        child_birth_m: document.getElementById('cd_m') ? document.getElementById('cd_m').value : '',
-        child_birth_y: document.getElementById('cd_y') ? document.getElementById('cd_y').value : '',
+        phone,
+        zip_code: zipCode,
+        postal_code: zipCode,
+        loan_type: loanType,
+        child_national_id: childNationalId,
+        child_birth_d: cd_d,
+        child_birth_m: cd_m,
+        child_birth_y: cd_y,
         auto_final_submit: document.getElementById('inpInheritFinalSubmit') ? (document.getElementById('inpInheritFinalSubmit').checked ? null : document.getElementById('inpAutoFinalSubmit').checked) : null,
         final_submit_interval_seconds: (document.getElementById('inpFinalSubmitInterval') && document.getElementById('inpFinalSubmitInterval').value !== '') ? Number(document.getElementById('inpFinalSubmitInterval').value) : null,
-        bank_mode: document.getElementById('inpBankMode') ? document.getElementById('inpBankMode').value : '',
+        bank_mode: bankMode,
         allow_reserve: document.getElementById('inpAllowReserve') ? document.getElementById('inpAllowReserve').checked : false,
-        priority_branches: document.getElementById('inpPriorityBranches') && document.getElementById('inpBankMode')?.value !== 'online'
+        priority_branches: document.getElementById('inpPriorityBranches') && !isOnlineOnly
             ? document.getElementById('inpPriorityBranches').value.split(/[،,\n]+/).map(s => s.trim()).filter(Boolean)
             : [],
-
-        state: document.getElementById('inpState').value,
-
-        city: document.getElementById('inpCity').value,
-
-        military_status: document.getElementById('inpMilitary').value,
-
-        tracking_code: document.getElementById('inpTrackingCode').value,
-
-        birth_d: document.getElementById('bd_d').value,
-
-        birth_m: document.getElementById('bd_m').value,
-
-        birth_y: document.getElementById('bd_y').value,
-
-        marriage_d: document.getElementById('md_d').value,
-
-        marriage_m: document.getElementById('md_m').value,
-
-        marriage_y: document.getElementById('md_y').value,
-
-        priority_banks: priorityBanks,
-
-        favorite_banks: favoriteBanks,
-
-        banks: priorityBanks
-
+        state: String(document.getElementById('inpState')?.value || '').trim(),
+        city: getSelectedCityValue(),
+        military_status: document.getElementById('inpMilitary')?.value || '1',
+        tracking_code: _normField('inpTrackingCode'),
+        birth_d: bd_d,
+        birth_m: bd_m,
+        birth_y: bd_y,
+        marriage_d: md_d,
+        marriage_m: md_m,
+        marriage_y: md_y,
+        priority_banks: [...priorityBanks],
+        favorite_banks: [...favoriteBanks],
+        banks: [...priorityBanks],
     };
 
-
-
-    const payload = {
-
-        id: editingUserId,
-
-        full_name: name,
-
-        national_id: nid,
-
-        data: formData
-
+    return {
+        ok: true,
+        payload: {
+            id: editingUserId,
+            full_name: name,
+            national_id: nid,
+            data: formData,
+        },
     };
+}
 
+async function saveApplicantPayload(payload) {
+    const res = await apiCall('/applicants', 'POST', payload);
+    if (res && res.status === 'error') {
+        throw new Error(res.msg || res.detail || 'ذخیره پرونده انجام نشد.');
+    }
+    await fetchApplicants('list');
+    return res;
+}
 
+async function submitNewApplicant() {
+    if (submittingApplicant) return;
+    _showAddFormError('');
+    const collected = collectApplicantForm();
+    if (!collected.ok) {
+        _showAddFormError(collected.error);
+        alert(collected.error);
+        return;
+    }
+    const payload = collected.payload;
 
-    await apiCall('/applicants', 'POST', payload);
-
-    alert(getMessage('alerts.save_success', '    .'));
-
-    if(editingUserId) resetAddForm();
-
-    switchView('list');
-
+    submittingApplicant = true;
+    const saveBtn = document.getElementById('btnSaveApplicant');
+    if (saveBtn) saveBtn.disabled = true;
+    try {
+        await saveApplicantPayload(payload);
+        resetAddForm();
+        alert(getMessage('alerts.save_success', 'اطلاعات متقاضی با موفقیت ذخیره شد.'));
+        switchView('list');
+    } catch (err) {
+        const msg = err?.message || 'خطا در ذخیره پرونده متقاضی';
+        _showAddFormError(msg);
+        alert(msg);
+    } finally {
+        submittingApplicant = false;
+        if (saveBtn) saveBtn.disabled = false;
+    }
 }
 
 
@@ -2855,13 +2912,35 @@ async function repairSavedPages() {
 }
 
 async function startRegister(nid) {
-
-    await apiCall('/jobs/start', 'POST', {bot_name: 'register', nid: nid});
-
-    setUserStatus(nid, 'Running');
-
-    switchView('dashboard');
-
+    if (pendingStarts.has(nid)) return;
+    const targetNid = normalizePersianDigits(String(nid || '')).replace(/[\s-]+/g, '');
+    pendingStarts.add(targetNid);
+    try {
+        const formNid = _normField('inpNid').replace(/[\s-]+/g, '');
+        if (formNid && formNid !== targetNid) {
+            alert('فرم باز مربوط به متقاضی دیگری است. ثبت‌نام همین ردیف متوقف شد تا اطلاعات جابه‌جا نشود.');
+            return;
+        }
+        if (formNid && formNid === targetNid) {
+            const collected = collectApplicantForm();
+            if (!collected.ok) {
+                _showAddFormError(collected.error);
+                alert(collected.error);
+                return;
+            }
+            const owner = (allUsersData || []).find(u => normalizePersianDigits(String(u.national_id || '')) === targetNid);
+            collected.payload.id = owner?.id || editingUserId || collected.payload.id;
+            collected.payload.national_id = targetNid;
+            await saveApplicantPayload(collected.payload);
+        }
+        await apiCall('/jobs/start', 'POST', {bot_name: 'register', nid: targetNid});
+        setUserStatus(targetNid, 'Running');
+        switchView('dashboard');
+    } catch (error) {
+        alert(error.message || 'شروع ثبت‌نام اولیه ناموفق بود.');
+    } finally {
+        pendingStarts.delete(targetNid);
+    }
 }
 
 async function stopBot(nid) {
@@ -2930,6 +3009,22 @@ function renderTimingSettings(groups) {
         box.appendChild(title);
         const grid = document.createElement('div');
         grid.className = 'form-grid compact';
+        grid.dataset.timingGroup = group.group;
+        if (group.presets && group.presets.length) {
+            const row = document.createElement('div');
+            row.className = 'timing-presets';
+            row.append('حالت آماده: ');
+            for (const preset of group.presets) {
+                const btn = document.createElement('button');
+                btn.type = 'button';
+                btn.className = 'btn btn-sm btn-outline-primary';
+                btn.innerHTML = `<i class="fa-solid ${preset.id === 'human' ? 'fa-user' : 'fa-bolt'} ms-1"></i>`;
+                btn.append(preset.label);
+                btn.onclick = () => applyTimingPreset(group.group, preset);
+                row.appendChild(btn);
+            }
+            box.appendChild(row);
+        }
         for (const item of group.items) {
             const label = document.createElement('label');
             const unit = item.unit === 'ms' ? 'میلی‌ثانیه' : 'ثانیه';
@@ -2971,6 +3066,15 @@ async function saveTimingSettings() {
     } catch (e) {
         if (result) result.textContent = `ذخیره نشد: ${e.message}`;
     }
+}
+
+function applyTimingPreset(groupId, preset) {
+    for (const [key, value] of Object.entries(preset.values || {})) {
+        const input = document.querySelector(`#timingSettings [data-timing-key="${key}"]`);
+        if (input) input.value = value;
+    }
+    const result = document.getElementById('timingSettingsResult');
+    if (result) result.textContent = `حالت «${preset.label}» گذاشته شد؛ برای اعمال «ذخیره زمان‌بندی» را بزنید.`;
 }
 
 function resetTimingSettings() {
@@ -3180,11 +3284,12 @@ function handleSocketEvent(payload) {
     }
     scheduleRenderLogs();
 
-    // Phase 4: Real-time Sound & Toast Alert Dispatching
-    const evType = (payload.type || '').toLowerCase();
-    const evCode = (payload.event_code || payload.event || '').toUpperCase();
+    // Real-time sound & toast alerts. alertKindFor + shouldRaiseAlert decide
+    // whether this event is a fresh alarm (not a history replay or a duplicate).
+    const alertKind = alertKindFor(payload);
+    if (!alertKind || !shouldRaiseAlert(alertKind, payload)) return;
 
-    if (evType === 'favorite_found' || evType === 'quota_available' || evCode === 'BANK_OPTION_FOUND') {
+    if (alertKind === 'quota') {
         const bankName = payload.bank || payload.detail || payload.result || 'بانک منتخب';
         showFavoriteToast({
             bank: bankName,
@@ -3192,7 +3297,7 @@ function handleSocketEvent(payload) {
             nid: payload.nid
         });
         playAlertSound('quota');
-    } else if (evType === 'registration_confirmed' || evCode === 'FINAL_SUBMIT_CONFIRMED' || evCode === 'BANK_FINAL_SUBMIT_CONFIRMED') {
+    } else if (alertKind === 'success') {
         const tracking = payload.tracking_code || payload.result || '';
         showMahanToast(
             'ثبت نام قطعی انجام شد! 🎉',
@@ -3202,7 +3307,7 @@ function handleSocketEvent(payload) {
         );
         playAlertSound('success');
         triggerCelebrationConfetti();
-    } else if (evType === 'otp_required' || evCode === 'OTP_REQUIRED') {
+    } else if (alertKind === 'action') {
         showMahanToast(
             'نیاز به کد پیامک (OTP) 📱',
             payload.message || 'سامانه در انتظار ورود کد تایید پیامکی است.',
@@ -3210,7 +3315,7 @@ function handleSocketEvent(payload) {
             { icon: 'fa-comment-sms', delay: 8000 }
         );
         playAlertSound('action');
-    } else if (evType === 'capacity_full' || evCode === 'BANK_CAPACITY_FULL') {
+    } else if (alertKind === 'warning') {
         showMahanToast(
             'تکمیل ظرفیت بانک ⚠️',
             payload.message || payload.detail || 'ظرفیت پذیرش بانک در این استان تکمیل است.',
@@ -3396,31 +3501,114 @@ function renderLogs(clearInitial = false) {
 
 
 
+// ── Alarm control ─────────────────────────────────────────────────────
+// One place decides which events are alarms, and suppresses:
+//  * history replay: the server re-sends its last 500 events on every
+//    (re)connect, which used to replay old alarms with sound and confetti;
+//  * duplicates: each structured event arrives twice (the log line carrying
+//    event_code and its alias event such as favorite_found);
+//  * repeats: capacity-full fires on every refresh cycle of the sniper.
+const ALERT_RULES = {
+    // kind:   [cooldown seconds per applicant, max event age seconds]
+    quota:   [20, 30],
+    success: [600, 60],
+    action:  [45, 30],
+    warning: [300, 30],
+};
+const _alertLastFired = new Map();
+let _alertsArmedAt = Date.now();
+
+function alertKindFor(payload) {
+    const evType = String(payload.type || '').toLowerCase();
+    const evCode = String(payload.event_code || payload.event || '').toUpperCase();
+    if (evType === 'favorite_found' || evType === 'quota_available' || evCode === 'BANK_OPTION_FOUND') return 'quota';
+    if (evType === 'registration_confirmed' || evCode === 'FINAL_SUBMIT_CONFIRMED' || evCode === 'BANK_FINAL_SUBMIT_CONFIRMED') return 'success';
+    if (evType === 'otp_required' || evCode === 'OTP_REQUIRED') return 'action';
+    if (evType === 'capacity_full' || evCode === 'BANK_CAPACITY_FULL') return 'warning';
+    return null;
+}
+
+function shouldRaiseAlert(kind, payload) {
+    const [cooldownSec, maxAgeSec] = ALERT_RULES[kind];
+    if (payload.replay) return false;
+    const sentAtMs = Number(payload.ts) ? Number(payload.ts) * 1000 : Date.parse(payload.timestamp || '');
+    if (Number.isFinite(sentAtMs)) {
+        // Anything sent before this page connected is history, not news.
+        if (sentAtMs < _alertsArmedAt - 2000) return false;
+        if (Date.now() - sentAtMs > maxAgeSec * 1000) return false;
+    }
+    const key = `${kind}:${payload.nid || payload.request_id || '-'}`;
+    const now = Date.now();
+    const last = _alertLastFired.get(key) || 0;
+    if (now - last < cooldownSec * 1000) return false;
+    _alertLastFired.set(key, now);
+    return true;
+}
+
+// Browsers only allow sound after the user has interacted with the page, and
+// a context created later stays muted. Keep one shared context and unlock it
+// on the first click / key press.
+let _alertAudioCtx = null;
+function getAlertAudioContext() {
+    const AudioCtx = window.AudioContext || window.webkitAudioContext;
+    if (!AudioCtx) return null;
+    if (!_alertAudioCtx || _alertAudioCtx.state === 'closed') _alertAudioCtx = new AudioCtx();
+    if (_alertAudioCtx.state === 'suspended') _alertAudioCtx.resume().catch(() => {});
+    return _alertAudioCtx;
+}
+['pointerdown', 'keydown'].forEach(evt => {
+    window.addEventListener(evt, function unlockAlertAudio() {
+        getAlertAudioContext();
+        window.removeEventListener(evt, unlockAlertAudio, true);
+    }, true);
+});
+
+function readStoredFlag(key, fallback) {
+    try {
+        const val = localStorage.getItem(key);
+        return val === null ? fallback : val === 'true';
+    } catch (e) { return fallback; }
+}
+function storeFlag(key, value) {
+    try { localStorage.setItem(key, String(value)); } catch (e) {}
+}
+
 function isSoundAlertsEnabled() {
-    const val = localStorage.getItem('mahanbot_sound_alerts');
-    if (val !== null) return val === 'true';
-    const toggle = document.getElementById('soundAlertsToggle');
-    return toggle ? toggle.checked : true;
+    return readStoredFlag('mahanbot_sound_alerts', true);
+}
+
+function isConfettiEnabled() {
+    return readStoredFlag('mahanbot_confetti', true);
 }
 
 function toggleSoundAlerts(enabled) {
-    localStorage.setItem('mahanbot_sound_alerts', String(enabled));
+    storeFlag('mahanbot_sound_alerts', enabled);
     if (enabled) {
         playAlertSound('quota');
         showMahanToast('هشدارهای صوتی فعال شد', 'آلارم هنگام یافتن سهمیه، دریافت پیامک و ثبت نهایی پخش خواهد شد.', 'info', { icon: 'fa-volume-high', delay: 3000 });
     }
 }
 
+// Reflect the stored choices in the settings checkboxes (they used to always
+// show "on" after a reload even when sound had been turned off).
+document.addEventListener('DOMContentLoaded', () => {
+    syncVisualBankMode();
+    syncApplicantSubmissionControls();
+    const sound = document.getElementById('soundAlertsToggle');
+    if (sound) sound.checked = isSoundAlertsEnabled();
+    const confetti = document.getElementById('confettiSoundToggle');
+    if (confetti) {
+        confetti.checked = isConfettiEnabled();
+        confetti.addEventListener('change', () => storeFlag('mahanbot_confetti', confetti.checked));
+    }
+});
+
 function playAlertSound(type = 'quota') {
     if (!isSoundAlertsEnabled()) return;
 
     try {
-        const AudioCtx = window.AudioContext || window.webkitAudioContext;
-        if (!AudioCtx) return;
-        const ctx = new AudioCtx();
-        if (ctx.state === 'suspended') {
-            ctx.resume();
-        }
+        const ctx = getAlertAudioContext();
+        if (!ctx) return;
 
         const now = ctx.currentTime;
 
@@ -3454,11 +3642,16 @@ function playAlertSound(type = 'quota') {
             ];
         }
 
+        // A found quota is the alarm that must not be missed: play it 3 times.
+        if (type === 'quota') {
+            const base = tones;
+            tones = [0, 0.75, 1.5].flatMap(offset => base.map(t => ({ ...t, start: t.start + offset })));
+        }
+
         const masterGain = ctx.createGain();
-        masterGain.gain.setValueAtTime(0.25, now);
+        masterGain.gain.setValueAtTime(type === 'warning' ? 0.35 : 0.6, now);
         masterGain.connect(ctx.destination);
 
-        let maxEnd = 0;
         tones.forEach(t => {
             const osc = ctx.createOscillator();
             const toneGain = ctx.createGain();
@@ -3475,12 +3668,11 @@ function playAlertSound(type = 'quota') {
 
             osc.start(now + t.start);
             osc.stop(now + t.start + t.dur);
-            if (t.start + t.dur > maxEnd) maxEnd = t.start + t.dur;
         });
-
-        setTimeout(() => {
-            try { ctx.close(); } catch (e) {}
-        }, (maxEnd + 0.1) * 1000);
+        // The context is shared (see getAlertAudioContext); disconnect only this alarm's gain.
+        const maxEnd = Math.max(...tones.map(t => t.start + t.dur));
+        setTimeout(() => { try { masterGain.disconnect(); } catch (e) {} }, (maxEnd + 0.2) * 1000);
+        return ctx.state === 'running';
 
     } catch (e) {
         console.warn('Audio alert skipped:', e);
@@ -3488,16 +3680,20 @@ function playAlertSound(type = 'quota') {
 }
 
 function testAudioAlert(type = 'quota') {
-    playAlertSound(type);
     const labels = {
         quota: 'آلارم سهمیه (یافتن بانک)',
         action: 'آلارم پیامک / اقدام دستی',
         success: 'آلارم ثبت موفق قطعی',
         warning: 'آلارم تکمیل ظرفیت',
     };
+    if (!isSoundAlertsEnabled()) {
+        showMahanToast(labels[type] || 'تست صدای آلارم', 'هشدارهای صوتی خاموش است؛ ابتدا گزینه «پخش هشدارهای صوتی» را روشن کنید.', 'warning', { icon: 'fa-volume-xmark', delay: 4000 });
+        return;
+    }
+    playAlertSound(type);
     showMahanToast(
         labels[type] || 'تست صدای آلارم',
-        'صوت آزمایشی با موفقیت در مرورگر پخش شد.',
+        'صوت آزمایشی پخش شد. اگر صدایی نشنیدید، صدای سیستم یا مرورگر را بررسی کنید.',
         type === 'success' ? 'success' : (type === 'warning' ? 'warning' : 'info'),
         { icon: 'fa-bell', delay: 3500 }
     );
@@ -3792,52 +3988,39 @@ function syncVisualLoanCard() {
     if (sel) selectVisualLoanType(sel.value);
 }
 
+const BANK_MODE_HINTS = {
+    only_online: 'فقط سهمیه غیرحضوری پایش و ثبت می‌شود؛ شعبه لازم نیست.',
+    prefer_online: 'اول غیرحضوری؛ اگر ظرفیتش پر بود، حضوری با شعب زیر.',
+    prefer_in_person: 'اول حضوری؛ اگر شعبه‌ای نبود، غیرحضوری.',
+    only_in_person: 'فقط حضوری؛ شعبه خالی بماند اولین شعبه انتخاب می‌شود.',
+    '': 'طبق تنظیم سیستم (غیرحضوری).'
+};
+
 function selectVisualBankMode(mode) {
-    const oCard = document.getElementById('bankModeCardOnline');
-    const pCard = document.getElementById('bankModeCardInPerson');
     const sel = document.getElementById('inpBankMode');
-    if (oCard && pCard) {
-        if (mode === 'online') {
-            oCard.classList.add('active');
-            pCard.classList.remove('active');
-        } else {
-            oCard.classList.remove('active');
-            pCard.classList.add('active');
-        }
-    }
     if (sel && sel.value !== mode) {
         sel.value = mode;
         toggleBranchFieldByMode();
     }
+    syncVisualBankMode();
 }
 
 function syncVisualBankMode() {
-    const sel = document.getElementById('inpBankMode');
-    if (sel) selectVisualBankMode(sel.value || 'online');
+    const mode = document.getElementById('inpBankMode')?.value || '';
+    const shown = mode === 'prefer_in_person' ? 'only_in_person' : mode;
+    document.querySelectorAll('#segBankMode button').forEach(btn =>
+        btn.classList.toggle('active', btn.dataset.mode === shown));
+    const hint = document.getElementById('bankModeHint');
+    if (hint) hint.textContent = BANK_MODE_HINTS[mode] ?? '';
+    const branches = document.getElementById('lblPriorityBranches');
+    if (branches) branches.hidden = mode === 'only_online' || mode === 'online' || mode === '';
 }
 
 let confettiAnimationId = null;
 function triggerCelebrationConfetti() {
     const canvas = document.getElementById('confettiCanvas');
-    if (!canvas) return;
-    const soundEnabled = document.getElementById('confettiSoundToggle')?.checked !== false;
-    if (soundEnabled) {
-        try {
-            const ctx = new (window.AudioContext || window.webkitAudioContext)();
-            const osc = ctx.createOscillator();
-            const gain = ctx.createGain();
-            osc.type = 'triangle';
-            osc.frequency.setValueAtTime(523.25, ctx.currentTime);
-            osc.frequency.exponentialRampToValueAtTime(659.25, ctx.currentTime + 0.15);
-            osc.frequency.exponentialRampToValueAtTime(783.99, ctx.currentTime + 0.3);
-            gain.gain.setValueAtTime(0.12, ctx.currentTime);
-            gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.6);
-            osc.connect(gain);
-            gain.connect(ctx.destination);
-            osc.start();
-            osc.stop(ctx.currentTime + 0.65);
-        } catch (e) {}
-    }
+    // The success alarm already plays its own sound; this only controls the animation.
+    if (!canvas || !isConfettiEnabled()) return;
 
     canvas.style.display = 'block';
     canvas.width = window.innerWidth;
@@ -4497,7 +4680,7 @@ async function testParseSmsText() {
         }
     } catch (e) {
         resultBox.style.display = 'block';
-        resultBox.innerHTML = `<div class="text-danger"><i class="fa-solid fa-circle-exmark ms-1"></i> ${e.message || 'خطا در ارتباط با سرور'}</div>`;
+        resultBox.innerHTML = `<div class="text-danger"><i class="fa-solid fa-circle-xmark ms-1"></i> ${e.message || 'خطا در ارتباط با سرور'}</div>`;
     }
 }
 
@@ -4611,43 +4794,106 @@ async function repairDbNow() {
 // MAHANBOT 2.0 HELPER FUNCTIONS: GEO, COPY, STAGE 3, EDITION
 // ===============================================================
 
-async function onProvinceSelected(provinceName, targetCityVal = null) {
+function onCityDropdownChanged(value) {
+    const cCustom = document.getElementById('inpCityCustom');
+    if (!cCustom) return;
+    cCustom.hidden = value !== '__custom__';
+    if (value !== '__custom__') cCustom.value = '';
+}
+
+function getSelectedCityValue() {
     const citySelect = document.getElementById('inpCity');
+    const cCustom = document.getElementById('inpCityCustom');
+    if (!citySelect) return '';
+    if (citySelect.value === '__custom__' || (cCustom && !cCustom.hidden)) {
+        return String(cCustom ? cCustom.value : '').trim();
+    }
+    return String(citySelect.value || '').trim();
+}
+
+function setCityControlValue(cityVal) {
+    const citySelect = document.getElementById('inpCity');
+    const cCustom = document.getElementById('inpCityCustom');
+    const clean = String(cityVal || '').trim();
     if (!citySelect) return;
-    
-    if (!provinceName) {
-        citySelect.innerHTML = '<option value="">-- ابتدا استان را انتخاب کنید --</option>';
+    const hasMatch = clean && [...citySelect.options].some(o => o.value === clean);
+    if (hasMatch) {
+        citySelect.value = clean;
+        if (cCustom) {
+            cCustom.value = '';
+            cCustom.hidden = true;
+        }
         return;
     }
-    
+    if (![...citySelect.options].some(o => o.value === '__custom__')) {
+        citySelect.add(new Option('سایر شهرها (ورود دستی)...', '__custom__'));
+    }
+    if (clean) {
+        citySelect.value = '__custom__';
+        if (cCustom) {
+            cCustom.value = clean;
+            cCustom.hidden = false;
+        }
+    } else if (cCustom) {
+        cCustom.value = '';
+        cCustom.hidden = true;
+    }
+}
+
+async function onProvinceSelected(provinceName, targetCityVal = null) {
+    const citySelect = document.getElementById('inpCity');
+    const cCustom = document.getElementById('inpCityCustom');
+    if (!citySelect) return;
+
+    if (!provinceName) {
+        citySelect.innerHTML = '<option value="">-- ابتدا استان را انتخاب کنید --</option>';
+        if (cCustom) { cCustom.value = ''; cCustom.hidden = true; }
+        return;
+    }
+
     citySelect.innerHTML = '<option value="">در حال دریافت لیست شهرهای ' + escapeHtml(provinceName) + '...</option>';
     try {
         const res = await fetch(`/api/geo/cities?province=${encodeURIComponent(provinceName)}`);
         if (!res.ok) throw new Error('خطا در بارگذاری شهرها');
         const cities = await res.json();
-        
+
         let html = '<option value="">-- انتخاب شهر محل سکونت --</option>';
         let cityMatched = false;
-        
+
         cities.forEach(c => {
             const cName = typeof c === 'string' ? c : c.name;
             const isSelected = targetCityVal && (cName === targetCityVal || cName.trim() === targetCityVal.trim());
             if (isSelected) cityMatched = true;
             html += `<option value="${escapeHtml(cName)}" ${isSelected ? 'selected' : ''}>${escapeHtml(cName)}</option>`;
         });
-        
-        // Preserve unlisted/custom city if previously saved
-        if (targetCityVal && !cityMatched) {
-            html += `<option value="${escapeHtml(targetCityVal)}" selected>${escapeHtml(targetCityVal)} (تنظیم‌شده)</option>`;
-        }
-        
+        html += '<option value="__custom__">سایر شهرها (ورود دستی)...</option>';
         citySelect.innerHTML = html;
-        if (targetCityVal) citySelect.value = targetCityVal;
+
+        if (!cities.length) {
+            citySelect.value = '__custom__';
+            if (cCustom) {
+                cCustom.value = targetCityVal || '';
+                cCustom.hidden = false;
+            }
+        } else if (targetCityVal && !cityMatched) {
+            citySelect.value = '__custom__';
+            if (cCustom) {
+                cCustom.value = targetCityVal;
+                cCustom.hidden = false;
+            }
+        } else {
+            if (targetCityVal) citySelect.value = targetCityVal;
+            if (cCustom) {
+                cCustom.value = '';
+                cCustom.hidden = true;
+            }
+        }
     } catch (e) {
         console.warn('onProvinceSelected error:', e);
-        citySelect.innerHTML = '<option value="">-- خطای اتصال به سرور --</option>';
-        if (targetCityVal) {
-            citySelect.innerHTML += `<option value="${escapeHtml(targetCityVal)}" selected>${escapeHtml(targetCityVal)}</option>`;
+        citySelect.innerHTML = '<option value="__custom__" selected>سایر شهرها (ورود دستی)...</option>';
+        if (cCustom) {
+            cCustom.value = targetCityVal || '';
+            cCustom.hidden = false;
         }
     }
 }
@@ -4883,7 +5129,6 @@ function renderDeleteReqList(data) {
         `;
     });
 }
-
 
 function renderEditPostalList(data) {
     const tbody = document.getElementById('editPostalListBody');
@@ -5351,15 +5596,15 @@ async function loadRadarData() {
         } else {
             if (b18) {
                 b18.className = 'badge p-2 px-3';
-                b18.style.background = '#fef3c7';
-                b18.style.color = '#92400e';
-                b18.style.border = '1px solid #fcd34d';
+                b18.style.background = 'rgba(229,169,0,.14)';
+                b18.style.color = '#FBBF24';
+                b18.style.border = '1px solid rgba(229,169,0,.45)';
                 b18.innerHTML = '<i class="fa-solid fa-clock me-1"></i>آماده‌باش برای ساعت ۱۸:۰۰';
             }
             if (bStatus) {
                 bStatus.className = 'p-2 rounded font-monospace';
-                bStatus.style.background = '#f1f5f9';
-                bStatus.style.color = '#334155';
+                bStatus.style.background = 'rgba(255,255,255,.05)';
+                bStatus.style.color = 'var(--text-main)';
                 bStatus.textContent = 'عادی (پایش پیوسته قبل از ساعت ۱۸:۰۰)';
             }
         }
@@ -5439,7 +5684,7 @@ function renderRadarTable(states) {
         html += `
             <tr>
                 <td class="text-center font-monospace small text-muted">${toFarsiDigits(idx + 1)}</td>
-                <td class="fw-bold" style="color:#1e293b;">${item.province_name || 'سراسری'}</td>
+                <td class="fw-bold">${item.province_name || 'سراسری'}</td>
                 <td class="text-secondary small">${item.city_name || 'کل استان'}</td>
                 <td class="fw-bold text-primary">${item.bank_name || 'بانک'}</td>
                 <td class="small">${loanLabel}</td>
@@ -5872,5 +6117,29 @@ async function bhFreshProfile(nid) {
     } catch (err) {
         showToast('خطا در بازسازی پروفایل: ' + (err.message || err), 'danger');
     }
+}
+
+function switchModule(name) {
+    document.body.dataset.module = name;
+    try { sessionStorage.setItem("mahanModule", name); } catch (error) {}
+    const bankNav = document.getElementById('bankNav');
+    const sadafNav = document.getElementById('sadafNav');
+    if (bankNav) bankNav.classList.toggle('is-hidden', name !== 'bank');
+    if (sadafNav) sadafNav.classList.toggle('is-hidden', name !== 'sadaf');
+    document.getElementById('modBank')?.classList.toggle('active', name === 'bank');
+    document.getElementById('modSadaf')?.classList.toggle('active', name === 'sadaf');
+    const title = document.querySelector('.topbar-title-block h1');
+    if (title) {
+        title.textContent = name === 'sadaf'
+            ? 'ثبت درخواست سوخت سدف'
+            : 'مدیریت ثبت‌نام تسهیلات ازدواج و فرزندآوری';
+    }
+    if (name === 'sadaf') {
+        switchView('sadaf');
+        if (window.Sadaf) window.Sadaf.enter();
+        return;
+    }
+    if (window.Sadaf) window.Sadaf.leave();
+    if (typeof currentViewId !== 'undefined' && currentViewId === 'sadaf') switchView('dashboard');
 }
 
