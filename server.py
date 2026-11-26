@@ -244,7 +244,11 @@ async def require_subscription_login(request: Request, call_next):
 
     safety_action = (path.startswith(('/jobs/cancel/', '/bot/stop/', '/api/capacity/pause/', '/api/queue/'))
 
-                     or path in {'/api/capacity/stop-all', '/logout', '/login', '/receive_sms', '/sms/webhook', '/api/sms/webhook'}
+                     or path in {'/api/capacity/stop-all', '/logout', '/login', '/receive_sms', '/sms/webhook', '/api/sms/webhook', '/api/sadaf/runs/command', '/api/sadaf/runs/captcha', '/api/sadaf/runs/start', '/api/sadaf/runs/open', '/api/sadaf/backup', '/api/sadaf/sms'}
+
+                     or path.startswith('/api/sadaf/customers')
+
+                     or path == '/api/sadaf/settings'
 
                      or path.startswith('/api/license/'))
 
@@ -356,6 +360,13 @@ app.include_router(page3_router)
 
 from routes.unified_selector import router as unified_router
 app.include_router(unified_router)
+
+if os.getenv("SADAF_MODULE", "1").strip().lower() not in {"0", "false", "no"}:
+    try:
+        from routes.sadaf import router as sadaf_router
+        app.include_router(sadaf_router)
+    except Exception:
+        logger.exception("ماژول سدف بارگذاری نشد؛ بخش بانکی بدون آن ادامه می‌دهد.")
 
 if __name__ == "__main__":
 
