@@ -92,3 +92,6 @@ backup_qa_20261102/
 
 # Sadaf customer data, reports, snapshots and browser profile
 data/sadaf/
+
+# Android release signing keystore (PKCS#12). Must stay local only.
+/mahan
