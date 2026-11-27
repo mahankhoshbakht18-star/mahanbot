@@ -8,6 +8,7 @@ from typing import Any, Dict, List, Optional
 from .catalog import NUMBER_FIELDS, SECTORS, SELLERS, field_names
 from .crypto import open_secret, seal
 from .db import connect, ensure_schema
+from .settings import request_defaults
 
 NUMBER_RE = re.compile(r"^[0-9۰-۹٠-٩]+(?:[./][0-9۰-۹٠-٩]+)?$")
 SELECT_FIELDS = {"بخش مصرف": SECTORS, "نام فروشندگی": SELLERS}
@@ -68,7 +69,7 @@ def public_customer(row, fields: Optional[List[Dict[str, str]]] = None) -> Dict[
         "last_status": _row_value(row, "last_status", ""),
         "last_finished_at": _row_value(row, "last_finished_at", ""),
         "field_count": count,
-        "info_status": "کامل" if count else "فقط مشخصات ورود",
+        "info_status": f"تنظیمات + {count} فیلد اختصاصی" if count else "از تنظیمات",
         "fields": stored,
     }
 
@@ -136,13 +137,29 @@ def prepare_fields(fields: Any) -> List[Dict[str, str]]:
 
 
 def request_pairs(person: Dict[str, Any]) -> List[List[str]]:
-    pairs = []
-    for field in person.get("fields") or []:
-        name = str(field.get("name") or "").strip()
-        value = str(field.get("value") or "").strip()
-        if name and value:
-            pairs.append([name, value])
-    return pairs
+    """Shared request fields from settings, with this applicant's own values on top."""
+    merged: Dict[str, List[str]] = {}
+    for source in (request_defaults(), person.get("fields") or []):
+        for field in source:
+            name = str(field.get("name") or "").strip()
+            value = str(field.get("value") or "").strip()
+            if name and value:
+                merged[_norm(name)] = [name, value]
+    return list(merged.values())
+
+
+def set_name_if_empty(customer_id: int, full_name: str) -> bool:
+    """Keep a typed name; fill an empty one from the Sadaf panel."""
+    name = " ".join(str(full_name or "").split())
+    if not name:
+        return False
+    ensure_schema()
+    with connect() as conn:
+        cur = conn.execute(
+            "UPDATE customers SET full_name = ?, updated_at = ? WHERE id = ? AND TRIM(full_name) = ''",
+            (name, now(), customer_id),
+        )
+    return cur.rowcount > 0
 
 
 def list_customers(query: str = "") -> List[Dict[str, Any]]:

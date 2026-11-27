@@ -148,12 +148,12 @@ def events(limit: int = 30) -> Dict[str, Any]:
 
 
 @router.get("/settings")
-def read_settings() -> Dict[str, str]:
+def read_settings() -> Dict[str, Any]:
     return get_settings()
 
 
 @router.put("/settings")
-def write_settings(payload: Dict[str, str]) -> Dict[str, str]:
+def write_settings(payload: Dict[str, Any]) -> Dict[str, Any]:
     try:
         return save_settings(payload)
     except ValueError as exc:

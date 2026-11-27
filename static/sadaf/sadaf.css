@@ -213,3 +213,27 @@
   from { opacity: 0; transform: translateY(6px); }
   to { opacity: 1; transform: none; }
 }
+
+/* Per-applicant overrides: folded away, since most applicants use «تنظیمات» as is. */
+.sadaf-own {
+  margin: 14px 0;
+  padding: 10px 14px;
+  border: 1px dashed var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--card-elevated);
+}
+.sadaf-own > summary {
+  cursor: pointer;
+  font-weight: 700;
+  color: var(--text-main);
+}
+.sadaf-own[open] > summary { margin-bottom: 8px; }
+
+.sadaf-alarm { display: none; position: sticky; top: 8px; z-index: 40; align-items: center; gap: 12px; padding: 12px 16px;
+  border-radius: 14px; background: #b42318; color: #fff; font-weight: 700; box-shadow: 0 10px 30px rgba(180, 35, 24, .35); }
+.sadaf-alarm.on { display: flex; animation: sadaf-alarm-pulse 1.2s ease-in-out infinite; }
+.sadaf-alarm .fa-bell { font-size: 20px; }
+.sadaf-alarm .sadaf-btn { flex: none; }
+@keyframes sadaf-alarm-pulse { 50% { box-shadow: 0 0 0 6px rgba(180, 35, 24, .25); } }
+@media (max-width: 640px) { .sadaf-alarm { flex-wrap: wrap; } }
+@media (prefers-reduced-motion: reduce) { .sadaf-alarm.on { animation: none; } }

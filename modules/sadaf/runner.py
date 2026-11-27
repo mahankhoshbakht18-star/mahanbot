@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from . import page_js, sms
-from .customers import customer_for_run, now, request_pairs, runnable_customers
+from .customers import customer_for_run, now, request_pairs, runnable_customers, set_name_if_empty
 from .db import connect, ensure_schema
 from .paths import BROWSER, CAPTCHA_TRAIN, DATA, REPORTS
 from .settings import urls
@@ -23,6 +23,9 @@ _OCR = None
 SNAPSHOTS = DATA / "snapshots"
 SMS_WAIT = 240
 FINAL_ROUNDS = 12
+# Captchas are solved automatically this many times; only then the alarm sounds and the operator types it.
+LOGIN_AUTO_TRIES = 4
+FORM_AUTO_TRIES = 4
 SMS_EXPIRED = re.compile(r"منقضی|انقضا|اعتبار کد|(زمان|مهلت).{0,25}(تمام|پایان|گذشته)")
 SMS_REJECTED = re.compile(r"کد\s*(تایید|پیامک|ارسال|ارسالی|دریافتی).{0,25}(اشتباه|نادرست|صحیح نیست|نامعتبر|معتبر نیست)")
 SUCCESS_WORDS = ("با موفقیت", "ثبت گردید", "کد پیگیری", "کد رهگیری")
@@ -46,6 +49,21 @@ SNAPSHOT_JS = r"""() => {
   return '<!-- ' + location.href + ' -->\n' + copy.outerHTML;
 }"""
 _JS = {"mtime": None, "code": ""}
+
+
+def fa(number) -> str:
+    return str(number).translate(str.maketrans("0123456789", "۰۱۲۳۴۵۶۷۸۹"))
+
+
+def _beep() -> None:
+    """Audible alarm on the bot computer, even when the panel tab is not open."""
+    try:
+        import winsound
+        for _ in range(3):
+            winsound.Beep(1200, 350)
+            time.sleep(0.15)
+    except Exception:
+        pass
 
 
 def _helpers() -> str:
@@ -241,15 +259,21 @@ class Runner:
         return self.snapshot()
 
     def submit_code(self, code: str) -> Dict[str, Any]:
-        text = "".join(ch for ch in str(code or "").lower() if ch.isalnum())
-        if len(text) != 4:
+        text = "".join(ch for ch in sms.normalize(code).lower() if ch.isalnum())
+        with _LOCK:
+            form = self.state.get("captcha_kind") == "form"
+            ticket = self.captcha_ticket
+        if form and not 3 <= len(text) <= 8:
+            raise ValueError("کد تصویر صفحهٔ آخر را کامل بنویسید.")
+        if not form and len(text) != 4:
             raise ValueError("کد امنیتی باید ۴ حرف یا رقم باشد.")
         if not (self.thread and self.thread.is_alive()):
             raise RuntimeError("اول صفحهٔ ورود را باز کنید، بعد کد را بفرستید.")
-        with _LOCK:
-            ticket = self.captcha_ticket
         self.cmds.put(("code", text, ticket))
-        self._say("کد دستی گرفته شد. رمز پر می‌شود و دکمهٔ ورود زده می‌شود.", "running", stage="logging_in")
+        if form:
+            self._say("کد دستی کپچای صفحهٔ آخر گرفته شد. «ثبت مشخصات» زده می‌شود.", "running", stage="confirming")
+        else:
+            self._say("کد دستی گرفته شد. رمز پر می‌شود و دکمهٔ ورود زده می‌شود.", "running", stage="logging_in")
         return self.snapshot()
 
     def submit_sms(self, text: str) -> str:
@@ -268,6 +292,8 @@ class Runner:
             self.state["message"] = message
             if status:
                 self.state["status"] = status
+                if status != "needs_operator":
+                    self.state["alarm"] = None
             self.state.update(extra)
         run_id = self.state.get("run_id")
         customer = self.state.get("current") or {}
@@ -428,16 +454,18 @@ class Runner:
             if result in {"ok", "kept"}:
                 filled = True
                 break
+        with _LOCK:
+            self.state["captcha_kind"] = "login"
         if not filled:
-            self._say(f"{label}: صفحهٔ ورود آماده نشد. کد و دکمهٔ ورود با شماست.", "needs_operator", stage="wait_captcha")
+            self._alarm(label, "login", "صفحهٔ ورود آماده نشد. کد تصویر را در پنل بنویسید یا ورود را در پنجرهٔ سدف بزنید.")
         else:
             outcome = self._attempt_login(page, person, label)
             if outcome == "skip":
                 return False
             if outcome == "ok":
                 return True
-            if outcome != "wait":
-                self._say(f"{label}: ورود خودکار پذیرفته نشد. کد را در بات بنویسید و «ورود با این کد» را بزنید.", "needs_operator", stage="wait_captcha")
+            if outcome == "failed":
+                self._alarm(label, "login", f"ورود خودکار بعد از {fa(LOGIN_AUTO_TRIES)} تلاش موفق نشد. کد تصویر را از پنجرهٔ سدف در پنل بنویسید.")
         while True:
             cmd = self._poll(0.1)
             if cmd == "skip":
@@ -457,6 +485,13 @@ class Runner:
             if not on_login:
                 self._say(f"{label}: ورود انجام شد.", "running", stage="logged_in")
                 return True
+
+    def _alarm(self, label: str, kind: str, message: str) -> None:
+        """Automatic tries are used up: sound an alarm and wait for the operator."""
+        self._say(f"{label}: {message}", "needs_operator", stage="wait_captcha", captcha_kind=kind)
+        with _LOCK:
+            self.state["alarm"] = {"kind": kind, "message": message, "at": time.time()}
+        threading.Thread(target=_beep, name="sadaf-alarm", daemon=True).start()
 
     def _bump_captcha(self) -> None:
         with _LOCK:
@@ -491,7 +526,7 @@ class Runner:
         clicks = 0
         reads = 0
         fresh = True
-        while clicks < 4 and reads < 8:
+        while clicks < LOGIN_AUTO_TRIES and reads < LOGIN_AUTO_TRIES * 2:
             pending = self._queued_code()
             if pending == "skip":
                 return "skip"
@@ -502,7 +537,7 @@ class Runner:
                 if outcome == "ok":
                     return "ok"
                 if outcome == "stop":
-                    return "failed"
+                    return "stopped"
                 fresh = True
                 continue
             reads += 1
@@ -510,25 +545,25 @@ class Runner:
                 self._refresh_captcha(page)
             fresh = False
             if not self._fill_credentials(page, person):
-                self._say(f"{label}: کادر رمز خالی ماند. ورود زده نشد.", "needs_operator", stage="wait_captcha")
-                return "failed"
+                self._alarm(label, "credentials", "کادر رمز خالی ماند. ورود زده نشد.")
+                return "stopped"
             if not self._type_captcha(page):
-                self._say(f"{label}: تصویر کپچا مبهم بود. بدون زدن ورود، تصویر تازه گرفته می‌شود.", "needs_operator", stage="wait_captcha")
+                self._say(f"{label}: تصویر کپچا مبهم بود. بدون زدن ورود، تصویر تازه گرفته می‌شود.", "running", stage="logging_in")
                 continue
             if not self._password_ready(page, person):
                 if not self._fill_credentials(page, person):
-                    self._say(f"{label}: کادر رمز خالی ماند. ورود زده نشد.", "needs_operator", stage="wait_captcha")
-                    return "failed"
+                    self._alarm(label, "credentials", "کادر رمز خالی ماند. ورود زده نشد.")
+                    return "stopped"
             clicks += 1
-            self._say(f"{label}: کد پر شد. دکمهٔ ورود زده می‌شود. تلاش {clicks} از ۴.", "running", stage="logging_in")
+            self._say(f"{label}: کد پر شد. دکمهٔ ورود زده می‌شود. تلاش {fa(clicks)} از {fa(LOGIN_AUTO_TRIES)}.", "running", stage="logging_in")
             if self._submit_login(page) == "left" or self._js(page, "() => window.__sadaf.isLoginPage()") is False:
                 self._say(f"{label}: ورود انجام شد.", "running", stage="logged_in")
                 return "ok"
             problem = self._js(page, "() => window.__sadaf.loginProblem()")
             if problem == "credentials":
                 detail = self._js(page, "() => window.__sadaf.loginDetail()") or "کلمه عبور یا نام کاربری نامعتبر است"
-                self._say(f"{label}: سایت نام کاربری یا رمز را نپذیرفت. {detail}", "needs_operator", stage="wait_captcha")
-                return "failed"
+                self._alarm(label, "credentials", f"سایت نام کاربری یا رمز را نپذیرفت. {detail}")
+                return "stopped"
             fresh = True
             self._say(f"{label}: کد پذیرفته نشد. همان لحظه تصویر تازه خوانده می‌شود.", "running", stage="logging_in")
         return "failed"
@@ -570,9 +605,9 @@ class Runner:
         problem = self._js(page, "() => window.__sadaf.loginProblem()")
         if problem == "credentials":
             detail = self._js(page, "() => window.__sadaf.loginDetail()") or "کلمه عبور یا نام کاربری نامعتبر است"
-            self._say(f"{label}: سایت نام کاربری یا رمز را نپذیرفت. {detail}", "needs_operator", stage="wait_captcha")
+            self._alarm(label, "credentials", f"سایت نام کاربری یا رمز را نپذیرفت. {detail}")
             return "stop"
-        self._say(f"{label}: این کد پذیرفته نشد. کد تصویر تازه را بنویسید.", "needs_operator", stage="wait_captcha")
+        self._alarm(label, "login", "این کد پذیرفته نشد. کد تصویر تازه را بنویسید.")
         return "captcha"
 
     def _keep_sample(self, raw: bytes, code: str) -> None:
@@ -700,9 +735,10 @@ class Runner:
             return self._error(str(exc))
         if self._js(page, "u => window.__sadaf.pageHasUser(u)", person["username"]) is False:
             return self._error(f"کاربر واردشده با {person['username']} یکی نیست.")
+        self._take_site_name(page, person)
         pairs = request_pairs(person)
         if not pairs:
-            return self._error("برای این مشتری هیچ فیلد درخواستی ذخیره نشده است.")
+            return self._error("اطلاعات درخواست در «تنظیمات» سدف خالی است.")
         self._snap(page, "form")
         self._say(f"{label}: در حال پر کردن مرحلهٔ ۱.", "running", stage="filling")
         self._absent_fields = set()
@@ -749,6 +785,15 @@ class Runner:
             return self._error(error)
         self._snap(page, "ready")
         return self._finish_request(page, person, label, pairs)
+
+    def _take_site_name(self, page, person) -> None:
+        """An applicant saved without a name gets the name the Sadaf panel shows after login."""
+        if str(person.get("full_name") or "").strip():
+            return
+        name = str(self._js(page, "() => window.__sadaf.siteUserName()") or "").strip()
+        if name and set_name_if_empty(int(person["id"]), name):
+            person["full_name"] = name
+            self._say(f"{person['username']}: نام «{name}» از پنل سدف خوانده و ذخیره شد.", "running", stage="filling")
 
     def _error(self, message: str) -> Dict[str, str]:
         return {"status": "error", "message": message}
@@ -957,6 +1002,7 @@ class Runner:
         sent_at = 0.0
         said: List[str] = []
         pressed_with_code = False
+        captcha_misses = 0
         for _round in range(FINAL_ROUNDS):
             self._hold()
             panel = self._js(page, "() => window.__sadaf.smsPanel()") or {}
@@ -977,7 +1023,7 @@ class Runner:
                     self._snap(page, "no-sms-box")
                     return self._final_note(pressed_with_code, "کادر «کد پیامک شده» پیدا نشد.")
                 self._say(f"{label}: کد پیامک در فرم نوشته شد.", "running", stage="filling")
-            note = self._fill_form_captcha(page)
+            note = self._fill_form_captcha(page, label, manual=captcha_misses >= FORM_AUTO_TRIES)
             if note:
                 return self._final_note(pressed_with_code, note)
             self._say(f"{label}: کپچای صفحهٔ آخر پر شد.", "running", stage="filling")
@@ -1004,7 +1050,9 @@ class Runner:
                 self._keep_tracking(person, said)
                 return {"status": "success", "message": "صفحه: " + self._quote(said)}
             if self._captcha_wrong(said):
-                self._say(f"{label}: کپچا اشتباه بود. کپچای تازه حل می‌شود.", "running", stage="confirming")
+                captcha_misses += 1
+                if captcha_misses < FORM_AUTO_TRIES:
+                    self._say(f"{label}: کپچا اشتباه بود. کپچای تازه خودکار حل می‌شود (تلاش {fa(captcha_misses + 1)} از {fa(FORM_AUTO_TRIES)}).", "running", stage="confirming")
                 continue
             if had_panel and (SMS_EXPIRED.search(joined) or SMS_REJECTED.search(joined)):
                 why = "منقضی شد" if SMS_EXPIRED.search(joined) else "پذیرفته نشد"
@@ -1126,7 +1174,7 @@ class Runner:
                 return ""
         return ""
 
-    def _fill_form_captcha(self, page) -> str:
+    def _fill_form_captcha(self, page, label: str, manual: bool = False) -> str:
         info = None
         for _ in range(6):
             info = self._js(page, "() => window.__sadaf.formCaptcha()")
@@ -1138,23 +1186,43 @@ class Runner:
             return "کپچای کنار «کد مقابل را در قسمت زیر وارد نمایید» پیدا نشد."
         if not info.get("box"):
             return "کادر کپچای صفحهٔ آخر پیدا نشد."
-        raw = self._form_captcha_bytes(page, info.get("src") or "")
-        length = int(info.get("max") or 0)
         code = ""
-        if length in (0, 4):
-            code = _sadaf_code(raw)
-        if not code and length:
-            code = self._read_code(raw, length)
-        if not code and not length:
-            for size in (5, 6, 3):
-                code = self._read_code(raw, size)
-                if code:
-                    break
+        if manual:
+            why = f"کپچای صفحهٔ آخر {fa(FORM_AUTO_TRIES)} بار خودکار پذیرفته نشد."
+        else:
+            raw = self._form_captcha_bytes(page, info.get("src") or "")
+            length = int(info.get("max") or 0)
+            if length in (0, 4):
+                code = _sadaf_code(raw)
+            if not code and length:
+                code = self._read_code(raw, length)
+            if not code and not length:
+                for size in (5, 6, 3):
+                    code = self._read_code(raw, size)
+                    if code:
+                        break
+            # Without a readable image there is nothing to try again with until the page changes it.
+            why = "کپچای صفحهٔ آخر خودکار خوانده نشد."
         if not code:
-            return "کپچای صفحهٔ آخر خوانده نشد."
+            code = self._ask_form_captcha(label, why)
+            if not code:
+                return "اپراتور کپچای صفحهٔ آخر را رد کرد."
         if not self._js(page, "c => window.__sadaf.fillFormCaptcha(c)", code):
             return "کپچای صفحهٔ آخر در کادر ننشست."
         return ""
+
+    def _ask_form_captcha(self, label: str, why: str) -> str:
+        """Alarm, then wait for the operator to type the final-page captcha in the panel."""
+        self._bump_captcha()
+        self._alarm(label, "form", why + " کد تصویر را از پنجرهٔ سدف در پنل بنویسید.")
+        while True:
+            cmd = self._poll(0.3)
+            if cmd == "skip":
+                return ""
+            if isinstance(cmd, tuple) and cmd[0] == "code":
+                if self._code_current(cmd):
+                    return cmd[1]
+                self._alarm(label, "form", "این کد برای تصویر قبلی بود. کد تصویر فعلی را بنویسید.")
 
     def _form_captcha_bytes(self, page, src: str) -> bytes:
         try:

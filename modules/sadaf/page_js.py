@@ -124,6 +124,11 @@ HELPERS_JS = r"""
       return hit.slice(0, 2).join(' — ');
     },
     pageHasUser: user => norm(document.body.innerText).includes(norm(user)),
+    siteUserName() {
+      // Header of the protected pages: «Menu1_lblName» holds the account owner's name.
+      const el = document.getElementById('Menu1_lblName') || document.querySelector('[id$="_lblName"]');
+      return el ? (el.innerText || el.textContent || '').replace(/\s+/g, ' ').trim() : '';
+    },
     lines() {
       return (document.body.innerText || '').split(/\n/).map(s => s.replace(/\s+/g, ' ').trim()).filter(Boolean);
     },

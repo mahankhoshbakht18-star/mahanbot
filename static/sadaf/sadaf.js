@@ -27,24 +27,8 @@ window.Sadaf = (function () {
     ],
   };
   let root, timer, catalog, catalogPromise, buildPromise;
-  let editingId = null, extras = [], editingExtra = -1, restored = false;
-  const DEFAULT_FIELDS = [
-    ["بخش مصرف", "کشاورزی"],
-    ["گروه کاربرد", "گلخانه"],
-    ["کاربرد", "گلخانه"],
-    ["کاربرد مورد نظر", "تولید محصولات سبزی و صیفی در گلخانه / بهره برداری گلخانه کوچک مقیاس (1027)"],
-    ["آمار تولید دوره کشت قبل", "299"],
-    ["نوع کشت", "خیار"],
-    ["سطح زیر کشت فعال", "299"],
-    ["شروع دوره کشت", "1405/07/01"],
-    ["مدت زمان کشت", "8ماه"],
-    ["نوع فروشندگی", "فروشندگی"],
-    ["نام فروشندگی", "تعاوني کهن شهر-زابلي"],
-    ["نوع مصرف سوخت", "مصرف سوخت جهت گرمایش"],
-    ["از تاریخ", "1405/08/01"],
-    ["تا تاریخ", "1405/08/30"],
-    ["نفتگاز|مقدار درخواستی در بخش یارانه", "2000"],
-  ];
+  let editingId = null, extras = [], editingExtra = -1;
+  let defaults = {};
 
   function norm(value) {
     return String(value || "").replace(/[يى]/g, "ی").replace(/ك/g, "ک").replace(/\s/g, "");
@@ -161,58 +145,68 @@ window.Sadaf = (function () {
   function shell() {
     const host = document.getElementById("view-sadaf");
     if (!host) return Promise.resolve();
-    if (host.dataset.ready === "4") return Promise.resolve();
+    if (host.dataset.ready === "5") return Promise.resolve();
     if (buildPromise) return buildPromise;
     buildPromise = (async () => {
       try {
       catalog = await ensureCatalog();
       root = host;
       host.classList.add("view-section");
+      const groupsFor = (id) => h("div", { id }, (catalog.groups || []).map((group) => h("section", {}, [
+        h("h3", { class: "sadaf-sub" }, [group.title]),
+        group.hint ? h("p", { class: "sadaf-hint" }, [group.hint]) : "",
+        h("div", { class: "sadaf-grid" }, group.fields.map(fieldControl)),
+      ])));
       host.replaceChildren(h("div", { class: "sadaf-wrap" }, [
         h("section", { class: "sadaf-hero" }, [
           h("div", {}, [
             h("div", { class: "sadaf-kicker" }, ["سوخت سدف"]),
-            h("h2", {}, ["اطلاعات مشتری و اجرای درخواست"]),
-            h("p", { id: "sadafMessage", class: "sadaf-message" }, ["نام کاربری، رمز و اطلاعات درخواست را ذخیره کنید. اجرای هر مشتری از همان رکورد دیتابیس خوانده می‌شود. کپچا و پیامک با شماست."]),
+            h("h2", {}, ["متقاضی‌ها و اجرای درخواست"]),
+            h("p", { id: "sadafMessage", class: "sadaf-message" }, ["اطلاعات درخواست یک بار در «تنظیمات» ذخیره می‌شود. برای متقاضی جدید فقط نام کاربری و رمز لازم است. کپچا خودکار حل می‌شود؛ فقط اگر چند تلاش خودکار شکست بخورد آلارم می‌دهد تا کد را دستی بنویسید."]),
           ]),
-          h("span", { id: "sadafSaveState", class: "sadaf-pill" }, ["هنوز ذخیره نشده"]),
+          h("span", { id: "sadafSaveState", class: "sadaf-pill" }, ["متقاضی جدید"]),
+        ]),
+        h("div", { class: "sadaf-alarm", id: "sadafAlarm", role: "alert" }, [
+          h("i", { class: "fa-solid fa-bell" }),
+          h("span", { id: "sadafAlarmText", class: "sadaf-grow" }, [""]),
+          button("نوشتن کد", () => { focusCaptcha(); }, "sadaf-btn primary"),
+          button("بی‌صدا", () => { alarmMuted = true; }, "sadaf-btn ghost"),
         ]),
         h("div", { class: "sadaf-stats", id: "sadafStats" }),
         h("article", { class: "sadaf-card", id: "sadaf-form" }, [
-          h("h3", { id: "sadafFormTitle" }, [h("i", { class: "fa-solid fa-user" }), "مشخصات مشتری"]),
+          h("h3", { id: "sadafFormTitle" }, ["متقاضی جدید"]),
           h("form", { id: "sadafForm", onsubmit: saveForm }, [
             h("div", { class: "sadaf-grid" }, [
-              h("label", {}, ["نام و نام خانوادگی", h("input", { id: "sadafName", class: "sadaf-input", autocomplete: "name" })]),
-              h("label", {}, ["شماره تلفن", h("input", { id: "sadafPhone", class: "sadaf-input", inputmode: "tel", autocomplete: "tel" })]),
               h("label", {}, ["نام کاربری سامانه سدف ", h("span", { class: "sadaf-req" }, ["*"]), h("input", { id: "sadafUser", class: "sadaf-input sadaf-latin", autocomplete: "off", required: "required" })]),
               h("label", {}, ["رمز عبور سامانه ", h("span", { class: "sadaf-req", id: "sadafPassMark" }, ["*"]),
-                h("input", { id: "sadafPass", class: "sadaf-input sadaf-latin", type: "password", autocomplete: "new-password", placeholder: "برای حفظ رمز قبلی خالی بگذارید" }),
+                h("input", { id: "sadafPass", class: "sadaf-input sadaf-latin", type: "password", autocomplete: "new-password" }),
               ]),
-              h("p", { class: "sadaf-hint sadaf-span-2" }, ["رمز رمزنگاری‌شده ذخیره می‌شود و دوباره نشان داده نمی‌شود. هنگام ویرایش، اگر خالی بماند همان رمز قبلی می‌ماند."]),
-              h("p", { class: "sadaf-hint sadaf-span-2" }, ["متقاضی جدید با تنظیم گلخانه پر می‌شود. برای صنعتی فقط سطح زیر کشت و لیتر نفتگاز را عوض کنید. تاریخ این پیش‌فرض ۱ تا ۳۰ آبان ۱۴۰۵ است."]),
+              h("label", {}, ["نام و نام خانوادگی (اختیاری)", h("input", { id: "sadafName", class: "sadaf-input", autocomplete: "off", placeholder: "خالی بماند، از پنل سدف خوانده می‌شود" })]),
+              h("label", {}, ["شماره تلفن (اختیاری)", h("input", { id: "sadafPhone", class: "sadaf-input", inputmode: "tel", autocomplete: "off" })]),
+              h("p", { class: "sadaf-hint sadaf-span-2" }, ["بقیهٔ اطلاعات درخواست از «تنظیمات» برداشته می‌شود. اگر نام را ننویسید، بات بعد از اولین ورود نام و نام خانوادگی را از پنل سدف می‌خواند و ذخیره می‌کند. رمز رمزنگاری‌شده ذخیره می‌شود و دوباره نشان داده نمی‌شود؛ هنگام ویرایش اگر خالی بماند همان رمز قبلی می‌ماند."]),
             ]),
-            h("div", { id: "sadafGroups" }, (catalog.groups || []).map((group) => h("section", {}, [
-              h("h3", { class: "sadaf-sub" }, [group.title]),
-              group.hint ? h("p", { class: "sadaf-hint" }, [group.hint]) : "",
-              h("div", { class: "sadaf-grid" }, group.fields.map(fieldControl)),
-            ]))),
-            h("h3", { class: "sadaf-sub" }, ["فیلد سفارشی"]),
-            h("div", { id: "sadafExtras" }),
-            h("div", { class: "sadaf-grid" }, [
-              h("label", {}, ["نام فیلد در سایت", h("input", { id: "sadafExtraName", class: "sadaf-input" })]),
-              h("label", {}, ["نوع فیلد", h("select", { id: "sadafExtraKind", class: "sadaf-input", onchange: toggleExtraOptions }, [
-                h("option", { value: "text" }, ["متنی"]),
-                h("option", { value: "number" }, ["عددی"]),
-                h("option", { value: "select" }, ["انتخابی"]),
-              ])]),
-              h("label", { class: "sadaf-span-2", id: "sadafExtraOptionsWrap" }, ["گزینه‌ها، هر کدام در یک خط", h("textarea", { id: "sadafExtraOptions", class: "sadaf-input", rows: "3" })]),
-              h("label", { class: "sadaf-span-2" }, ["مقدار", h("input", { id: "sadafExtraValue", class: "sadaf-input" })]),
+            h("details", { id: "sadafOwn", class: "sadaf-own" }, [
+              h("summary", {}, ["مقدار اختصاصی برای همین متقاضی (اختیاری)"]),
+              h("p", { class: "sadaf-hint" }, ["فقط خانه‌ای را پر کنید که برای این متقاضی با «تنظیمات» فرق دارد؛ مثلاً سطح زیر کشت یا لیتر نفتگاز. خانهٔ خالی از تنظیمات پر می‌شود."]),
+              groupsFor("sadafGroups"),
+              h("h3", { class: "sadaf-sub" }, ["فیلد سفارشی"]),
+              h("div", { id: "sadafExtras" }),
+              h("div", { class: "sadaf-grid" }, [
+                h("label", {}, ["نام فیلد در سایت", h("input", { id: "sadafExtraName", class: "sadaf-input" })]),
+                h("label", {}, ["نوع فیلد", h("select", { id: "sadafExtraKind", class: "sadaf-input", onchange: toggleExtraOptions }, [
+                  h("option", { value: "text" }, ["متنی"]),
+                  h("option", { value: "number" }, ["عددی"]),
+                  h("option", { value: "select" }, ["انتخابی"]),
+                ])]),
+                h("label", { class: "sadaf-span-2", id: "sadafExtraOptionsWrap" }, ["گزینه‌ها، هر کدام در یک خط", h("textarea", { id: "sadafExtraOptions", class: "sadaf-input", rows: "3" })]),
+                h("label", { class: "sadaf-span-2" }, ["مقدار", h("input", { id: "sadafExtraValue", class: "sadaf-input" })]),
+              ]),
+              h("div", { class: "sadaf-actions" }, [button("افزودن فیلد", addExtra, "sadaf-btn ghost")]),
             ]),
             h("div", { class: "sadaf-actions" }, [
-              button("افزودن فیلد", addExtra, "sadaf-btn ghost"),
-              h("button", { class: "sadaf-btn primary", type: "submit" }, ["ذخیره اطلاعات"]),
-              button("فرم تازه", clearForm, "sadaf-btn ghost"),
-              button("اجرای همین مشتری", runOne, "sadaf-btn teal"),
+              h("button", { class: "sadaf-btn primary", type: "submit" }, ["ذخیره متقاضی"]),
+              button("متقاضی جدید", clearForm, "sadaf-btn ghost"),
+              button("اجرای همین متقاضی", runOne, "sadaf-btn teal"),
             ]),
           ]),
         ]),
@@ -220,22 +214,18 @@ window.Sadaf = (function () {
           h("h3", {}, [h("i", { class: "fa-solid fa-play" }), "اجرای عملیات"]),
           h("p", { id: "sadafRunLine" }, ["مرورگر سدف هنوز باز نشده است."]),
           h("div", { class: "sadaf-inline" }, [
-            h("label", {}, ["مرورگر", h("select", { id: "sadafBrowser", class: "sadaf-input", onchange: saveBrowser }, [
-              h("option", { value: "chrome" }, ["Chrome"]),
-              h("option", { value: "edge" }, ["Edge"]),
-            ])]),
             h("label", {}, ["شروع صف از ردیف", h("input", { id: "sadafStartRow", class: "sadaf-input", type: "number", min: "1", value: "1" })]),
           ]),
           h("div", { class: "sadaf-inline" }, [
-            h("label", {}, ["کد امنیتی تصویر", h("input", { id: "sadafCaptcha", class: "sadaf-input sadaf-captcha", maxlength: "4", autocomplete: "off", spellcheck: "false", placeholder: "۴ حرف", onkeydown: async (event) => {
+            h("label", {}, ["کد امنیتی تصویر (بعد از آلارم)", h("input", { id: "sadafCaptcha", class: "sadaf-input sadaf-captcha", maxlength: "8", autocomplete: "off", spellcheck: "false", placeholder: "کد تصویر", onkeydown: async (event) => {
               if (event.key !== "Enter") return;
               event.preventDefault();
               try { await submitCaptcha(); }
               catch (error) { note(error.message || "عملیات انجام نشد.", "err"); }
             } })]),
-            button("ورود با این کد", submitCaptcha, "sadaf-btn primary"),
+            button("ارسال کد تصویر", submitCaptcha, "sadaf-btn primary"),
           ]),
-          h("p", { class: "sadaf-hint" }, ["کد را از پنجرهٔ سدف بخوانید و اینجا بنویسید. رمز ذخیره پر می‌شود و دکمهٔ ورود زده می‌شود. اگر سایت قبول کند، همان تصویر برای آموزش مدل سدف نگه داشته می‌شود."]),
+          h("p", { class: "sadaf-hint" }, ["ربات کپچای ورود و صفحهٔ آخر را چند بار خودکار حل می‌کند. اگر نشد، آلارم می‌دهد؛ آن‌وقت کد را از پنجرهٔ سدف بخوانید و اینجا بنویسید. کد ورود پذیرفته‌شده برای آموزش مدل سدف نگه داشته می‌شود."]),
           h("div", { class: "sadaf-inline" }, [
             h("label", { class: "sadaf-grow" }, ["کد تایید ۷ رقمی یا متن پیامک NIOPDC", h("textarea", { id: "sadafSms", class: "sadaf-input", rows: "2", autocomplete: "off", spellcheck: "false", placeholder: "اگر اپ پیامک وصل نیست، کد یا کل پیامک را اینجا بچسبانید" })]),
             button("ثبت پیامک", submitSms, "sadaf-btn primary"),
@@ -255,10 +245,11 @@ window.Sadaf = (function () {
           ]),
         ]),
         h("article", { class: "sadaf-card", id: "sadaf-people" }, [
-          h("h3", {}, [h("i", { class: "fa-solid fa-users" }), "فهرست مشتریان ", h("span", { id: "sadafPeopleCount", class: "sadaf-pill" }, ["۰"])]),
+          h("h3", {}, [h("i", { class: "fa-solid fa-users" }), "فهرست متقاضی‌ها ", h("span", { id: "sadafPeopleCount", class: "sadaf-pill" }, ["۰"])]),
           h("div", { class: "sadaf-inline" }, [
             h("input", { id: "sadafSearch", class: "sadaf-input", placeholder: "جست‌وجوی نام، تلفن یا نام کاربری", oninput: queueSearch }),
             button("جست‌وجو", loadCustomers, "sadaf-btn ghost"),
+            button("متقاضی جدید", newApplicant, "sadaf-btn primary"),
           ]),
           h("div", { class: "sadaf-table-wrap" }, [h("table", { class: "sadaf-table", id: "sadafTable" })]),
         ]),
@@ -275,10 +266,26 @@ window.Sadaf = (function () {
             button("نسخه پشتیبان", backup, "sadaf-btn ghost"),
           ]),
         ]),
+        h("article", { class: "sadaf-card", id: "sadaf-settings" }, [
+          h("h3", {}, [h("i", { class: "fa-solid fa-gear" }), "تنظیمات"]),
+          h("p", { class: "sadaf-hint" }, ["این اطلاعات برای همهٔ متقاضی‌ها یکی است و یک بار اینجا ذخیره می‌شود. اگر متقاضی‌ای مقدار اختصاصی داشته باشد، همان مقدار برای او جایگزین می‌شود."]),
+          h("form", { id: "sadafSettingsForm", onsubmit: (event) => { event.preventDefault(); saveSettings().catch((error) => note(error.message || "تنظیمات ذخیره نشد.", "err")); } }, [
+            h("h3", { class: "sadaf-sub" }, ["سامانه"]),
+            h("div", { class: "sadaf-grid" }, [
+              h("label", {}, ["مرورگر", h("select", { id: "sadafBrowser", class: "sadaf-input" }, [
+                h("option", { value: "chrome" }, ["Chrome"]),
+                h("option", { value: "edge" }, ["Edge"]),
+              ])]),
+              h("label", {}, ["آدرس سامانه", h("input", { id: "sadafBase", class: "sadaf-input sadaf-latin", autocomplete: "off" })]),
+            ]),
+            groupsFor("sadafSettingsGroups"),
+            h("div", { class: "sadaf-actions" }, [h("button", { class: "sadaf-btn primary", type: "submit" }, ["ذخیره تنظیمات"])]),
+          ]),
+        ]),
       ]));
       toggleExtraOptions();
       fillForm(null);
-      host.dataset.ready = "4";
+      host.dataset.ready = "5";
       } catch (error) {
         buildPromise = null;
         host.dataset.ready = "";
@@ -293,9 +300,10 @@ window.Sadaf = (function () {
     const wrap = document.getElementById("sadafExtraOptionsWrap");
     if (kind && wrap) wrap.hidden = kind.value !== "select";
   }
-  function valuesFromForm() {
+  function scopeOf(id) { return document.getElementById(id) || root; }
+  function valuesFromForm(scopeId) {
     const fields = [];
-    root.querySelectorAll("[data-field]").forEach((el) => {
+    scopeOf(scopeId).querySelectorAll("[data-field]").forEach((el) => {
       const kind = el.getAttribute("data-kind") || "text";
       let value = "";
       if (kind === "select") {
@@ -304,19 +312,32 @@ window.Sadaf = (function () {
       } else value = (el.value || "").trim();
       if (value) fields.push({ name: el.getAttribute("data-field"), value, kind });
     });
-    extras.forEach((item) => {
-      if (item.name && item.value) fields.push(item);
-    });
     return fields;
   }
-  function setControl(name, value) {
-    const el = root.querySelector('[data-field="' + CSS.escape(name) + '"]');
+  function ownFields() {
+    // Only what differs from «تنظیمات» is kept on the applicant, so later setting changes reach everyone.
+    const own = valuesFromForm("sadafGroups").filter((field) => norm(defaults[field.name] || "") !== norm(field.value));
+    extras.forEach((item) => { if (item.name && item.value) own.push(item); });
+    return own;
+  }
+  function setControl(scopeId, name, value) {
+    const el = scopeOf(scopeId).querySelector('[data-field="' + CSS.escape(name) + '"]');
     if (!el) return;
     el.value = value;
   }
+  function showDefaults() {
+    scopeOf("sadafGroups").querySelectorAll("[data-field]").forEach((el) => {
+      const value = defaults[el.getAttribute("data-field")] || "";
+      if (el.tagName === "SELECT") {
+        el.options[0].textContent = value ? "از تنظیمات: " + value : "— انتخاب کنید —";
+      } else {
+        el.placeholder = value ? "از تنظیمات: " + value : "";
+      }
+    });
+  }
   function fillForm(item) {
     editingId = item ? item.id : null;
-    document.getElementById("sadafFormTitle").textContent = item ? "ویرایش مشتری" : "مشخصات مشتری";
+    document.getElementById("sadafFormTitle").textContent = item ? "ویرایش متقاضی" : "متقاضی جدید";
     document.getElementById("sadafPassMark").textContent = item ? "" : "*";
     document.getElementById("sadafName").value = item ? item.full_name || "" : "";
     document.getElementById("sadafPhone").value = item ? item.phone || "" : "";
@@ -324,13 +345,19 @@ window.Sadaf = (function () {
     document.getElementById("sadafPass").value = "";
     const known = new Set(builtinNames());
     extras = [];
-    root.querySelectorAll("[data-field]").forEach((el) => { el.value = ""; });
-    (item ? item.fields || [] : DEFAULT_FIELDS.map(([name, value]) => ({ name, value }))).forEach((field) => {
-      if (known.has(field.name)) setControl(field.name, field.value);
-      else extras.push({ name: field.name, kind: field.kind || "text", value: field.value, options: field.options || "" });
+    scopeOf("sadafGroups").querySelectorAll("[data-field]").forEach((el) => { el.value = ""; });
+    let own = 0;
+    (item ? item.fields || [] : []).forEach((field) => {
+      if (known.has(field.name)) {
+        if (norm(defaults[field.name] || "") === norm(field.value)) return;
+        setControl("sadafGroups", field.name, field.value);
+      } else extras.push({ name: field.name, kind: field.kind || "text", value: field.value, options: field.options || "" });
+      own += 1;
     });
     drawExtras();
-    document.getElementById("sadafSaveState").textContent = item ? "در حال ویرایش" : "فرم تازه";
+    showDefaults();
+    document.getElementById("sadafOwn").open = own > 0;
+    document.getElementById("sadafSaveState").textContent = item ? "در حال ویرایش" : "متقاضی جدید";
   }
   function drawExtras() {
     const box = document.getElementById("sadafExtras");
@@ -378,9 +405,14 @@ window.Sadaf = (function () {
     toggleExtraOptions();
     drawExtras();
   }
+  async function newApplicant() {
+    await focus("form");
+    clearForm();
+  }
   function clearForm() {
     fillForm(null);
-    note("فرم متقاضی جدید با تنظیم گلخانه پر شد. برای صنعتی فقط سطح زیر کشت و لیتر را عوض کنید.", "ok");
+    note("نام کاربری و رمز متقاضی جدید را بنویسید. بقیه از «تنظیمات» برداشته می‌شود.", "ok");
+    document.getElementById("sadafUser").focus();
   }
   async function persist() {
     const payload = {
@@ -388,7 +420,7 @@ window.Sadaf = (function () {
       username: document.getElementById("sadafUser").value.trim(),
       phone: document.getElementById("sadafPhone").value.trim(),
       password: document.getElementById("sadafPass").value,
-      fields: valuesFromForm(),
+      fields: ownFields(),
     };
     if (!payload.username) throw new Error("نام کاربری لازم است.");
     if (!editingId && !payload.password) throw new Error("برای مشتری جدید رمز عبور لازم است.");
@@ -401,9 +433,9 @@ window.Sadaf = (function () {
     editingId = saved.id;
     document.getElementById("sadafPass").value = "";
     document.getElementById("sadafPassMark").textContent = "";
-    document.getElementById("sadafFormTitle").textContent = "ویرایش مشتری";
+    document.getElementById("sadafFormTitle").textContent = "ویرایش متقاضی";
     document.getElementById("sadafSaveState").textContent = "ذخیره شد";
-    note("اطلاعات ذخیره شد. با «اجرای همین مشتری» همین رکورد از دیتابیس خوانده می‌شود.", "ok");
+    note(saved.full_name ? "متقاضی «" + saved.full_name + "» ذخیره شد." : "متقاضی ذخیره شد. نام بعد از اولین ورود از پنل سدف خوانده می‌شود.", "ok");
     await loadCustomers();
     await refresh();
     return saved;
@@ -438,9 +470,9 @@ window.Sadaf = (function () {
     const table = document.getElementById("sadafTable");
     const items = data.items || [];
     document.getElementById("sadafPeopleCount").textContent = fa(items.length);
-    const head = h("thead", {}, [h("tr", {}, ["نام", "تلفن", "نام کاربری", "وضعیت اطلاعات", "آخرین اجرا", "تاریخ", ""].map((title) => h("th", {}, [title])))]);
+    const head = h("thead", {}, [h("tr", {}, ["نام", "تلفن", "نام کاربری", "اطلاعات درخواست", "آخرین اجرا", "تاریخ", ""].map((title) => h("th", {}, [title])))]);
     const body = h("tbody", {}, items.map((item) => h("tr", {}, [
-      h("td", {}, [item.full_name || "—"]),
+      h("td", {}, [item.full_name || "از پنل سدف خوانده می‌شود"]),
       h("td", { class: "sadaf-latin" }, [item.phone || "—"]),
       h("td", { class: "sadaf-latin" }, [item.username]),
       h("td", {}, [item.info_status || "—"]),
@@ -465,20 +497,88 @@ window.Sadaf = (function () {
     const run = data.run || {};
     const who = run.current ? "مشتری " + fa(run.current.index) + " از " + fa(run.current.total) + " — " + run.current.username : "";
     document.getElementById("sadafRunLine").textContent = [statusText[run.status] || "آماده", who, run.message || ""].filter(Boolean).join(" · ");
+    showAlarm(run.alarm);
     const events = await api("/api/sadaf/events?limit=12");
     document.getElementById("sadafLog").replaceChildren(...(events.items || []).map((item) => h("div", {}, [item.at + " — " + item.message])));
+  }
+  let alarmAt = 0, alarmMuted = false, alarmTimer = 0, titleTimer = 0, audio = null, plainTitle = "";
+  function tone() {
+    try {
+      audio = audio || new (window.AudioContext || window.webkitAudioContext)();
+      [0, 0.35].forEach((delay) => {
+        const osc = audio.createOscillator(), gain = audio.createGain();
+        osc.type = "square"; osc.frequency.value = 880; gain.gain.value = 0.08;
+        osc.connect(gain); gain.connect(audio.destination);
+        osc.start(audio.currentTime + delay); osc.stop(audio.currentTime + delay + 0.22);
+      });
+    } catch (error) {}
+  }
+  function focusCaptcha() {
+    const box = document.getElementById("sadafCaptcha");
+    if (!box) return;
+    box.scrollIntoView({ behavior: "smooth", block: "center" });
+    box.focus();
+  }
+  function askNotify() {
+    try { if (window.Notification && Notification.permission === "default") Notification.requestPermission(); } catch (error) {}
+  }
+  function showAlarm(alarm) {
+    const box = document.getElementById("sadafAlarm");
+    if (!box) return;
+    if (!alarm) {
+      if (alarmAt) {
+        box.classList.remove("on");
+        clearInterval(alarmTimer); clearInterval(titleTimer);
+        document.title = plainTitle || document.title;
+        alarmAt = 0;
+      }
+      return;
+    }
+    document.getElementById("sadafAlarmText").textContent = alarm.message || "ربات سدف منتظر شماست.";
+    if (alarm.at === alarmAt) return;
+    if (!alarmAt) plainTitle = document.title;
+    alarmAt = alarm.at; alarmMuted = false;
+    box.classList.add("on");
+    clearInterval(alarmTimer); clearInterval(titleTimer);
+    tone();
+    alarmTimer = setInterval(() => { if (!alarmMuted) tone(); }, 4000);
+    let flip = false;
+    titleTimer = setInterval(() => { flip = !flip; document.title = flip ? "⚠ سدف منتظر شماست" : plainTitle; }, 1000);
+    try {
+      if (window.Notification && Notification.permission === "granted") new Notification("ربات سدف منتظر شماست", { body: alarm.message || "" });
+    } catch (error) {}
+    if (alarm.kind !== "credentials") focusCaptcha();
   }
   function stat(label, value) {
     return h("article", { class: "sadaf-stat" }, [h("small", {}, [label]), h("strong", {}, [fa(value)])]);
   }
-  async function saveBrowser() {
-    await api("/api/sadaf/settings", {
+  function useSettings(data) {
+    defaults = {};
+    (data.request_fields || []).forEach((field) => { defaults[field.name] = field.value; });
+    const browser = document.getElementById("sadafBrowser");
+    if (browser && data.browser) browser.value = data.browser;
+    const base = document.getElementById("sadafBase");
+    if (base) base.value = data.base_url || "";
+    scopeOf("sadafSettingsGroups").querySelectorAll("[data-field]").forEach((el) => {
+      el.value = defaults[el.getAttribute("data-field")] || "";
+    });
+    showDefaults();
+  }
+  async function saveSettings() {
+    const data = await api("/api/sadaf/settings", {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ browser: document.getElementById("sadafBrowser").value, base_url: "https://newtejaratasan.niopdc.ir" }),
+      body: JSON.stringify({
+        browser: document.getElementById("sadafBrowser").value,
+        base_url: document.getElementById("sadafBase").value.trim(),
+        request_fields: valuesFromForm("sadafSettingsGroups"),
+      }),
     });
+    useSettings(data);
+    note("تنظیمات ذخیره شد. از این به بعد همهٔ متقاضی‌ها با همین اطلاعات اجرا می‌شوند.", "ok");
   }
   async function openSite() {
+    askNotify();
     let customerId = editingId;
     const username = document.getElementById("sadafUser") ? document.getElementById("sadafUser").value.trim() : "";
     const password = document.getElementById("sadafPass") ? document.getElementById("sadafPass").value : "";
@@ -496,6 +596,7 @@ window.Sadaf = (function () {
     await refresh();
   }
   async function runStart(force) {
+    askNotify();
     if (force && !confirm("مشتری‌هایی که قبلاً ثبت موفق داشته‌اند دوباره اجرا شوند؟")) return;
     await api("/api/sadaf/runs/start", {
       method: "POST",
@@ -506,6 +607,7 @@ window.Sadaf = (function () {
     await refresh();
   }
   async function runCustomer(id, alreadyDone) {
+    askNotify();
     if (alreadyDone && !confirm("این مشتری قبلاً ثبت موفق دارد. دوباره اجرا شود؟")) return;
     await api("/api/sadaf/runs/start", {
       method: "POST",
@@ -528,7 +630,7 @@ window.Sadaf = (function () {
       body: JSON.stringify({ code }),
     });
     if (box) box.value = "";
-    note("کد فرستاده شد. ورود زده می‌شود.", "ok");
+    note("کد فرستاده شد.", "ok");
     await refresh();
   }
   async function submitSms() {
@@ -581,13 +683,11 @@ window.Sadaf = (function () {
     note("نسخه پشتیبان دیتابیس سدف ذخیره شد.", "ok");
   }
   async function loadSettings() {
-    const data = await api("/api/sadaf/settings");
-    const box = document.getElementById("sadafBrowser");
-    if (box && data.browser) box.value = data.browser;
+    useSettings(await api("/api/sadaf/settings"));
   }
   function markNav(name) {
     const links = document.querySelectorAll("#sadafNav .nav-link");
-    const index = { form: 0, run: 1, people: 2, log: 3 }[name];
+    const index = { form: 0, run: 1, people: 2, log: 3, settings: 4 }[name];
     links.forEach((link, i) => link.classList.toggle("active", i === index));
   }
   async function focus(name) {
@@ -600,11 +700,10 @@ window.Sadaf = (function () {
     await shell();
     const view = document.getElementById("view-sadaf");
     if (view) view.classList.add("active-view");
-    await loadSettings().catch(() => {});
+    await loadSettings().catch((error) => note(error.message, "err"));
     await refresh().catch((error) => note(error.message, "err"));
     await loadCustomers().catch((error) => note(error.message, "err"));
     await loadJahad().catch(() => {});
-    await restoreSaved().catch((error) => note(error.message, "err"));
     if (!document.querySelector("#sadafNav .nav-link.active")) markNav("form");
     clearInterval(timer);
     let ticks = 0;
@@ -614,19 +713,6 @@ window.Sadaf = (function () {
       if (ticks % 5 === 0) loadJahad().catch(() => {});
     }, 2000);
   }
-  async function restoreSaved() {
-    if (restored || editingId) return;
-    const username = document.getElementById("sadafUser");
-    if (username && username.value.trim()) return;
-    restored = true;
-    const data = await api("/api/sadaf/customers");
-    const items = data.items || [];
-    if (!items.length) return;
-    const latest = items.slice().sort((a, b) => String(b.updated_at || "").localeCompare(String(a.updated_at || "")))[0];
-    const full = await api("/api/sadaf/customers/" + latest.id);
-    fillForm(full);
-    note("اطلاعات ذخیره‌شدهٔ «" + (full.full_name || full.username) + "» برگشت. رمز برای امنیت دوباره نشان داده نمی‌شود.", "ok");
-  }
   function leave() { clearInterval(timer); }
   function resumeModule() {
     try {
@@ -635,5 +721,5 @@ window.Sadaf = (function () {
   }
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", resumeModule);
   else resumeModule();
-  return { enter, leave, focus };
+  return { enter, leave, focus, newApplicant };
 })();
