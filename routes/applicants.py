@@ -16,6 +16,8 @@ from core.helpers import (
     _normalize_nid,
     normalize_postal_code,
     normalize_mobile,
+    normalize_applicant_payload,
+    validate_applicant_save,
     _open_aiosqlite,
     _serialize_applicants,
 )
@@ -220,55 +222,59 @@ def get_applicants():
 @router.post("/applicants")
 async def save_applicant(req: ApplicantModel):
     try:
-        national_id = _normalize_nid(req.national_id)
-        if not national_id.isdigit() or len(national_id) != 10:
-            raise HTTPException(status_code=422, detail="کد ملی باید دقیقاً ۱۰ رقم باشد")
-        applicant_data = dict(req.data or {})
+        full_name, national_id, applicant_data = normalize_applicant_payload(
+            req.full_name, req.national_id, dict(req.data or {})
+        )
         try:
             validate_submission_settings(applicant_data)
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from None
-        spouse_national_id = _normalize_nid(applicant_data.get("spouse_national_id"))
-        if spouse_national_id and (not spouse_national_id.isdigit() or len(spouse_national_id) != 10):
-            raise HTTPException(status_code=422, detail="کد ملی همسر باید دقیقاً ۱۰ رقم باشد")
-        applicant_data["spouse_national_id"] = spouse_national_id
 
-        child_national_id = _normalize_nid(applicant_data.get("child_national_id"))
-        if child_national_id and (not child_national_id.isdigit() or len(child_national_id) != 10):
-            raise HTTPException(status_code=422, detail="کد ملی فرزند باید دقیقاً ۱۰ رقم باشد")
-        if child_national_id:
-            applicant_data["child_national_id"] = child_national_id
-
-        raw_zip = applicant_data.get("postal_code") or applicant_data.get("zip_code")
-        postal_code = normalize_postal_code(raw_zip)
-        if postal_code and (not postal_code.isdigit() or len(postal_code) != 10):
-            raise HTTPException(status_code=422, detail="کد پستی باید دقیقاً ۱۰ رقم باشد")
-        applicant_data["zip_code"] = postal_code
-        applicant_data["postal_code"] = postal_code
-
-        if applicant_data.get("mobile"):
-            applicant_data["mobile"] = normalize_mobile(applicant_data.get("mobile"))
+        errors = validate_applicant_save(full_name, national_id, applicant_data)
+        if errors:
+            raise HTTPException(status_code=422, detail="؛ ".join(errors))
 
         d_str = json.dumps(applicant_data, ensure_ascii=False)
         async with _open_aiosqlite() as conn:
             if req.id:
+                existing_row = await (await conn.execute("SELECT id, national_id FROM applicants WHERE id=?", (req.id,))).fetchone()
+                if not existing_row:
+                    raise HTTPException(status_code=404, detail="پرونده متقاضی جهت ویرایش یافت نشد")
+                old_nid = existing_row[1] if isinstance(existing_row, tuple) else existing_row["national_id"]
+                conflict = await (
+                    await conn.execute("SELECT id FROM applicants WHERE national_id=? AND id!=?", (national_id, req.id))
+                ).fetchone()
+                if conflict:
+                    raise HTTPException(status_code=409, detail="متقاضی دیگری با این کد ملی قبلاً ثبت شده است")
                 await conn.execute(
                     "UPDATE applicants SET full_name=?, national_id=?, data=? WHERE id=?",
-                    (req.full_name, national_id, d_str, req.id),
+                    (full_name, national_id, d_str, req.id),
                 )
+                if old_nid and old_nid != national_id:
+                    for tbl, col in (
+                        ("automation_runtime", "nid"),
+                        ("checkpoints", "nid"),
+                        ("profile_health", "nid"),
+                    ):
+                        await conn.execute(f"UPDATE {tbl} SET {col}=? WHERE {col}=?", (national_id, old_nid))
             else:
+                dup = await (await conn.execute("SELECT id FROM applicants WHERE national_id=?", (national_id,))).fetchone()
+                if dup:
+                    raise HTTPException(
+                        status_code=409,
+                        detail="این متقاضی قبلاً ثبت شده است؛ برای تغییر مشخصات پرونده قبلی را ویرایش کنید",
+                    )
                 await conn.execute(
-                    "INSERT INTO applicants (full_name, national_id, data) VALUES (?, ?, ?) "
-                    "ON CONFLICT(national_id) DO UPDATE SET full_name=excluded.full_name, data=excluded.data",
-                    (req.full_name, national_id, d_str),
+                    "INSERT INTO applicants (full_name, national_id, data) VALUES (?, ?, ?)",
+                    (full_name, national_id, d_str),
                 )
             await conn.commit()
         _emit_applicants_snapshot()
-        return {"status": "ok"}
+        return {"status": "ok", "national_id": national_id}
     except HTTPException:
         raise
-    except Exception as e:
-        return {"status": "error", "msg": str(e)}
+    except Exception:
+        raise HTTPException(status_code=500, detail="خطای پایگاه‌داده در ذخیره‌سازی اطلاعات متقاضی")
 
 
 @router.post("/applicants/import-excel")

@@ -57,6 +57,11 @@ class Job:
 # ── Queue ─────────────────────────────────────────────────────────────
 class JobQueue:
     ACTIVE_STATUSES = {"queued", "running", "cancelling"}
+    # Bots whose success may auto-start the next waiting applicant.
+    CHAINING_BOTS = {"select", "register"}
+    # Bots that start at once in their own thread instead of waiting for a
+    # worker slot, and of which only one may be open at a time.
+    IMMEDIATE_BOTS = {"status"}
 
     def __init__(self, max_concurrency: int):
         self._max_concurrency = max_concurrency
@@ -111,18 +116,39 @@ class JobQueue:
                     return job
         return None
 
+    def active_job_of(self, bot_name: str) -> Optional[Job]:
+        with self._lock:
+            for job in self._jobs.values():
+                if job.bot_name == bot_name and job.status in self.ACTIVE_STATUSES:
+                    return job
+        return None
+
     def enqueue(self, bot_name: str, nid: str, payload: Dict[str, Any]) -> Optional[Job]:
+        immediate = bot_name in self.IMMEDIATE_BOTS
         with self._condition:
             if any(
                 existing.nid == nid and existing.status in self.ACTIVE_STATUSES
                 for existing in self._jobs.values()
             ):
                 return None
+            if immediate and any(
+                existing.bot_name == bot_name and existing.status in self.ACTIVE_STATUSES
+                for existing in self._jobs.values()
+            ):
+                return None
             job = Job(bot_name, nid, payload)
             self._jobs[job.id] = job
-            self._queue.append(job.id)
-            self._condition.notify()
+            if immediate:
+                job.status = "running"
+                job.started_at = time.time()
+            else:
+                self._queue.append(job.id)
+                self._condition.notify()
         job_status_event(nid, job.id, "queued")
+        if immediate:
+            # No waiting behind other applicants and no hand-off to a next one.
+            threading.Thread(target=self._process_job, args=(job, bot_name), daemon=True,
+                             name=f"{bot_name}-{nid}").start()
         return job
 
     def cancel(self, job_id: str) -> Optional[Job]:
@@ -198,79 +224,89 @@ class JobQueue:
                 job.status = "running"
                 job.started_at = time.time()
 
-            job_status_event(job.nid, job.id, "running")
-            log_event(job.nid, job.id, f"Job started ({job.bot_name})", "info")
+            self._process_job(job, worker_id)
+
+    def _process_job(self, job: Job, worker_label: str) -> None:
+        """Run one job that is already marked running, then record its outcome."""
+        worker_id = worker_label
+        job_status_event(job.nid, job.id, "running")
+        log_event(job.nid, job.id, f"Job started ({job.bot_name})", "info")
+        try:
+            from core.state_machine import transition_state, BotState
+            from core.queue_manager import QueueManager
+            transition_state(job.nid, BotState.STARTING.value, f"worker_{worker_id}_started")
+            QueueManager.heartbeat(job.nid, f"worker_{worker_id}")
+            QueueManager.emit_snapshot()
+        except Exception:
+            pass
+
+        try:
+            self._run_job_isolated(job)
+            current_runtime = DBHandler.get_runtime(job.nid)
+            is_success = (
+                current_runtime.get("status") == "SUCCESS"
+                and current_runtime.get("current_step") in {"DONE", "REGISTRATION_CONFIRMED", "SUCCESS"}
+            )
+            if is_success:
+                job.status = "completed"
+                if job.bot_name in self.CHAINING_BOTS:
+                    log_event(job.nid, job.id, "🎉 ثبت نام متقاضی با موفقیت قطعی انجام شد و کد رهگیری دریافت گردید.", "success")
+                else:
+                    log_event(job.nid, job.id, "✅ استعلام وضعیت انجام شد.", "success")
+            elif job.cancel_requested:
+                job.status = "cancelled"
+            elif current_runtime.get("status") == "ERROR":
+                job.status = "failed"
+                job.error = current_runtime.get("last_error") or "bot_error"
+            else:
+                job.status = "stopped"
+        except Exception as e:
+            job.status = "failed"
+            job.error = str(e)
+            log_event(job.nid, job.id, f"خطا: {e}", "error")
+        finally:
+            job.finished_at = time.time()
+            current_runtime = DBHandler.get_runtime(job.nid)
+            is_success = (
+                current_runtime.get("status") == "SUCCESS"
+                and current_runtime.get("current_step") in {"DONE", "REGISTRATION_CONFIRMED", "SUCCESS"}
+            )
+            runtime_status = "SUCCESS" if is_success else ("STOPPED" if job.status in {"stopped", "cancelled", "completed"} else "ERROR")
+            if not is_success:
+                DBHandler.update_runtime(
+                    job.nid,
+                    status=runtime_status,
+                    browser_status="CLOSED",
+                    current_step="STOPPED" if runtime_status == "STOPPED" else current_runtime.get("current_step") or "ERROR",
+                    last_error=str(job.error or current_runtime.get("last_error") or "")[:300],
+                )
+            job_status_event(job.nid, job.id, job.status)
             try:
                 from core.state_machine import transition_state, BotState
                 from core.queue_manager import QueueManager
-                transition_state(job.nid, BotState.STARTING.value, f"worker_{worker_id}_started")
-                QueueManager.heartbeat(job.nid, f"worker_{worker_id}")
+                if is_success:
+                    transition_state(job.nid, BotState.CONFIRMED.value, "final_submit_confirmed")
+                elif job.status == "failed":
+                    transition_state(job.nid, BotState.FAILED.value, str(job.error or "failed"))
+                else:
+                    transition_state(job.nid, BotState.PAUSED.value, f"job_{job.status}")
                 QueueManager.emit_snapshot()
             except Exception:
                 pass
-
-            try:
-                self._run_job_isolated(job)
-                current_runtime = DBHandler.get_runtime(job.nid)
-                is_success = (
-                    current_runtime.get("status") == "SUCCESS"
-                    and current_runtime.get("current_step") in {"DONE", "REGISTRATION_CONFIRMED", "SUCCESS"}
+            with self._lock:
+                finished = sorted(
+                    (item for item in self._jobs.values() if item.finished_at),
+                    key=lambda item: item.finished_at or 0,
+                    reverse=True,
                 )
-                if is_success:
-                    job.status = "completed"
-                    log_event(job.nid, job.id, "🎉 ثبت نام متقاضی با موفقیت قطعی انجام شد و کد رهگیری دریافت گردید.", "success")
-                elif job.cancel_requested:
-                    job.status = "cancelled"
-                elif current_runtime.get("status") == "ERROR":
-                    job.status = "failed"
-                    job.error = current_runtime.get("last_error") or "bot_error"
-                else:
-                    job.status = "stopped"
-            except Exception as e:
-                job.status = "failed"
-                job.error = str(e)
-                log_event(job.nid, job.id, f"خطا: {e}", "error")
-            finally:
-                job.finished_at = time.time()
-                current_runtime = DBHandler.get_runtime(job.nid)
-                is_success = (
-                    current_runtime.get("status") == "SUCCESS"
-                    and current_runtime.get("current_step") in {"DONE", "REGISTRATION_CONFIRMED", "SUCCESS"}
-                )
-                runtime_status = "SUCCESS" if is_success else ("STOPPED" if job.status in {"stopped", "cancelled", "completed"} else "ERROR")
-                if not is_success:
-                    DBHandler.update_runtime(
-                        job.nid,
-                        status=runtime_status,
-                        browser_status="CLOSED",
-                        current_step="STOPPED" if runtime_status == "STOPPED" else current_runtime.get("current_step") or "ERROR",
-                        last_error=str(job.error or current_runtime.get("last_error") or "")[:300],
-                    )
-                job_status_event(job.nid, job.id, job.status)
-                try:
-                    from core.state_machine import transition_state, BotState
-                    from core.queue_manager import QueueManager
-                    if is_success:
-                        transition_state(job.nid, BotState.CONFIRMED.value, "final_submit_confirmed")
-                    elif job.status == "failed":
-                        transition_state(job.nid, BotState.FAILED.value, str(job.error or "failed"))
-                    else:
-                        transition_state(job.nid, BotState.PAUSED.value, f"job_{job.status}")
-                    QueueManager.emit_snapshot()
-                except Exception:
-                    pass
-                with self._lock:
-                    finished = sorted(
-                        (item for item in self._jobs.values() if item.finished_at),
-                        key=lambda item: item.finished_at or 0,
-                        reverse=True,
-                    )
-                    for stale in finished[200:]:
-                        self._jobs.pop(stale.id, None)
+                for stale in finished[200:]:
+                    self._jobs.pop(stale.id, None)
 
-                # Auto-chain next applicant when bank opens and registration succeeds
-                if is_success and not self._shutting_down:
-                    self.trigger_next_applicant_on_success(job.nid, job.bot_name)
+            # Auto-chain next applicant when bank opens and registration succeeds
+            # Only a confirmed registration frees a bank slot worth chaining into.
+            # A status inquiry must never start another applicant after it.
+            if is_success and not self._shutting_down and job.bot_name in self.CHAINING_BOTS:
+                self.trigger_next_applicant_on_success(job.nid, job.bot_name)
 
     def trigger_next_applicant_on_success(self, completed_nid: str, bot_name: str = "select") -> Optional[str]:
         """

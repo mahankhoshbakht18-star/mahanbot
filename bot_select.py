@@ -928,10 +928,8 @@ class BankSelectionBot(BotCore):
                         elif result in {'manual_required', 'target_closed'}:
                             if result == 'target_closed':
                                 break
-                            self.live_owner.paused = True
-                            self.set_runtime_state("WAITING_USER_INPUT", "MANUAL_CAPTCHA_OR_OTP", browser_status="OPEN")
-                            self.log("منتظر اقدام دستی کاربر (کپچا یا پیامک)؛ مرورگر باز و نشست حفظ می‌شود.", "info", page)
-                            if sleep_with_stop(stop_event, 0.5):
+                            self.log("صفحه پیامک هنوز باز است؛ بدون انتظار دستی دوباره تلاش می‌شود.", "info", page)
+                            if sleep_with_stop(stop_event, 0.4):
                                 break
                             continue
 

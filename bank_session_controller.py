@@ -8,6 +8,9 @@ from database import DBHandler, normalize_config
 from submission_policy import submission_policy
 from bot_select_bank import (
     process_bank_selection_v2,
+    canonicalize_bank_name,
+    match_bank_option,
+    _read_dropdown_options,
     _extract_confirmed_submission,
     extract_confirmed_reservation,
 )
@@ -23,6 +26,7 @@ class BankSelectionSessionController:
         self.bot, self.owner = bot, owner
         self.state = State.BANK_PAGE_DETECTED
         self._prepared = False
+        self._retry_prepare_at = 0.0
         self._last_preferences = None
         self._next_check = 0.0
         self._next_submit = 0.0
@@ -240,6 +244,43 @@ class BankSelectionSessionController:
                 names.append(fallback)
         return names
 
+    def _switch_after_capacity(self, interval):
+        """Auto final submit was rejected for capacity: cool the rejected bank and, if another
+        priority bank is in the live list, select and submit it right away. When every
+        priority bank is full, start a new monitoring round from the first priority."""
+        bot = self.bot
+        names = self._get_target_bank_names()
+        target = DBHandler.get_runtime(bot.nid).get('target_bank') or ''
+        if not target or len(names) < 2:
+            return False
+        now = time.time()
+        cooldowns = getattr(bot, '_bank_cooldowns', None)
+        if cooldowns is None:
+            cooldowns = bot._bank_cooldowns = {}
+        cooldowns[canonicalize_bank_name(target)] = now + interval + 5
+        cooled = {key for key, until in cooldowns.items() if until > now}
+        try:
+            options = [str(o.get('text') or '') for o in
+                       _read_dropdown_options(self.owner.page, '#ctl00_ContentPlaceHolder1_ddlBankName')]
+        except Exception:
+            options = []
+        remaining = [name for name in names
+                     if canonicalize_bank_name(name) not in cooled
+                     and any(match_bank_option(name, text) for text in options)]
+        self._prepared = False
+        self._submission_ready = False
+        if not remaining:
+            cooldowns.clear()
+            bot.log(f"⏳ ظرفیت همه بانک‌های انتخابی ({'، '.join(names)}) تکمیل است؛ پایش مجدد از اولویت اول در {int(interval)}ث.",
+                    'warning', self.owner.page)
+            return False
+        bot.log(f"🔁 ظرفیت «{target}» تکمیل بود؛ انتخاب و ثبت فوری بانک بعدی «{remaining[0]}»...",
+                'warning', self.owner.page)
+        self._last_attempt_completed = None
+        self._next_submit = 0.0
+        self._next_check = 0.0
+        return True
+
     def _submission_allowed(self):
         from core.licensing import can_run
         return submission_policy(normalize_config(DBHandler.get_config()), self._preferences())[0] and can_run()
@@ -307,6 +348,8 @@ class BankSelectionSessionController:
         else:
             self.transition(state, result)
         enabled, interval = submission_policy(normalize_config(DBHandler.get_config()), self._preferences())
+        if result == 'capacity_full' and enabled and self._switch_after_capacity(interval):
+            return 'waiting'
         retry = result == 'capacity_full' and enabled
         DBHandler.update_runtime(bot.nid, last_refresh=time.time(), next_refresh=time.time() + interval if retry else 0,
                                  check_interval=interval, check_method='native_submit_retry')
@@ -482,6 +525,8 @@ class BankSelectionSessionController:
                     self._last_attempt_completed = self._monotonic()
                     self._next_submit = self._last_attempt_completed + interval
                     self.transition(State.CAPACITY_FULL, 'late_capacity_rejection')
+                    if enabled:
+                        self._switch_after_capacity(interval)
                 else:
                     self.transition(State.MANUAL_ACTION_REQUIRED, 'previous_submission_requires_reconciliation')
                     return 'waiting'
@@ -501,12 +546,19 @@ class BankSelectionSessionController:
                 if cfg.get('bank_monitor_enabled', True):
                     return self.reload_and_redetect()
 
+            if (self._prepared and self._retry_prepare_at
+                    and self._monotonic() >= self._retry_prepare_at):
+                self._prepared = False
             if not self._prepared:
+                self._retry_prepare_at = 0.0
                 self.transition(State.BANK_OPTIONS_READY)
                 result = process_bank_selection_v2(bot, owner.page, owner.cancellation_token, capacity_sniping=True)
                 if owner.cancellation_token.is_set():
                     return 'stopped'
                 self._prepared = result not in {'no_match', 'waiting'}
+                if result == 'manual_action_required':
+                    # Usually the mode radios were still rendering; try again shortly.
+                    self._retry_prepare_at = self._monotonic() + 5.0
                 self._submission_ready = result in {'option_selected_waiting_user', 'capacity_full'}
                 _, latest = self.observe()
                 self._last_selection = self._selection_signature(latest)

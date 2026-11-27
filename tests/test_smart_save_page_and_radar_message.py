@@ -69,13 +69,15 @@ class TestSmartSavePageAndRadarMessage(unittest.TestCase):
             applicant_nid="0012345678",
             action_status="پایش فعال ظرفیت"
         )
-        self.assertIn("<b>استان:</b> تهران", msg)
-        self.assertIn("<b>شهر:</b> تهران", msg)
-        self.assertIn("بانک ملت", msg)
-        self.assertIn("۱,۴۵۰", msg)  # Persian formatted number
-        self.assertIn("بانک تجارت", msg)
-        self.assertIn("۲,۱۰۰", msg)
+        self.assertIn("استان <b>تهران</b>", msg)
+        self.assertIn("شهر <b>تهران</b>", msg)
+        self.assertIn("🤝 <b>بانک ملت</b>", msg)   # each bank with its own emoji
+        self.assertIn("۱٬۴۵۰", msg)  # Persian digits with Persian thousands separator
+        self.assertIn("💼 <b>بانک تجارت</b>", msg)
+        self.assertIn("۲٬۱۰۰", msg)
         self.assertIn("پایش فعال ظرفیت", msg)
+        # Official CBI order: ملت (12) before صادرات (19), whatever order the page listed them in.
+        self.assertLess(msg.index("بانک ملت"), msg.index("بانک صادرات ایران"))
 
     @patch.object(TelegramNotifierService, "send_raw_telegram", return_value=(True, "OK"))
     def test_page3_banks_broadcast_directly_to_channel(self, mock_send):

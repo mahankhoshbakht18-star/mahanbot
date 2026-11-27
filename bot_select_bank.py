@@ -3,6 +3,7 @@ import hashlib
 import os
 import re
 import shutil
+import threading
 import time
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -904,9 +905,11 @@ def _select_bank_mode(bot, page, desired_mode: str, bank_name: str) -> Tuple[str
 
     mode_controls = _inspect_mode_controls(page)
     if not mode_controls:
-        # Give dynamic UpdatePanel up to 1.5s to render mode radio buttons/select
+        # Give the UpdatePanel time to render the mode radio buttons/select (1.5s was too
+        # short and parked the run in MANUAL_ACTION_REQUIRED for ~20s).
+        wait_s = float(bot.settings.get("bank_mode_controls_wait_seconds", 6.0))
         start_t = time.time()
-        while time.time() - start_t < 1.5:
+        while time.time() - start_t < wait_s:
             try:
                 page.wait_for_timeout(50)
             except Exception:
@@ -1319,24 +1322,27 @@ def process_bank_selection_v2(bot, page, stop_event, *, capacity_sniping=False):
         except Exception:
             pass
 
-        # Radar ingest + direct channel digest (same path that used to publish live bank lists)
-        try:
-            from core.capacity_radar import CAPACITY_RADAR
-            obs_prov_val = obs_prov or getattr(bot, "state_name", "") or getattr(bot, "province_name", "") or (getattr(bot, "user_data", {}) or {}).get("state") or "سراسری"
-            obs_city_val = obs_city or getattr(bot, "city_name", "") or (getattr(bot, "user_data", {}) or {}).get("city") or "کل استان"
-            loan_type_val = getattr(bot, "loan_type", "marriage") or "marriage"
-            CAPACITY_RADAR.ingest_from_page_options(
-                province_name=obs_prov_val,
-                city_name=obs_city_val,
-                available_options=[(t, v) for t, v, _ in available],
-                loan_type=loan_type_val,
-                data_source="live_session",
-            )
-        except Exception as e:
-            if hasattr(bot, "log"):
-                bot.log(f"⚠️ خطا در ثبت رادار ظرفیت: {e}", "warning", page)
+        # Radar ingest + Telegram digest run in the background: a slow proxy used to hold
+        # bank selection for ~17s. Playwright objects never cross into this thread.
+        def _publish_bank_list(obs_prov=obs_prov, obs_city=obs_city, available=list(available)):
+            try:
+                from core.capacity_radar import CAPACITY_RADAR
+                obs_prov_val = obs_prov or getattr(bot, "state_name", "") or getattr(bot, "province_name", "") or (getattr(bot, "user_data", {}) or {}).get("state") or "سراسری"
+                obs_city_val = obs_city or getattr(bot, "city_name", "") or (getattr(bot, "user_data", {}) or {}).get("city") or "کل استان"
+                loan_type_val = getattr(bot, "loan_type", "marriage") or "marriage"
+                CAPACITY_RADAR.ingest_from_page_options(
+                    province_name=obs_prov_val,
+                    city_name=obs_city_val,
+                    available_options=[(t, v) for t, v, _ in available],
+                    loan_type=loan_type_val,
+                    data_source="live_session",
+                )
+            except Exception as e:
+                if hasattr(bot, "log"):
+                    bot.log(f"⚠️ خطا در ثبت رادار ظرفیت: {e}", "warning")
 
-        _broadcast_page3_banks_to_telegram(bot, page, available, province_name=obs_prov, city_name=obs_city)
+            _broadcast_page3_banks_to_telegram(bot, None, available, province_name=obs_prov, city_name=obs_city)
+        threading.Thread(target=_publish_bank_list, name=f"bank-digest-{bot.nid}", daemon=True).start()
 
         # 4. Clean expired bank cooldowns and build candidate queue in applicant's priority order
         now = time.time()
@@ -1429,6 +1435,9 @@ def process_bank_selection_v2(bot, page, stop_event, *, capacity_sniping=False):
         fallback_in_person = bool(bot.settings.get("fallback_to_in_person", False))
         cooldown_sec = max(5, int(bot.settings.get("bank_cooldown_seconds", 30)))
 
+        # Skip live-preview screenshots on every log line while selecting.
+        bot.critical_path_active = True
+
         matched_entry = None
         target_value = None
         target_text = None
@@ -1450,17 +1459,19 @@ def process_bank_selection_v2(bot, page, stop_event, *, capacity_sniping=False):
             current_bank_sig = f"{bank_name}:{target_value}"
             if getattr(bot, "_last_found_bank_sig", None) != current_bank_sig:
                 bot._last_found_bank_sig = current_bank_sig
-                try:
-                    import winsound
-                    # Loud repeating beep so operator notices preferred bank opened.
-                    for _ in range(3):
-                        winsound.Beep(1400, 280)
-                        winsound.Beep(1800, 220)
-                except Exception:
+                def _beep():
                     try:
-                        print("\a\a\a", flush=True)
+                        import winsound
+                        # Loud repeating beep so operator notices preferred bank opened.
+                        for _ in range(3):
+                            winsound.Beep(1400, 280)
+                            winsound.Beep(1800, 220)
                     except Exception:
-                        pass
+                        try:
+                            print("\a\a\a", flush=True)
+                        except Exception:
+                            pass
+                threading.Thread(target=_beep, daemon=True).start()
                 if hasattr(bot, "log"):
                     bot.log(f"🔔🔊 بانک اولویت‌دار پیدا شد: {bank_name} — آلارم صوتی پخش شد.", "success", page)
                 bot.emit_event(
@@ -1882,6 +1893,7 @@ def process_bank_selection_v2(bot, page, stop_event, *, capacity_sniping=False):
         DBHandler.update_runtime(bot.nid, status="ERROR", last_error=str(exc)[:300])
         return "error"
     finally:
+        bot.critical_path_active = False
         if monitor_lock is not None and monitor_lock.locked():
             monitor_lock.release()
 

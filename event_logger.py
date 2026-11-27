@@ -181,7 +181,8 @@ class EventBroadcaster:
     async def _send_history(self, websocket: WebSocket) -> None:
         for event in list(self.event_history):
             try:
-                await self._safe_send(websocket, event)
+                # Marked so the dashboard shows it in the log but never re-raises its alarm.
+                await self._safe_send(websocket, {**event, "replay": True})
             except Exception:
                 break
 

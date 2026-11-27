@@ -96,6 +96,15 @@ class TimingSettingsTests(unittest.TestCase):
         keys = [item["key"] for group in timings.schema({}) for item in group["items"]]
         self.assertEqual(sorted(keys), sorted(timings.TIMINGS))
 
+    def test_typing_presets_are_valid_and_reach_live_snapshot(self):
+        for _, _, values in timings.PRESETS["typing"]:
+            self.assertEqual(timings.validate(values), values)
+        timings.normalize({"captcha_type_char_ms": 150})
+        self.assertEqual(timings.live()["captcha_type_char_ms"], 150)
+        self.assertTrue(0.09 <= timings.jittered_seconds("captcha_type_char_ms") <= 0.21)
+        timings.normalize({"captcha_think_ms": 0})
+        self.assertEqual(timings.jittered_seconds("captcha_think_ms"), 0.0)
+
     def test_controller_uses_configured_submit_timeout(self):
         from core.timings import timing
         self.assertEqual(timing({"final_submit_response_timeout_seconds": 25}, "final_submit_response_timeout_seconds"), 25)

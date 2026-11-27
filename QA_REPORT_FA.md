@@ -190,4 +190,4 @@
    python qa_artifacts\test_captcha_ocr_benchmark.py
    ```
 
-* کلیه داده‌های خام به فرمت‌های `sec_audit_results.json`، `concurrency_benchmark_results.json`، `page3_sniping_results.json`، `load_performance_results.json` و ماتریس تفصیلی **`qa_artifacts/QA_MATRIX.csv`** ذخیره شده و قابل مشاهده و استناد هستند.
+* کلیه داده‌های خام به فرمت‌های `sec_audit_results.json`، `concurrency_benchmark_results.json`، `page3_sniping_results.json`، `load_performance_results.json` و ماتریس تفصیلی **`QA_MATRIX.csv`** ذخیره شده و قابل مشاهده و استناد هستند.

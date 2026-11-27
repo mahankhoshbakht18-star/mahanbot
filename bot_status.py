@@ -820,6 +820,22 @@ class StatusBot:
 
 
 
+    def _keep_result_open(self, page, stop_event, poll_seconds=0.5):
+        """Leave the status page on screen until the user closes the window or presses Stop.
+
+        Nothing else is started from here: no reload, no new browser, no next applicant.
+        """
+        self.log_msg("🪟 نتیجه استعلام روی مرورگر باز ماند؛ برای پایان، پنجره را ببندید یا «توقف» را بزنید.", "info")
+        while not stop_event.is_set():
+            try:
+                if page is None or page.is_closed():
+                    break
+                # Keeps the Playwright connection serviced and notices a closed window.
+                page.wait_for_timeout(int(poll_seconds * 1000))
+            except Exception:
+                break
+        DBHandler.update_runtime(self.nid, browser_status="CLOSED")
+
     def run(self, stop_event):
 
         playwright = None
@@ -1047,8 +1063,9 @@ class StatusBot:
                             self.nid,
                             status="SUCCESS",
                             current_step="DONE",
-                            browser_status="CLOSED",
+                            browser_status="OPEN",
                         )
+                        self._keep_result_open(page, stop_event)
                         break
 
 

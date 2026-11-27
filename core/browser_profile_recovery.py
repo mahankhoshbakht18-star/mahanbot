@@ -269,11 +269,20 @@ class BrowserProfileRecoveryManager:
                     "last_error_reason": "session_reauth_initiated",
                 },
             )
+            # Clear stale OTP state (old bank_ready/expired codes and open requests) so the
+            # next run does not mix a previous challenge into the fresh Step1→OTP cycle.
+            DBHandler.clear_otp(nid)
+            try:
+                from core.otp_queue import OTPQueueManager
+                OTPQueueManager.mark_expired(nid, reason="reauth")
+            except Exception:
+                pass
             DBHandler.update_runtime(
                 nid,
                 current_step="LOAD_FORM",
                 status="READY",
                 last_error="reauth_required",
+                otp_request_id=None,
             )
             DBHandler.update_status(nid, "آماده احراز هویت مجدد", "درخواست ورود مجدد به سامانه ثبت شد.")
             cls.audit_log(nid, "initiate_reauth_workflow", details="Re-auth initiated")

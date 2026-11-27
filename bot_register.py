@@ -6,6 +6,13 @@ from bot_core import BotCore
 from bot_helpers import sleep_with_stop, detect_captcha_failure
 from browser_actions import BrowserActions
 from browser_launcher import BrowserLaunchError, close_browser, safe_goto
+from core.helpers import (
+    _normalize_nid,
+    normalize_applicant_payload,
+    validate_applicant_save,
+    validate_registration_readiness,
+)
+from core.persian_normalizer import normalize_compact_key, normalize_location_key, to_ascii_digits
 from database import DBHandler
 try:
     from bot_select_captcha import wait_for_manual_captcha_handoff
@@ -28,21 +35,36 @@ class RegistrationLoanAdapter:
             self.kind = "marriage"
             self.target_url = TARGET_URL
 
-    def validate_data(self, nid: str, data: dict) -> tuple[bool, str]:
-        clean_nid = str(nid or "").strip()
-        if not clean_nid.isdigit() or len(clean_nid) != 10:
+    def validate_data(self, nid: str, data: dict, *, strict: bool = False) -> tuple[bool, str]:
+        if strict:
+            applicant_view = {
+                "national_id": nid,
+                "full_name": (data or {}).get("full_name", ""),
+                "data": dict(data or {}),
+            }
+            ok, errors, _ = validate_registration_readiness(
+                applicant_view, expected_nid=nid, loan_type_override=self.kind
+            )
+            return (True, "ok") if ok else (False, "؛ ".join(errors))
+
+        clean_nid = _normalize_nid(nid) if to_ascii_digits(str(nid or "")).strip() else ""
+        _, _, norm = normalize_applicant_payload((data or {}).get("full_name", "applicant"), clean_nid, data or {})
+        if not (clean_nid.isdigit() and len(clean_nid) == 10):
             return False, "کد ملی متقاضی باید دقیقاً ۱۰ رقم باشد."
-        zip_code = str(data.get("postal_code") or data.get("zip_code") or "").strip()
+        zip_code = norm.get("postal_code", "")
         if zip_code and (not zip_code.isdigit() or len(zip_code) != 10):
             return False, "کد پستی باید دقیقاً ۱۰ رقم باشد."
         if self.kind == "marriage":
-            spouse = str(data.get("spouse_national_id") or "").strip()
+            spouse = norm.get("spouse_national_id", "")
             if spouse and (not spouse.isdigit() or len(spouse) != 10):
                 return False, "کد ملی همسر باید دقیقاً ۱۰ رقم باشد."
         elif self.kind == "childbearing":
-            child_nid = str(data.get("child_national_id") or "").strip()
+            child_nid = norm.get("child_national_id", "")
             if child_nid and (not child_nid.isdigit() or len(child_nid) != 10):
                 return False, "کد ملی فرزند باید دقیقاً ۱۰ رقم باشد."
+        errs = validate_applicant_save("placeholder", clean_nid, norm)
+        if errs:
+            return False, errs[0]
         return True, "ok"
 
 
@@ -64,7 +86,8 @@ class RegistrationBot(BotCore):
         context = None
         page = None
 
-        # Only block if applicant explicitly marked completed in active DB state
+        # Always reload fresh applicant record before validation/execution.
+        self.nid = _normalize_nid(self.nid) or str(self.nid or "").strip()
         user_rec = DBHandler.get_applicant(self.nid)
         user_st = str(dict(user_rec).get("status") if user_rec else "").lower()
         if user_st in {"success", "completed", "registered"}:
@@ -73,15 +96,40 @@ class RegistrationBot(BotCore):
                 self.log(f"این متقاضی با کد پیگیری {self._mask(existing_tracking)} قبلاً در سامانه ثبت شده است. برای ثبت مجدد، پاکسازی کد رهگیری را انجام دهید.", "info")
                 return
 
-        adapter = RegistrationLoanAdapter(loan_type=loan_type, user_data=getattr(self, "user_data", {}))
-        valid, err_msg = adapter.validate_data(self.nid, getattr(self, "user_data", {}))
+        self.user_data = self._load_user_data()
+        adapter = RegistrationLoanAdapter(loan_type=loan_type, user_data=self.user_data)
+        valid, reg_errors, prepared_data = validate_registration_readiness(
+            dict(user_rec) if user_rec else None,
+            expected_nid=self.nid,
+            loan_type_override=adapter.kind,
+        )
         if not valid:
+            err_msg = "اطلاعات ثبت‌نام اولیه ناقص یا نامعتبر است: " + "؛ ".join(reg_errors)
             self.set_runtime_state("ERROR", "VALIDATION_ERROR", browser_status="CLOSED", last_error=err_msg)
             DBHandler.update_status(self.nid, "خطای اطلاعات", err_msg)
             self.log(f"❌ {err_msg}", "error")
             return
+        self.user_data = prepared_data
+        loaded_fields = [
+            label for key, label in (
+                ("full_name", "نام"),
+                ("mobile", "موبایل"),
+                ("spouse_national_id", "کد ملی همسر"),
+                ("child_national_id", "کد ملی فرزند"),
+                ("birth_y", "تاریخ تولد"),
+                ("marriage_y", "تاریخ ازدواج"),
+                ("child_birth_y", "تاریخ تولد فرزند"),
+                ("state", "استان"),
+                ("city", "شهر"),
+                ("postal_code", "کد پستی"),
+                ("phone", "تلفن ثابت"),
+            )
+            if str(prepared_data.get(key) or "").strip()
+        ]
+        self.log("اطلاعات ذخیره‌شدهٔ همین متقاضی خوانده شد: " + "، ".join(loaded_fields), "info")
 
         target_url = adapter.target_url
+        self.target_url = target_url
 
         try:
             playwright, browser, context, page = self.setup_browser(stop_event)
@@ -119,16 +167,13 @@ class RegistrationBot(BotCore):
                 except Exception:
                     pass
             if not nav_ok:
-                self.log("عدم دریافت پاسخ از سامانه ثبت‌نام پس از چند تلاش متوالی.", "error", page)
-                return
+                self.log("سامانه هنوز جواب نداده؛ مرورگر باز می‌ماند و بارگذاری دوباره تلاش می‌شود.", "warning", page)
 
             self.log(f"🚀 ربات ثبت‌نام ({adapter.kind}) شروع شد.", "info", page)
             captcha_mode = "model"
             allow_final_submit = bool(self.settings.get("auto_final_submit", self.settings.get("final_submit", False)))
 
-            while attempt < self.retry_limit:
-                if stop_event.is_set():
-                    break
+            while not stop_event.is_set():
 
                 attempt += 1
 
@@ -160,23 +205,20 @@ class RegistrationBot(BotCore):
                         continue
 
                     if self.otp_retry_exceeded():
-                        self.log("⛔ OTP retry limit reached; stopping job.", "error", page)
-                        DBHandler.update_status(self.nid, "Stopped", "OTP retry limit reached")
-                        stop_event.set()
-                        break
+                        self.log("تکرار کد تایید به سقف رسید؛ مرورگر باز می‌ماند و تلاش ادامه دارد.", "warning", page)
+                        self._otp_retry = 0
+                        self._otp_retry_exceeded = False
+                        continue
 
                     if self.consume_recovery_flag("otp_expired"):
-                        if self.otp_retry_exceeded():
-                            self.log("⛔ OTP retry limit reached; stopping job.", "error", page)
-                            DBHandler.update_status(self.nid, "Stopped", "OTP retry limit reached")
-                            stop_event.set()
-                            break
                         self.clear_otp_locks()
                         self.clear_otp_backend()
                         self.clear_remote_otp()
                         self._last_dialog_action = None
                         if hasattr(self, "_consumed_otp_digests"):
                             self._consumed_otp_digests.clear()
+                        self._register_otp_announced = False
+                        self._otp_entry_time = 0
                         self.log("🔄 کد تایید منقضی شد؛ بازگشت به صفحه اول ثبت‌نام جهت صدور کد جدید...", "warning", page)
                         DBHandler.update_status(self.nid, "کد منقضی - شروع مجدد", "کد تایید منقضی شد؛ بازگشت به مرحله ۱")
                         # Explicit otp_expired flag only: navigate to entry form. Never page.reload().
@@ -229,7 +271,9 @@ class RegistrationBot(BotCore):
                     if self.is_firewall_challenge(page):
                         DBHandler.update_status(self.nid, "منتظر CAPTCHA", "Manual firewall CAPTCHA entry required")
                         if not self._handle_firewall_challenge(page, stop_event):
-                            break
+                            if stop_event.is_set():
+                                break
+                            continue
                         DBHandler.update_status(self.nid, "Ready", "Firewall challenge cleared")
                         continue
 
@@ -250,48 +294,70 @@ class RegistrationBot(BotCore):
                             break
 
                         self._wait_for_ready(page)
-                        if not self._input_has_value(page, ["#ctl00_ContentPlaceHolder1_tbIDNo", "input[name='ctl00$ContentPlaceHolder1$tbIDNo']"]):
-                            self.log("📝 مرحله ۱: پر کردن فرم هویتی", "registering", page)
-                            self._fill_text(page, ["#ctl00_ContentPlaceHolder1_tbIDNo", "input[name='ctl00$ContentPlaceHolder1$tbIDNo']"], self.nid)
-                            self._fill_text(page, ["#ctl00_ContentPlaceHolder1_tbFName", "input[name='ctl00$ContentPlaceHolder1$tbFName']"], first_name)
-                            self._fill_text(page, ["#ctl00_ContentPlaceHolder1_tbLName", "input[name='ctl00$ContentPlaceHolder1$tbLName']"], last_name)
+                        self.log("📝 مرحله ۱: بررسی و پر کردن فرم هویتی", "registering", page)
+                        self._ensure_text(page, ["#ctl00_ContentPlaceHolder1_tbIDNo", "input[name='ctl00$ContentPlaceHolder1$tbIDNo']"], self.nid)
+                        # Register.aspx has no first/last-name inputs. Only fill them when that control exists.
+                        self._ensure_text(page, ["#ctl00_ContentPlaceHolder1_tbFName", "input[name='ctl00$ContentPlaceHolder1$tbFName']"], first_name)
+                        self._ensure_text(page, ["#ctl00_ContentPlaceHolder1_tbLName", "input[name='ctl00$ContentPlaceHolder1$tbLName']"], last_name)
 
-                            if adapter.kind == "marriage":
-                                spouse = str(d.get("spouse_national_id") or "").strip()
-                                if spouse.isdigit() and len(spouse) == 10:
-                                    self._fill_text(page, ["#ctl00_ContentPlaceHolder1_tbIDNo2", "input[name='ctl00$ContentPlaceHolder1$tbIDNo2']"], spouse)
-                            elif adapter.kind == "childbearing":
-                                child_nid = str(d.get("child_national_id") or "").strip()
-                                if child_nid.isdigit() and len(child_nid) == 10:
-                                    self._fill_text(page, ["#ctl00_ContentPlaceHolder1_tbChildIDNo", "input[name*='tbChildIDNo']"], child_nid)
-                                child_by, child_bm, child_bd = (
-                                    d.get("child_birth_y") or d.get("child_birth_year"),
-                                    d.get("child_birth_m") or d.get("child_birth_month"),
-                                    d.get("child_birth_d") or d.get("child_birth_day"),
-                                )
-                                if child_by and self._is_visible(page, "#ctl00_ContentPlaceHolder1_tbChildBrYear"):
-                                    self._fill_text(page, ["#ctl00_ContentPlaceHolder1_tbChildBrYear"], str(child_by))
-                                    self._select_option(page, "#ctl00_ContentPlaceHolder1_ddlChildBrMonth", value=str(child_bm).zfill(2) if child_bm else None)
-                                    self._select_option(page, "#ctl00_ContentPlaceHolder1_ddlChildBrDay", value=str(child_bd).zfill(2) if child_bd else None)
-
-                            birth_y, birth_m, birth_d = self._get_birth_parts(d)
-                            if birth_y:
-                                self._fill_text(page, ["#ctl00_ContentPlaceHolder1_tbBrYear", "input[name='ctl00$ContentPlaceHolder1$tbBrYear']"], birth_y)
-                                self._select_option(page, "#ctl00_ContentPlaceHolder1_ddlBrMonth", value=str(birth_m).zfill(2) if birth_m else None)
-                                self._select_option(page, "#ctl00_ContentPlaceHolder1_ddlBrDay", value=str(birth_d).zfill(2) if birth_d else None)
-
-                            if adapter.kind == "marriage":
-                                marriage_y, marriage_m, marriage_d = self._get_marriage_parts(d)
-                                if marriage_y:
-                                    self._fill_text(page, ["#ctl00_ContentPlaceHolder1_tbMarrYear", "input[name='ctl00$ContentPlaceHolder1$tbMarrYear']"], marriage_y)
-                                    self._select_option(page, "#ctl00_ContentPlaceHolder1_ddlMarryMonth", value=str(marriage_m).zfill(2) if marriage_m else None)
-                                    self._select_option(page, "#ctl00_ContentPlaceHolder1_ddlMarryDay", value=str(marriage_d).zfill(2) if marriage_d else None)
-
-                            self._fill_text(
-                                page,
-                                ["#ctl00_ContentPlaceHolder1_tbMobileNo", "input[name='ctl00$ContentPlaceHolder1$tbMobileNo']"],
-                                d.get("mobile", ""),
+                        if adapter.kind == "marriage":
+                            spouse = to_ascii_digits(str(d.get("spouse_national_id") or "")).strip()
+                            if spouse.isdigit() and len(spouse) == 10:
+                                self._ensure_text(page, ["#ctl00_ContentPlaceHolder1_tbIDNo2", "input[name='ctl00$ContentPlaceHolder1$tbIDNo2']"], spouse)
+                        elif adapter.kind == "childbearing":
+                            child_nid = to_ascii_digits(str(d.get("child_national_id") or "")).strip()
+                            if child_nid.isdigit() and len(child_nid) == 10:
+                                self._ensure_text(page, ["#ctl00_ContentPlaceHolder1_tbChildIDNo", "input[name*='tbChildIDNo']"], child_nid)
+                            child_by, child_bm, child_bd = (
+                                d.get("child_birth_y") or d.get("child_birth_year"),
+                                d.get("child_birth_m") or d.get("child_birth_month"),
+                                d.get("child_birth_d") or d.get("child_birth_day"),
                             )
+                            if child_by and self._is_visible(page, "#ctl00_ContentPlaceHolder1_tbChildBrYear"):
+                                self._fill_date_triple(
+                                    page,
+                                    ["#ctl00_ContentPlaceHolder1_tbChildBrYear"],
+                                    "#ctl00_ContentPlaceHolder1_ddlChildBrMonth",
+                                    "#ctl00_ContentPlaceHolder1_ddlChildBrDay",
+                                    child_by,
+                                    child_bm,
+                                    child_bd,
+                                )
+
+                        birth_y, birth_m, birth_d = self._get_birth_parts(d)
+                        self._fill_date_triple(
+                            page,
+                            ["#ctl00_ContentPlaceHolder1_tbBrYear", "input[name='ctl00$ContentPlaceHolder1$tbBrYear']"],
+                            "#ctl00_ContentPlaceHolder1_ddlBrMonth",
+                            "#ctl00_ContentPlaceHolder1_ddlBrDay",
+                            birth_y,
+                            birth_m,
+                            birth_d,
+                        )
+
+                        if adapter.kind == "marriage":
+                            marriage_y, marriage_m, marriage_d = self._get_marriage_parts(d)
+                            self._fill_date_triple(
+                                page,
+                                ["#ctl00_ContentPlaceHolder1_tbMarrYear", "input[name='ctl00$ContentPlaceHolder1$tbMarrYear']"],
+                                "#ctl00_ContentPlaceHolder1_ddlMarryMonth",
+                                "#ctl00_ContentPlaceHolder1_ddlMarryDay",
+                                marriage_y,
+                                marriage_m,
+                                marriage_d,
+                            )
+
+                        self._ensure_text(
+                            page,
+                            ["#ctl00_ContentPlaceHolder1_tbMobileNo", "input[name='ctl00$ContentPlaceHolder1$tbMobileNo']"],
+                            to_ascii_digits(str(d.get("mobile") or "")).strip(),
+                        )
+                        missing = self._step1_unfilled_labels(page, adapter.kind, d)
+                        if missing:
+                            self.log("این فیلدهای فرم سامانه هنوز خالی مانده‌اند: " + "، ".join(missing), "warning", page)
+                            if stop_event.is_set():
+                                break
+                            continue
 
                         if stop_event.is_set():
                             break
@@ -314,25 +380,34 @@ class RegistrationBot(BotCore):
                     # ==========================
                     if self._is_visible(page, "#ctl00_ContentPlaceHolder1_btnContinue1"):
                         self.mark_progress("step2_otp")
+                        # Each pass of this loop is one retry. Waiting for SMS must not use that budget.
+                        attempt -= 1
                         if stop_event.is_set():
                             break
 
-                        self.emit_event(
-                            "OTP_REQUIRED",
-                            step="REGISTER_STEP_2_OTP",
-                            reason="otp_form_visible",
-                            result="waiting_sms",
-                            message="منتظر دریافت کد پیامکی تایید ثبت‌نام...",
-                            level="info",
-                            page=page,
-                        )
+                        if not getattr(self, "_register_otp_announced", False):
+                            self._register_otp_announced = True
+                            if not getattr(self, "_otp_entry_time", 0):
+                                try:
+                                    self.mark_otp_entry_time()
+                                except Exception:
+                                    pass
+                            self.log("سامانه کد تایید خواست. مرورگر باز می‌ماند تا پیامک برسد.", "info", page)
+                            self.emit_event(
+                                "OTP_REQUIRED",
+                                step="REGISTER_STEP_2_OTP",
+                                reason="otp_form_visible",
+                                result="waiting_sms",
+                                message="منتظر دریافت کد پیامکی تایید ثبت‌نام...",
+                                level="info",
+                                page=page,
+                            )
 
                         if self._detect_otp_failure(page) or self.last_dialog_indicates_otp_invalid():
                             if not self.register_otp_failure("otp_invalid"):
-                                self.log("⛔ OTP retry limit reached; stopping job.", "error", page)
-                                DBHandler.update_status(self.nid, "Stopped", "OTP retry limit reached")
-                                stop_event.set()
-                                break
+                                self.log("کد تایید رد شد؛ مرورگر باز می‌ماند و همان مرحله دوباره تلاش می‌شود.", "warning", page)
+                                self._otp_retry = 0
+                                self._otp_retry_exceeded = False
                             self.clear_otp_backend()
                             continue
 
@@ -386,7 +461,7 @@ class RegistrationBot(BotCore):
 
                         try:
                             if page.locator("#ctl00_ContentPlaceHolder1_ddlSarbasiST").is_visible():
-                                mil_status = str(d.get("military_status", "1"))
+                                mil_status = to_ascii_digits(str(d.get("military_status") or "1")).strip() or "1"
                                 page.select_option("#ctl00_ContentPlaceHolder1_ddlSarbasiST", value=mil_status)
                         except Exception:
                             pass
@@ -419,16 +494,17 @@ class RegistrationBot(BotCore):
                             else:
                                 self.log(f"⚠️ شهر '{user_city}' پیدا نشد", "warning", page)
 
-                        if d.get("phone"):
-                            self._fill_text(page, ["#ctl00_ContentPlaceHolder1_tbTel", "input[name='ctl00$ContentPlaceHolder1$tbTel']"], d.get("phone"))
-                        zip_val = str(d.get("postal_code") or d.get("zip_code") or "").strip()
+                        phone_val = to_ascii_digits(str(d.get("phone") or "")).strip()
+                        if phone_val:
+                            self._ensure_text(page, ["#ctl00_ContentPlaceHolder1_tbTel", "input[name='ctl00$ContentPlaceHolder1$tbTel']"], phone_val)
+                        zip_val = to_ascii_digits(str(d.get("postal_code") or d.get("zip_code") or "")).strip()
                         if zip_val:
                             if zip_val.isdigit() and len(zip_val) < 10:
                                 zip_val = zip_val.zfill(10)
-                            self._fill_text(page, ["#ctl00_ContentPlaceHolder1_tbZipCD", "input[name='ctl00$ContentPlaceHolder1$tbZipCD']"], zip_val)
+                            self._ensure_text(page, ["#ctl00_ContentPlaceHolder1_tbZipCD", "input[name='ctl00$ContentPlaceHolder1$tbZipCD']"], zip_val)
 
                         if d.get("address") and self._is_visible(page, "#ctl00_ContentPlaceHolder1_tbAddress"):
-                            self._fill_text(page, ["#ctl00_ContentPlaceHolder1_tbAddress"], d.get("address"))
+                            self._ensure_text(page, ["#ctl00_ContentPlaceHolder1_tbAddress"], str(d.get("address")))
 
                         if stop_event.is_set():
                             break
@@ -457,8 +533,9 @@ class RegistrationBot(BotCore):
                         if not allow_final_submit:
                             self.set_runtime_state("WAITING_USER_INPUT", "FINAL_SUBMIT_WAIT", browser_status="OPEN")
                             DBHandler.update_status(self.nid, "منتظر تایید ثبت نهایی", "فرم آماده ثبت نهایی است (auto_final_submit=false)")
-                            self.log("🛑 توقف قبل از ثبت نهایی (ثبت نهایی خودکار غیرفعال است).", "warning", page)
-                            return
+                            self.log("ثبت نهایی خودکار خاموش است. مرورگر باز می‌ماند تا خودتان آن را ببندید.", "warning", page)
+                            self._hold_until_user_closes(stop_event, page)
+                            break
 
                         self.emit_event(
                             "FINAL_SUBMIT_STARTED",
@@ -493,7 +570,8 @@ class RegistrationBot(BotCore):
                             )
                         except Exception:
                             self.log("🎉 ثبت نام موفق!", "success", page)
-                        return
+                        self._hold_until_user_closes(stop_event, page)
+                        break
 
                 except Exception:
                     if self.close_browser_on_stop(stop_event, playwright, browser, context, page):
@@ -513,6 +591,19 @@ class RegistrationBot(BotCore):
                     pass
             close_browser(playwright, browser, context, page)
             self.log("مرورگر بسته شد.", "stop")
+
+    def _hold_until_user_closes(self, stop_event, page):
+        """Keep the registration window open until the user stops the job or closes the browser."""
+        self.log("مرورگر ثبت‌نام باز می‌ماند تا خودتان آن را ببندید.", "info", page)
+        while stop_event is not None and not stop_event.is_set():
+            try:
+                if page is None or page.is_closed():
+                    stop_event.set()
+                    return
+            except Exception:
+                return
+            if sleep_with_stop(stop_event, 1.0):
+                return
 
     def _refresh_captcha_in_place(self, page, captcha_rejected=False):
         from bot_select_captcha import refresh_captcha_or_reload
@@ -542,51 +633,145 @@ class RegistrationBot(BotCore):
 
     def _find_locator(self, page, selectors):
         for selector in selectors:
-            locator = page.locator(selector).first
             try:
+                locator = page.locator(selector).first
                 if locator.count() > 0:
                     return locator
             except Exception:
                 continue
-        return page.locator(selectors[0]).first
+        return None
+
+    def _ensure_text(self, page, selectors, value):
+        """Fill a text field only when empty or different from the normalized expected value."""
+        if value is None or str(value) == "":
+            return
+        clean_val = str(value).strip()
+        locator = self._find_locator(page, selectors)
+        if locator is None:
+            return
+        try:
+            current = to_ascii_digits(str(locator.input_value() or "")).strip()
+            if current == to_ascii_digits(clean_val).strip():
+                return
+        except Exception:
+            pass
+        self._fill_text(page, selectors, clean_val)
 
     def _fill_text(self, page, selectors, value):
         if value is None or value == "":
             return
+        clean_val = str(value)
         locator = self._find_locator(page, selectors)
+        if locator is None:
+            return
         try:
-            locator.wait_for(state="visible", timeout=10000)
+            locator.wait_for(state="visible", timeout=3000)
         except Exception:
             return
         try:
-            BrowserActions.human_fill(locator, value)
+            ok = BrowserActions.human_fill(locator, clean_val)
+            if ok is False:
+                BrowserActions.force_fill(locator, clean_val)
         except Exception:
             try:
-                BrowserActions.force_fill(locator, value)
+                BrowserActions.force_fill(locator, clean_val)
             except Exception:
                 pass
 
     def _select_option(self, page, selector, value=None):
         if not value:
             return
+        clean = to_ascii_digits(str(value)).strip()
+        if not clean:
+            return
+        candidates = []
+        for cand in (clean, clean.zfill(2), clean.lstrip("0") or clean):
+            if cand and cand not in candidates:
+                candidates.append(cand)
         try:
-            page.locator(selector).wait_for(state="visible", timeout=10000)
-            page.select_option(selector, value=value)
+            field = page.locator(selector).first
+            if field.count() == 0:
+                return
+            field.wait_for(state="visible", timeout=3000)
         except Exception:
-            pass
+            return
+        for cand in candidates:
+            try:
+                page.select_option(selector, value=cand)
+                return
+            except Exception:
+                continue
+        self.log(f"⚠️ مقدار انتخابی در فهرست کشویی پیدا نشد ({selector})", "warning", page)
+
+    def _fill_date_triple(self, page, year_selectors, month_selector, day_selector, year, month, day):
+        """Fill Jalali year textbox and select month/day dropdowns with ASCII digit normalization."""
+        clean_y = to_ascii_digits(str(year or "")).strip()
+        clean_m = to_ascii_digits(str(month or "")).strip()
+        clean_d = to_ascii_digits(str(day or "")).strip()
+        if clean_y:
+            self._ensure_text(page, year_selectors, clean_y)
+        if clean_m:
+            self._select_option(page, month_selector, value=clean_m.zfill(2))
+        if clean_d:
+            self._select_option(page, day_selector, value=clean_d.zfill(2))
+
+    def _step1_unfilled_labels(self, page, kind, data):
+        """Return Persian labels of step-1 controls that exist on the page but are still empty."""
+        missing = []
+
+        def text_empty(selector):
+            locator = self._find_locator(page, [selector])
+            if locator is None:
+                return False
+            try:
+                return not to_ascii_digits(str(locator.input_value() or "")).strip()
+            except Exception:
+                return True
+
+        def select_empty(selector):
+            locator = self._find_locator(page, [selector])
+            if locator is None:
+                return False
+            try:
+                current = to_ascii_digits(str(locator.input_value() or "")).strip()
+                return current in {"", "0", "-1"}
+            except Exception:
+                return True
+
+        if text_empty("#ctl00_ContentPlaceHolder1_tbIDNo"):
+            missing.append("کد ملی متقاضی")
+        if kind == "marriage" and str(data.get("spouse_national_id") or "").strip() and text_empty("#ctl00_ContentPlaceHolder1_tbIDNo2"):
+            missing.append("کد ملی همسر")
+        if kind == "childbearing" and str(data.get("child_national_id") or "").strip() and text_empty("#ctl00_ContentPlaceHolder1_tbChildIDNo"):
+            missing.append("کد ملی فرزند")
+        if str(data.get("birth_y") or data.get("birth_year") or "").strip() and (
+            text_empty("#ctl00_ContentPlaceHolder1_tbBrYear")
+            or select_empty("#ctl00_ContentPlaceHolder1_ddlBrMonth")
+            or select_empty("#ctl00_ContentPlaceHolder1_ddlBrDay")
+        ):
+            missing.append("تاریخ تولد")
+        if kind == "marriage" and str(data.get("marriage_y") or data.get("marriage_year") or "").strip() and (
+            text_empty("#ctl00_ContentPlaceHolder1_tbMarrYear")
+            or select_empty("#ctl00_ContentPlaceHolder1_ddlMarryMonth")
+            or select_empty("#ctl00_ContentPlaceHolder1_ddlMarryDay")
+        ):
+            missing.append("تاریخ ازدواج")
+        if str(data.get("mobile") or "").strip() and text_empty("#ctl00_ContentPlaceHolder1_tbMobileNo"):
+            missing.append("تلفن همراه")
+        return missing
 
     def _get_birth_parts(self, data):
         return (
-            data.get("birth_y") or data.get("birth_year"),
-            data.get("birth_m") or data.get("birth_month"),
-            data.get("birth_d") or data.get("birth_day"),
+            to_ascii_digits(str(data.get("birth_y") or data.get("birth_year") or "")).strip(),
+            to_ascii_digits(str(data.get("birth_m") or data.get("birth_month") or "")).strip(),
+            to_ascii_digits(str(data.get("birth_d") or data.get("birth_day") or "")).strip(),
         )
 
     def _get_marriage_parts(self, data):
         return (
-            data.get("marriage_y") or data.get("marriage_year"),
-            data.get("marriage_m") or data.get("marriage_month"),
-            data.get("marriage_d") or data.get("marriage_day"),
+            to_ascii_digits(str(data.get("marriage_y") or data.get("marriage_year") or "")).strip(),
+            to_ascii_digits(str(data.get("marriage_m") or data.get("marriage_month") or "")).strip(),
+            to_ascii_digits(str(data.get("marriage_d") or data.get("marriage_day") or "")).strip(),
         )
 
     def _split_full_name(self, data, fallback):
@@ -718,17 +903,21 @@ class RegistrationBot(BotCore):
         if not text_to_match:
             return None
         try:
-            target = self._normalize_text(text_to_match)
+            target = normalize_location_key(text_to_match)
+            target_compact = normalize_compact_key(text_to_match)
             options = page.locator(f"{selector} option").all()
+            partial_match = None
             for opt in options:
                 opt_raw = opt.text_content()
-                opt_norm = self._normalize_text(opt_raw)
-                if opt_norm == target:
+                opt_norm = normalize_location_key(opt_raw)
+                opt_compact = normalize_compact_key(opt_raw)
+                if opt_norm == target or (target_compact and opt_compact == target_compact):
                     return opt.get_attribute("value")
-                if len(target) > 3 and target in opt_norm:
-                    if "سوران" in target and "سیب" not in target and "سیب" in opt_norm:
+                if len(target_compact) > 3 and target_compact in opt_compact and partial_match is None:
+                    if "سوران" in target_compact and "سیب" not in target_compact and "سیب" in opt_compact:
                         continue
-                    return opt.get_attribute("value")
+                    partial_match = opt.get_attribute("value")
+            return partial_match
         except Exception:
             pass
         return None

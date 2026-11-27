@@ -201,7 +201,14 @@ class BotCore:
             pass
 
     def _load_user_data(self):
-        row = DBHandler.get_applicant(self.nid)
+        from core.helpers import _normalize_nid, normalize_applicant_payload
+
+        lookup_nid = str(self.nid or "").strip()
+        row = DBHandler.get_applicant(lookup_nid)
+        if not row:
+            norm_nid = _normalize_nid(lookup_nid)
+            if norm_nid and norm_nid != lookup_nid:
+                row = DBHandler.get_applicant(norm_nid)
         if not row:
             return {}
 
@@ -219,9 +226,11 @@ class BotCore:
         if not isinstance(data, dict):
             data = {}
 
-        data.setdefault("full_name", user_dict.get("full_name"))
-        data.setdefault("national_id", user_dict.get("national_id"))
-        return dict(data)
+        # Authoritative SQL columns override any stale embedded keys in JSON.
+        col_name = user_dict.get("full_name") or data.get("full_name") or ""
+        col_nid = user_dict.get("national_id") or data.get("national_id") or lookup_nid
+        _, _, normalized = normalize_applicant_payload(col_name, col_nid, data)
+        return normalized
 
     def save_checkpoint(self, step: str, page=None, **extra):
         """Persist recovery metadata independently of optional HTML/PNG snapshots."""
@@ -497,8 +506,14 @@ class BotCore:
         source="general",
         captcha_element=None,
         captcha_image_selector=".BDC_CaptchaImage",
+        submit=True,
     ):
-        """Single entry into captcha_engine for register, status, and select."""
+        """Single entry into captcha_engine for register, status, and select.
+
+        button_selector may be a selector string or a Playwright locator; a locator
+        used to be dropped here, so delete/recovery never clicked their button.
+        submit=False only fills the captcha and leaves the click to the user.
+        """
         del captcha_element, captcha_image_selector
         if stop_event is not None and stop_event.is_set():
             return False
@@ -513,8 +528,8 @@ class BotCore:
         res = solve_and_fill_captcha(
             page,
             input_selector=input_selector if isinstance(input_selector, str) else "",
-            button_selector=button_selector if isinstance(button_selector, str) else "",
-            submit=True,
+            button_selector=button_selector if (submit and button_selector is not None) else "",
+            submit=bool(submit),
             max_retries=3,
             bot=self,
             stop_event=stop_event,
@@ -588,6 +603,10 @@ class BotCore:
         msg_clean = re.sub(r'[\u064B-\u065F\u0670\s]+', ' ', msg_norm).strip()
         if not msg_clean:
             return None
+
+        # Successful deletion (TasReqDelete) is an outcome, not an error.
+        if "با موفقیت حذف" in msg_clean:
+            return "request_deleted"
 
         # 0) System capacity updating notice (temporary gateway notice, not a permanent lack of capacity)
         if any(u in msg_clean for u in ("در حال بروزرسانی ظرفیت", "بروزرسانی ظرفیت", "عملیات بروزرسانی", "تا پایان عملیات بروزرسانی")):
@@ -770,7 +789,7 @@ class BotCore:
             try:
                 if action == "otp_step_capacity_retry":
                     self.log(
-                        f"⚠️ پیام موقت در مرحله پیامک ({normalized_msg})؛ تصویر کپچا حفظ می‌شود.",
+                        f"⚠️ پیام بروزرسانی ظرفیت در مرحله پیامک ({normalized_msg})؛ تلاش خودکار تا صفحه سوم ادامه دارد.",
                         "warning",
                         page,
                     )

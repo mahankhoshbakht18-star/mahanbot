@@ -638,15 +638,20 @@ def _decode(logits):
 
 
 def _fill(field, code: str) -> bool:
-    """Short per-character typing, then one click on the continue button by the caller."""
-    import random
+    """Per-character typing at the dashboard's captcha speed, then one click on the continue button by the caller."""
+    from core.timings import jittered_seconds
     try:
         field.scroll_into_view_if_needed(timeout=500)
+        think = jittered_seconds("captcha_think_ms")
+        if think:
+            time.sleep(think)
         field.click(timeout=800)
         field.press("Control+A", timeout=500)
         field.press("Backspace", timeout=500)
         for char in code:
-            field.type(char, delay=random.randint(4, 9), timeout=500)
+            # The per-keystroke timeout must outlast the configured delay.
+            delay_ms = int(jittered_seconds("captcha_type_char_ms") * 1000)
+            field.type(char, delay=delay_ms, timeout=max(500, delay_ms + 500))
     except Exception:
         return False
     try:

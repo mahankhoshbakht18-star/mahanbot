@@ -85,6 +85,44 @@ BANK_CANONICAL_TO_CODE: Dict[str, str] = {
 }
 
 
+# Official CBI order (as in KNOWN_BANK_CODES) and one recognisable emoji per bank.
+# Used wherever banks are listed to people, e.g. the Telegram channel digest.
+BANK_EMOJIS: Dict[str, str] = {
+    "11": "🏭",  # صنعت و معدن
+    "12": "🤝",  # ملت
+    "13": "👷",  # رفاه کارگران
+    "14": "🏠",  # مسکن
+    "15": "🛡",  # سپه
+    "16": "🌾",  # کشاورزی
+    "17": "🇮🇷",  # ملی ایران
+    "18": "💼",  # تجارت
+    "19": "🚢",  # صادرات ایران
+    "20": "📦",  # توسعه صادرات
+    "21": "📮",  # پست بانک
+    "22": "🤲",  # توسعه تعاون
+    "53": "🚀",  # کارآفرین
+    "54": "🏛",  # پارسیان
+    "55": "📈",  # اقتصاد نوین
+    "56": "💎",  # سامان
+    "57": "👑",  # پاسارگاد
+    "58": "💰",  # سرمایه
+    "59": "🌟",  # سینا
+    "60": "❤️",  # قرض‌الحسنه مهر ایران
+    "61": "🏙",  # شهر
+    "62": "🔮",  # آینده
+    "64": "✈️",  # گردشگری
+    "66": "🎖",  # دی
+    "69": "🌍",  # ایران زمین
+    "70": "📜",  # قرض‌الحسنه رسالت
+    "75": "🌐",  # موسسه اعتباری ملل
+    "78": "🌅",  # خاورمیانه
+    "80": "✨",  # موسسه اعتباری نور
+    "95": "🌴",  # مشترک ایران و ونزوئلا
+}
+DEFAULT_BANK_EMOJI = "🏦"
+_BANK_ORDER = {code: index for index, code in enumerate(KNOWN_BANK_CODES)}
+
+
 @dataclass
 class BankOptionInfo:
     value: str
@@ -278,3 +316,37 @@ class PersianBankMatcher:
                 return cand
 
         return None
+
+
+def _bank_name_keys() -> List[Tuple[str, str]]:
+    """Every known spelling, normalised the same way as input, longest first."""
+    keys = {}
+    for name, code in list(PersianBankMatcher.COMPOSITE_PRECEDENCE) + list(BANK_CANONICAL_TO_CODE.items()):
+        keys.setdefault(PersianBankMatcher.normalize(name), code)
+    for code, name in KNOWN_BANK_CODES.items():
+        keys.setdefault(PersianBankMatcher.normalize(name), code)
+    return sorted(keys.items(), key=lambda item: len(item[0]), reverse=True)
+
+
+_BANK_NAME_KEYS = _bank_name_keys()
+
+
+def bank_identity(name: Optional[str]) -> Tuple[Optional[str], str, str]:
+    """(official code or None, official display name, emoji) for any spelling of a bank name.
+
+    Status text after the name ("- دارای ظرفیت…", "[ذخیره]", queue counts) is ignored,
+    so words such as "جدید" cannot be mistaken for بانک دی.
+    """
+    text = PersianBankMatcher.normalize(name or "")
+    text = re.split(r"\s[-–—:]\s|\[|\(|متقاضی\s*در\s*صف", text, maxsplit=1)[0].strip()
+    padded = f" {text} "
+    for key, code in _BANK_NAME_KEYS:
+        if f" {key} " in padded:
+            return code, KNOWN_BANK_CODES[code], BANK_EMOJIS.get(code, DEFAULT_BANK_EMOJI)
+    return None, (str(name or "").strip() or "بانک"), DEFAULT_BANK_EMOJI
+
+
+def bank_sort_key(name: Optional[str]) -> Tuple[int, str]:
+    """Sort key putting banks in official CBI order; unknown names last, alphabetically."""
+    code, official, _ = bank_identity(name)
+    return (_BANK_ORDER.get(code, len(_BANK_ORDER)), official)

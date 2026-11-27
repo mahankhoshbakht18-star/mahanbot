@@ -154,7 +154,7 @@ python packaging\build_exe.py
 
 ## ۱۰. مستندات پیوست
 
-- [گزارش ممیزی و بازسازی جامع](AUDIT_REPORT_FA.md)
+- [گزارش ممیزی معماری](docs/architecture-audit.md)
 - [راهنمای امنیت و حفاظت از داده‌ها](SECURITY.md)
 - [تاریخچه نسخه‌ها و تغییرات](CHANGELOG.md)
 - [راهنمای مشارکت در توسعه](CONTRIBUTING.md)

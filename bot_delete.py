@@ -28,6 +28,7 @@ class DeleteRequestBot(BotCore):
         )
         self._last_missing_log_ts = 0.0
         self._last_busy_log_ts = 0.0
+        self._delete_dialog_msg = ""
 
     def run(self, stop_event) -> bool:
         self._active_stop_event = stop_event
@@ -116,7 +117,14 @@ class DeleteRequestBot(BotCore):
 
     def _handle_dialog(self, dialog):
         try:
-            self.log(f"پیام دیالوگ سامانه: {dialog.message}", "info")
+            msg = dialog.message() if callable(getattr(dialog, "message", None)) else getattr(dialog, "message", "")
+        except Exception:
+            msg = ""
+        # The CBI site reports the final outcome ("... با موفقیت حذف شد") as a JS alert,
+        # which never appears in the page body; keep it for _check_result.
+        self._delete_dialog_msg = (msg or "").strip()
+        try:
+            self.log(f"پیام دیالوگ سامانه: {msg}", "info")
             dialog.accept()
         except Exception:
             pass
@@ -245,9 +253,12 @@ class DeleteRequestBot(BotCore):
             "درخواست شما حذف شد",
             "ثبت نام حذف شد",
         ]
+        dialog_msg = getattr(self, "_delete_dialog_msg", "") or ""
         for phrase in success_phrases:
             if phrase in body:
                 return True, phrase
+            if phrase in dialog_msg:
+                return True, dialog_msg
 
         # Error patterns
         error_phrases = [
@@ -262,6 +273,8 @@ class DeleteRequestBot(BotCore):
         for phrase in error_phrases:
             if phrase in body:
                 return False, phrase
+            if phrase in dialog_msg:
+                return False, dialog_msg
 
         # Check notification elements
         lbl = self._first_visible_locator(page, [
@@ -315,18 +328,62 @@ class DeleteRequestBot(BotCore):
             captcha_element=captcha_img,
         )
 
+    def _fetch_otp(self) -> Optional[str]:
+        try:
+            server_code = self.get_otp_code(timeout=1)
+            if server_code and len(str(server_code).strip()) >= 5:
+                return str(server_code).strip()
+        except Exception:
+            pass
+        try:
+            from otp_transport import fresh_record
+            db_code = fresh_record(self, DBHandler.get_otp_record(self.nid))
+            if db_code and len(str(db_code).strip()) >= 5:
+                return str(db_code).strip()
+        except Exception:
+            pass
+        return None
+
     def _run_stage2_otp(self, page, stop_event) -> bool:
+        """Fill the SMS code and solve the stage-2 captcha, then hand the final
+        delete click to the user. Never clicks the delete button itself."""
         if not getattr(self, "_otp_entry_time", 0):
             self.mark_otp_entry_time()
         self.log("مرحله دوم حذف (تأیید پیامکی) شناسایی شد؛ منتظر دریافت کد تأیید...", "info", page)
         otp_selectors = ["#ctl00_ContentPlaceHolder1_tbMobConfCode", "input[name*='tbMobConfCode']", "input[name*='ConfCode']"]
-        captcha_selectors = ["#ctl00_ContentPlaceHolder1_tbCaptcha2", "input[name*='tbCaptcha']"]
-        btn_selectors = ["#ctl00_ContentPlaceHolder1_btnContinue2", "#ctl00_ContentPlaceHolder1_btnDelete", "input[type='submit']"]
+        captcha_sel = "#ctl00_ContentPlaceHolder1_tbCaptcha2, input[name*='tbCaptcha']"
+        captcha_selectors = [part.strip() for part in captcha_sel.split(",")]
 
-        deadline = time.time() + 130.0
+        otp_wait = float(self.settings.get("delete_otp_wait_sec", 180))
+        manual_wait = float(self.settings.get("delete_manual_wait_sec", 600))
+        deadline = time.time() + otp_wait
+        filled_code = ""
+        solved_at = 0.0
+        filled_at = 0.0
+        ready_announced = False
+
         while time.time() < deadline and not stop_event.is_set():
             if self._page_closed(page):
                 return False
+
+            # The final click is the user's; the result arrives as an alert or page text.
+            is_success, msg = self._check_result(page)
+            if is_success is True:
+                return True
+            if is_success is False:
+                self.log(f"خطای سامانه در حذف ثبت‌نام: {msg}", "error", page)
+                return False
+
+            dialog_ts = getattr(self, "_last_dialog_ts", 0) or 0
+            dialog_action = getattr(self, "_last_dialog_action", "") or ""
+            if dialog_action == "otp_expired" and dialog_ts > filled_at and filled_code:
+                self.log("کد پیامکی رد شد؛ منتظر کد جدید...", "warning", page)
+                filled_code = ""
+                ready_announced = False
+            if dialog_action == "captcha_invalid" and dialog_ts > solved_at and solved_at:
+                self.log("کپچای مرحله دوم نامعتبر بود؛ دوباره حل می‌شود.", "warning", page)
+                solved_at = 0.0
+                ready_announced = False
 
             otp_inp = self._first_visible_locator(page, otp_selectors)
             if not otp_inp:
@@ -334,60 +391,57 @@ class DeleteRequestBot(BotCore):
                     return False
                 continue
 
-            # Fetch OTP code
-            code = None
             try:
-                server_code = self.get_otp_code(timeout=1)
-                if server_code and len(str(server_code).strip()) >= 5:
-                    code = str(server_code).strip()
+                current_otp = (otp_inp.input_value(timeout=300) or "").strip()
             except Exception:
-                pass
+                current_otp = ""
+            if not filled_code or current_otp != filled_code:
+                code = self._fetch_otp()
+                if not code:
+                    if sleep_with_stop(stop_event, 0.4):
+                        return False
+                    continue
+                if current_otp != code:
+                    BrowserActions.human_fill(otp_inp, code)
+                    self.log(f"کد تأیید پیامکی {code[:2]}**{code[-2:]} در فیلد مرحله دوم وارد شد.", "success", page)
+                filled_code = code
+                filled_at = time.time()
+                ready_announced = False
 
-            if not code:
-                try:
-                    from otp_transport import fresh_record
-                    db_code = fresh_record(self, DBHandler.get_otp_record(self.nid))
-                    if db_code and len(str(db_code).strip()) >= 5:
-                        code = str(db_code).strip()
-                except Exception:
-                    pass
-
-            if not code:
-                if sleep_with_stop(stop_event, 0.5):
-                    return False
-                continue
-
-            # Fill OTP
-            BrowserActions.human_fill(otp_inp, code)
-            self.log(f"کد تأیید پیامکی {code[:2]}**{code[-2:]} در فیلد مرحله دوم وارد شد.", "success", page)
-
-            # Solve stage 2 captcha and submit
-            captcha_img = self._first_visible_locator(page, [".BDC_CaptchaImage", "img[id*='CaptchaImage']"])
             captcha_inp = self._first_visible_locator(page, captcha_selectors)
-            submit_btn = self._first_visible_locator(page, btn_selectors)
-
-            if captcha_inp and submit_btn and captcha_img:
-                self.solve_captcha_with_model(
+            captcha_img = self._first_visible_locator(page, [".BDC_CaptchaImage", "img[id*='CaptchaImage']"])
+            try:
+                captcha_val = (captcha_inp.input_value(timeout=300) or "").strip() if captcha_inp else ""
+            except Exception:
+                captcha_val = ""
+            if captcha_inp and captcha_img and (not solved_at or not captcha_val):
+                if self.solve_captcha_with_model(
                     page,
-                    captcha_inp,
-                    submit_btn,
+                    captcha_sel,
+                    None,
                     stop_event=stop_event,
                     source="delete_step2",
                     captcha_element=captcha_img,
-                )
+                    submit=False,
+                ):
+                    solved_at = time.time()
+                    ready_announced = False
+                else:
+                    if sleep_with_stop(stop_event, 0.5):
+                        return False
+                    continue
 
-            # Wait and check result
-            check_deadline = time.time() + 10.0
-            while time.time() < check_deadline and not stop_event.is_set():
-                is_success, msg = self._check_result(page)
-                if is_success is True:
-                    return True
-                if is_success is False:
-                    self.log(f"خطای سامانه در حذف ثبت‌نام: {msg}", "error", page)
-                    return False
-                if sleep_with_stop(stop_event, 0.5):
-                    return False
+            if not ready_announced and filled_code and (solved_at or not captcha_inp):
+                ready_announced = True
+                deadline = max(deadline, time.time() + manual_wait)
+                self.set_runtime_state("WAITING_USER", "DELETE_FINAL_CLICK", browser_status="OPEN")
+                self.log("✋ کد پیامکی و کپچا وارد شد؛ برای حذف نهایی، دکمه «حذف» را خودتان بزنید.", "success", page)
 
+            if sleep_with_stop(stop_event, 0.4):
+                return False
+
+        if not stop_event.is_set():
+            self.log("مهلت انتظار برای حذف نهایی به پایان رسید.", "warning", page)
         return False
 
     def _main_delete_loop(self, page, tracking_code: str, stop_event) -> bool:

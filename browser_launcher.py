@@ -369,6 +369,36 @@ def merge_browser_profiles(base: Dict[str, Any], override: Optional[Dict[str, An
     return normalize_browser_profile(merged)
 
 
+def _strip_site_zoom_overrides(user_data_dir: Optional[str]) -> bool:
+    """
+    Remove per-site zoom Chrome saved for CBI after a manual Ctrl+/- or Ctrl+scroll.
+    The CAPTCHA is captured with an element screenshot, so a remembered zoom (e.g. 67%)
+    shrinks the image fed to the model and every answer is wrong — only for that profile.
+    """
+    if not user_data_dir:
+        return False
+    prefs_path = Path(user_data_dir) / "Default" / "Preferences"
+    if not prefs_path.is_file():
+        return False
+    try:
+        prefs = json.loads(prefs_path.read_text(encoding="utf-8") or "{}")
+        per_host = ((prefs.get("partition") or {}).get("per_host_zoom_levels")) if isinstance(prefs, dict) else None
+        if not isinstance(per_host, dict):
+            return False
+        changed = False
+        for hosts in per_host.values():
+            if not isinstance(hosts, dict):
+                continue
+            for host in [h for h in hosts if "cbi.ir" in str(h).lower()]:
+                hosts.pop(host, None)
+                changed = True
+        if changed:
+            prefs_path.write_text(json.dumps(prefs, ensure_ascii=False), encoding="utf-8")
+        return changed
+    except Exception:
+        return False
+
+
 def _sanitize_chromium_preferences_window_placement(user_data_dir: Optional[str], geom: Dict[str, int]) -> None:
     """
     Ensure Chrome/Edge persistent user_data_dir Preferences does not force maximized=true from an old session.
@@ -700,6 +730,7 @@ def launch_browser(profile: Dict[str, Any], *, _allow_retry: bool = True) -> Tup
                 BrowserProfileHealthManager.clear_stale_locks(normalized["user_data_dir"])
             except Exception:
                 pass
+            _strip_site_zoom_overrides(normalized["user_data_dir"])
             if not normalized.get("start_maximized", False):
                 _sanitize_chromium_preferences_window_placement(normalized["user_data_dir"], geom)
             browser, context = acquire_context(

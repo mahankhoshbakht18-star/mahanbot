@@ -60,21 +60,30 @@ class BrowserActions:
         if not locator.is_visible():
             return False
 
+        # Speeds come from the dashboard timing panel ("سرعت تایپ و پر کردن فیلدها").
+        from core.timings import jittered_seconds
+
+        def pause(share=1.0):
+            delay = jittered_seconds("field_pause_ms") * share
+            if delay:
+                time.sleep(delay)
+
         locator.scroll_into_view_if_needed()
-        time.sleep(random.uniform(0.01, 0.035))
+        pause()
         locator.click(timeout=timeout)
-        time.sleep(random.uniform(0.01, 0.025))
+        pause(0.6)
         locator.press("Control+A", timeout=timeout)
-        time.sleep(random.uniform(0.005, 0.02))
+        pause(0.4)
         locator.press("Backspace", timeout=timeout)
-        time.sleep(random.uniform(0.01, 0.03))
+        pause(0.6)
 
         for index, char in enumerate(text):
-            locator.type(char, delay=random.randint(8, 18), timeout=timeout)
+            delay_ms = int(jittered_seconds("field_type_char_ms") * 1000)
+            locator.type(char, delay=delay_ms, timeout=max(timeout, delay_ms + 500))
             if index and index % random.randint(3, 5) == 0:
-                time.sleep(random.uniform(0.01, 0.03))
+                pause(0.8)  # short hesitation every few characters, like a person
 
-        time.sleep(random.uniform(0.01, 0.035))
+        pause()
         return locator.input_value() == text
 
     @staticmethod

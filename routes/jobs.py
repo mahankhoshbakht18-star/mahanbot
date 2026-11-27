@@ -10,7 +10,8 @@ from fastapi import APIRouter, Depends, HTTPException
 from core.deps import require_api_key, _admin_user, require_reconciled_submission
 import core.state as _state
 from core.models import JobStartRequest
-from core.helpers import _serialize_applicants
+from core.job_queue import JobQueue
+from core.helpers import _serialize_applicants, _normalize_nid, validate_registration_readiness
 from database import DBHandler
 
 from browser_launcher import normalize_browser_profile
@@ -31,11 +32,29 @@ def start_job(req: JobStartRequest, _: bool = Depends(require_api_key)):
         raise HTTPException(status_code=500, detail="Job queue not ready")
 
     bot_name = req.bot_name.lower()
+    nid = _normalize_nid(req.nid) or str(req.nid or "").strip()
     if bot_name in {"delete", "delete_req"}:
         raise HTTPException(403, "برای حذف از مسیر تأیید صریح حذف ثبت‌نام استفاده کنید")
-    existing = _state.JOB_QUEUE.find_active(bot_name, req.nid)
+    existing = _state.JOB_QUEUE.find_active(bot_name, nid)
     if existing:
         return {"status": "already_running", "job": existing.to_dict()}
+    if bot_name in JobQueue.IMMEDIATE_BOTS:
+        open_job = _state.JOB_QUEUE.active_job_of(bot_name)
+        if open_job:
+            raise HTTPException(
+                status_code=409,
+                detail=f"مرورگر استعلام وضعیت متقاضی {open_job.nid} هنوز باز است؛ اول آن پنجره را ببندید یا «توقف» را بزنید.",
+            )
+
+    if bot_name == "register":
+        applicant = DBHandler.get_applicant(nid)
+        ok, reg_errors, _ = validate_registration_readiness(
+            dict(applicant) if applicant else None,
+            expected_nid=nid,
+            loan_type_override=req.loan_type,
+        )
+        if not ok:
+            raise HTTPException(status_code=422, detail="اطلاعات ثبت‌نام اولیه ناقص یا نامعتبر است: " + "؛ ".join(reg_errors))
 
     payload: Dict[str, Any] = {}
     if req.loan_type:
@@ -44,18 +63,18 @@ def start_job(req: JobStartRequest, _: bool = Depends(require_api_key)):
         payload["browser_profile_override"] = normalize_browser_profile(req.browser_profile_override)
 
     if bot_name in {'select', 'register'}:
-        require_reconciled_submission(req.nid)
+        require_reconciled_submission(nid)
     DBHandler.update_runtime(
-        req.nid,
+        nid,
         status="RUNNING",
         current_step="INITIALIZING",
         browser_status="STARTING",
         last_error="",
     )
 
-    job = _state.JOB_QUEUE.enqueue(bot_name, req.nid, payload)
+    job = _state.JOB_QUEUE.enqueue(bot_name, nid, payload)
     if job is None:
-        existing = _state.JOB_QUEUE.find_active(bot_name, req.nid)
+        existing = _state.JOB_QUEUE.find_active(bot_name, nid)
         return {"status": "already_running", "job": existing.to_dict() if existing else None}
     _emit_applicants_snapshot()
     return {"status": "queued", "job": job.to_dict()}
@@ -63,20 +82,31 @@ def start_job(req: JobStartRequest, _: bool = Depends(require_api_key)):
 
 @router.post("/jobs/restart")
 def restart_job(req: JobStartRequest, _: bool = Depends(require_api_key)):
-    if req.bot_name.lower() in {"delete", "delete_req"}:
+    bot_name = req.bot_name.lower()
+    nid = _normalize_nid(req.nid) or str(req.nid or "").strip()
+    if bot_name in {"delete", "delete_req"}:
         raise HTTPException(403, "راه‌اندازی مجدد حذف نیازمند تأیید تازه مدیر است")
     if not _state.JOB_QUEUE:
         raise HTTPException(status_code=500, detail="Job queue not ready")
-    if req.bot_name.lower() in {'select', 'register'}:
-        require_reconciled_submission(req.nid)
+    if bot_name == "register":
+        applicant = DBHandler.get_applicant(nid)
+        ok, reg_errors, _ = validate_registration_readiness(
+            dict(applicant) if applicant else None,
+            expected_nid=nid,
+            loan_type_override=req.loan_type,
+        )
+        if not ok:
+            raise HTTPException(status_code=422, detail="اطلاعات ثبت‌نام اولیه ناقص یا نامعتبر است: " + "؛ ".join(reg_errors))
+    if bot_name in {'select', 'register'}:
+        require_reconciled_submission(nid)
     DBHandler.update_runtime(
-        req.nid,
+        nid,
         status="RUNNING",
         current_step="INITIALIZING",
         browser_status="STARTING",
         last_error="",
     )
-    existing = _state.JOB_QUEUE.find_active(req.bot_name.lower(), req.nid)
+    existing = _state.JOB_QUEUE.find_active(bot_name, nid)
     if existing:
         _state.JOB_QUEUE.cancel(existing.id)
         deadline = time.monotonic() + 10.0
@@ -87,7 +117,7 @@ def restart_job(req: JobStartRequest, _: bool = Depends(require_api_key)):
     payload: Dict[str, Any] = {"force": True}
     if req.loan_type:
         payload["loan_type"] = req.loan_type
-    job = _state.JOB_QUEUE.enqueue(req.bot_name.lower(), req.nid, payload)
+    job = _state.JOB_QUEUE.enqueue(bot_name, nid, payload)
     if job is None:
         raise HTTPException(status_code=409, detail="Another job became active for this applicant")
     _emit_applicants_snapshot()

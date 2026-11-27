@@ -43,6 +43,27 @@ TIMINGS: Dict[str, tuple] = {
         "حداکثر انتظار برای تصویر جدید کپچا",
         "بعد از زدن دکمه تغییر تصویر.",
     ),
+    # ── Typing: form fields and captcha (human-like input) ──────────
+    "field_type_char_ms": (
+        13, 0, 400, "ms", "typing",
+        "سرعت تایپ فیلدهای فرم (هر حرف)",
+        "کد ملی، موبایل، تاریخ‌ها و کد پیامک حرف‌به‌حرف با این فاصله تایپ می‌شوند (±۴۰٪ تصادفی). عدد بیشتر = انسانی‌تر.",
+    ),
+    "field_pause_ms": (
+        20, 0, 3000, "ms", "typing",
+        "مکث قبل و بعد از هر فیلد",
+        "مکث کلیک روی فیلد، پاک کردن متن قبلی و رفتن به فیلد بعدی.",
+    ),
+    "captcha_type_char_ms": (
+        6, 0, 400, "ms", "typing",
+        "سرعت تایپ کپچا (هر حرف)",
+        "فاصله بین حروف هنگام وارد کردن جواب کپچا.",
+    ),
+    "captcha_think_ms": (
+        0, 0, 5000, "ms", "typing",
+        "مکث «دیدن» کپچا قبل از تایپ",
+        "مثل کاربر واقعی که اول تصویر را نگاه می‌کند. صفر یعنی بلافاصله.",
+    ),
     # ── Page 3: bank selection ──────────────────────────────────────
     "page3_loop_ms": (
         80, 20, 2000, "ms", "bank",
@@ -90,9 +111,18 @@ TIMINGS: Dict[str, tuple] = {
 GROUPS = (
     ("sms", "پیامک"),
     ("captcha", "کپچا"),
+    ("typing", "سرعت تایپ و پر کردن فیلدها"),
     ("bank", "صفحه ۳ — انتخاب بانک"),
     ("submit", "ثبت نهایی"),
 )
+
+# One-click speed profiles for a group (the dashboard shows them as buttons).
+PRESETS = {
+    "typing": (
+        ("fast", "سریع", {"field_type_char_ms": 13, "field_pause_ms": 20, "captcha_type_char_ms": 6, "captcha_think_ms": 0}),
+        ("human", "انسانی", {"field_type_char_ms": 120, "field_pause_ms": 250, "captcha_type_char_ms": 150, "captcha_think_ms": 800}),
+    ),
+}
 
 # Older config keys that carried the same value.
 ALIASES = {
@@ -135,6 +165,25 @@ def seconds(settings: Optional[Mapping[str, Any]], key: str) -> float:
     return value / 1000.0 if TIMINGS[key][3] == "ms" else value
 
 
+def jittered_seconds(key: str, settings: Optional[Mapping[str, Any]] = None, spread: float = 0.4) -> float:
+    """A human-looking delay: the configured value ±spread, never negative."""
+    import random
+    base = seconds(settings if settings is not None else _LIVE, key)
+    if base <= 0:
+        return 0.0
+    return max(0.0, base * random.uniform(1.0 - spread, 1.0 + spread))
+
+
+# Latest normalised config, for helpers that are called without a settings
+# object (BrowserActions.human_fill, captcha typing). Refreshed on every
+# config load/save through normalize().
+_LIVE: Dict[str, Any] = {}
+
+
+def live() -> Mapping[str, Any]:
+    return _LIVE
+
+
 def normalize(config: Dict[str, Any]) -> Dict[str, Any]:
     """Write every knob (and its legacy aliases) back as one bounded value."""
     if not config.get("timings_v1"):
@@ -150,6 +199,8 @@ def normalize(config: Dict[str, Any]) -> Dict[str, Any]:
         config[key] = value
         for alias in ALIASES.get(key, ()):
             config[alias] = value
+    _LIVE.clear()
+    _LIVE.update({key: config[key] for key in TIMINGS})
     return config
 
 
@@ -180,5 +231,6 @@ def schema(config: Optional[Mapping[str, Any]] = None) -> List[Dict[str, Any]]:
                 "key": key, "default": default, "min": low, "max": high, "unit": unit,
                 "label": label, "help": help_text, "value": timing(config, key),
             })
-        out.append({"group": group, "title": title, "items": items})
+        presets = [{"id": pid, "label": plabel, "values": values} for pid, plabel, values in PRESETS.get(group, ())]
+        out.append({"group": group, "title": title, "items": items, "presets": presets})
     return out
