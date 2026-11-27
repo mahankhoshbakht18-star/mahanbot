@@ -6119,27 +6119,4 @@ async function bhFreshProfile(nid) {
     }
 }
 
-function switchModule(name) {
-    document.body.dataset.module = name;
-    try { sessionStorage.setItem("mahanModule", name); } catch (error) {}
-    const bankNav = document.getElementById('bankNav');
-    const sadafNav = document.getElementById('sadafNav');
-    if (bankNav) bankNav.classList.toggle('is-hidden', name !== 'bank');
-    if (sadafNav) sadafNav.classList.toggle('is-hidden', name !== 'sadaf');
-    document.getElementById('modBank')?.classList.toggle('active', name === 'bank');
-    document.getElementById('modSadaf')?.classList.toggle('active', name === 'sadaf');
-    const title = document.querySelector('.topbar-title-block h1');
-    if (title) {
-        title.textContent = name === 'sadaf'
-            ? 'ثبت درخواست سوخت سدف'
-            : 'مدیریت ثبت‌نام تسهیلات ازدواج و فرزندآوری';
-    }
-    if (name === 'sadaf') {
-        switchView('sadaf');
-        if (window.Sadaf) window.Sadaf.enter();
-        return;
-    }
-    if (window.Sadaf) window.Sadaf.leave();
-    if (typeof currentViewId !== 'undefined' && currentViewId === 'sadaf') switchView('dashboard');
-}
 

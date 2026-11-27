@@ -7,7 +7,6 @@
   <link rel="stylesheet" href="/static/vendor/bootstrap.rtl.min.css">
   <link rel="stylesheet" href="/static/vendor/all.min.css">
   <link rel="stylesheet" href="/static/style.css?v=20261121-hub">
-  <link rel="stylesheet" href="/static/sadaf/sadaf.css?v=20261127-1">
   <link rel="stylesheet" href="/static/browser-preview.css">
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Vazirmatn:wght@400;500;600;700;800;900&display=swap" media="print" onload="this.media='all'">
 </head>
@@ -63,11 +62,6 @@
       <span>ارتباط زنده با سامانه</span>
     </div>
 
-    <div class="module-switch" id="moduleSwitch">
-      <button type="button" id="modBank" class="active" onclick="switchModule('bank')">تسهیلات بانکی</button>
-      <button type="button" id="modSadaf" onclick="switchModule('sadaf')">سوخت سدف</button>
-    </div>
-
     <nav class="sidebar-nav" id="bankNav">
       <div onclick="switchView('license',this)"><button class="nav-link" aria-label="لایسنس ماهان" data-tooltip="فعال‌سازی و مدیریت مرکزی لایسنس"><i class="fa-solid fa-key"></i><span>لایسنس ماهان</span></button></div>
       <div onclick="switchView('dashboard',this)"><button class="nav-link active" data-tooltip="داشبورد عملیات: مشاهده وضعیت آنلاین بات‌ها، آمار کلی و مانیتور زنده"><i class="fa-solid fa-chart-pie"></i><span>داشبورد</span></button></div>
@@ -84,14 +78,6 @@
       <div onclick="switchView('settings',this)"><button class="nav-link" data-tooltip="تنظیمات سامانه: پارامترهای اتوماسیون، فواصل پایش، مرورگر و وب‌هوک"><i class="fa-solid fa-sliders"></i><span>تنظیمات</span></button></div>
       <div onclick="switchView('support',this)"><button class="nav-link" data-tooltip="پشتیبانی: کانال تلگرام، ارتباط با ادمین، راهنما و اپلیکیشن اندروید"><i class="fa-solid fa-headset"></i><span>پشتیبانی</span></button></div>
       <div class="admin-only"><a class="nav-link" href="/admin/app-releases" target="_blank" rel="noopener" data-tooltip="انتشار نسخه جدید اپلیکیشن اندروید"><i class="fa-brands fa-android"></i><span>نسخه‌های اپلیکیشن</span></a></div>
-    </nav>
-
-    <nav class="sidebar-nav is-hidden" id="sadafNav">
-      <div onclick="switchModule('sadaf'); Sadaf.newApplicant()"><button class="nav-link" type="button"><i class="fa-solid fa-user-plus"></i><span>متقاضی جدید</span></button></div>
-      <div onclick="switchModule('sadaf'); Sadaf.focus('run')"><button class="nav-link" type="button"><i class="fa-solid fa-play"></i><span>اجرای عملیات</span></button></div>
-      <div onclick="switchModule('sadaf'); Sadaf.focus('people')"><button class="nav-link" type="button"><i class="fa-solid fa-users"></i><span>فهرست متقاضی‌ها</span></button></div>
-      <div onclick="switchModule('sadaf'); Sadaf.focus('log')"><button class="nav-link" type="button"><i class="fa-solid fa-clipboard-list"></i><span>فعالیت و گزارش</span></button></div>
-      <div onclick="switchModule('sadaf'); Sadaf.focus('settings')"><button class="nav-link" type="button"><i class="fa-solid fa-gear"></i><span>تنظیمات</span></button></div>
     </nav>
 
     <div class="sidebar-footer">
@@ -2439,8 +2425,6 @@
       </div>
     </section>
 
-    <section id="view-sadaf" class="view-section"></section>
-
   </main>
 
   <!-- ════════════════ MODAL: SNAPSHOT PREVIEW ════════════════ -->
@@ -2625,7 +2609,6 @@
   <script src="/static/vendor/bootstrap.bundle.min.js"></script>
   <script src="/static/messages_fa.js?v=20261016-2"></script>
   <script src="/static/script.js?v=20261125-formread"></script>
-  <script src="/static/sadaf/sadaf.js?v=20261127-1"></script>
   <script src="/static/licensing.js?v=20261022-1"></script>
   <script src="/static/page3_management.js"></script>
 </body>
